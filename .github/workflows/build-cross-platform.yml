@@ -2,9 +2,6 @@ name: 'Build Windows and Linux Apps'
 
 on:
   push:
-    branches:
-      - main
-      - master
     tags:
       - 'v*'
   workflow_dispatch:
@@ -23,7 +20,7 @@ jobs:
             args: ''
 
     runs-on: ${{ matrix.platform }}
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -49,6 +46,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -59,16 +57,40 @@ jobs:
           workspaces: './src-tauri -> target'
 
       - name: Install frontend dependencies
-        run: npm install
+        run: npm ci
 
-      - name: Build and Package Tauri App
+      - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: 'app-draft-build'
-          releaseName: 'Draft Build (Win & Linux)'
-          releaseBody: 'Automatic cross-platform build from the latest push.'
-          releaseDraft: true
-          prerelease: true
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          releaseName: ${{ github.ref_type == 'tag' && format('NotAcrobat {0}', github.ref_name) || '' }}
+          releaseBody: 'Cross-platform build for NotAcrobat.'
+          releaseDraft: ${{ github.ref_type == 'tag' }}
+          prerelease: false
           args: ${{ matrix.args }}
+
+      # Always upload artifacts so they're never lost
+      - name: Upload build artifacts (Windows)
+        if: matrix.platform == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: notacrobat-windows
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload build artifacts (Linux)
+        if: matrix.platform == 'ubuntu-24.04'
+        uses: actions/upload-artifact@v4
+        with:
+          name: notacrobat-linux
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: warn
+          retention-days: 30
