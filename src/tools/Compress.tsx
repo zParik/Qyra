@@ -1,13 +1,38 @@
+import { useState } from "react";
 import { ToolLayout } from "../components/ToolLayout";
 import { DropZone } from "../components/DropZone";
 import { useAppStore } from "../store/useAppStore";
 import { usePdfCommand } from "../hooks/usePdfCommand";
 import { compressPdf } from "../lib/tauri";
 
+const LEVELS = [
+  {
+    value: 0,
+    label: "Low",
+    desc: "Lossless",
+    detail: "Object stream compression only. No quality loss.",
+  },
+  {
+    value: 1,
+    label: "High",
+    desc: "Strip metadata",
+    detail: "Low + removes XMP metadata, document info, and page thumbnails.",
+  },
+  {
+    value: 2,
+    label: "Extreme",
+    desc: "Grayscale images",
+    detail: "High + converts all color images to grayscale JPEG. Maximum size reduction.",
+  },
+] as const;
+
+type Level = 0 | 1 | 2;
+
 export default function Compress() {
   const { files, clearFiles, isProcessing } = useAppStore();
   const { run } = usePdfCommand();
   const file = files[0];
+  const [level, setLevel] = useState<Level>(0);
 
   function formatSize(bytes: number) {
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -16,11 +41,11 @@ export default function Compress() {
 
   async function handleCompress() {
     if (!file) return;
-    await run(() => compressPdf(file.path));
+    await run(() => compressPdf(file.path, undefined, level));
   }
 
   return (
-    <ToolLayout title="Compress PDF" description="Reduce file size using lossless compression">
+    <ToolLayout title="Compress PDF" description="Reduce file size by choosing a compression level">
       {files.length === 0 ? (
         <DropZone multiple={false} />
       ) : (
@@ -35,8 +60,28 @@ export default function Compress() {
             <button onClick={clearFiles} className="text-xs text-gray-400 hover:text-red-500">Remove</button>
           </div>
 
-          <div className="text-xs text-gray-400 bg-gray-50 dark:bg-gray-800 rounded-lg p-3">
-            Uses lossless object stream compression. Typically reduces size by 11–61% depending on the PDF.
+          {/* Level selector */}
+          <div>
+            <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Compression level</p>
+            <div className="flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+              {LEVELS.map(({ value, label, desc }) => (
+                <button
+                  key={value}
+                  onClick={() => setLevel(value)}
+                  className={`flex-1 py-2 px-2 text-center text-xs transition-colors ${
+                    level === value
+                      ? "bg-indigo-600 text-white"
+                      : "bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800"
+                  } ${value > 0 ? "border-l border-gray-200 dark:border-gray-700" : ""}`}
+                >
+                  <div className="font-semibold">{label}</div>
+                  <div className={`opacity-75 ${level === value ? "" : "text-gray-400"}`}>{desc}</div>
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-gray-400 mt-2">
+              {LEVELS[level].detail}
+            </p>
           </div>
 
           <button
