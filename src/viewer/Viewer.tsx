@@ -13,6 +13,9 @@ import { evictPathFromThumbnailCache } from "../hooks/usePageThumbnails";
 import { DrawingCanvas } from "./DrawingCanvas";
 import { VirtualPageBackground } from "./VirtualPageBackground";
 import { DrawToolbar } from "./tools/DrawToolbar";
+import { TextLayer } from "./TextLayer";
+import { FindBar } from "./FindBar";
+import { loadDocument } from "../hooks/usePageThumbnails";
 
 export default function Viewer() {
   const navigate = useNavigate();
@@ -40,6 +43,16 @@ export default function Viewer() {
   const [zoom, setZoom] = useState(1.0);
   const [showStrip, setShowStrip] = useState(false);
   const [showTools, setShowTools] = useState(false);
+
+  // Find-in-document
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findMatches, setFindMatches] = useState<{ page: number }[]>([]);
+  const [findCurrentIdx, setFindCurrentIdx] = useState(0);
+
+  // Go-to-page input
+  const [editingPage, setEditingPage] = useState(false);
+  const [pageInputValue, setPageInputValue] = useState("");
 
   function adjustZoom(delta: number) {
     setZoom((prev) => {
@@ -101,14 +114,13 @@ export default function Viewer() {
     }
   }, []);
 
-  // Ctrl+wheel zoom (non-passive so we can preventDefault)
+  // Ctrl+wheel / pinch-to-zoom (non-passive, attached to window so WebView2 native zoom is blocked)
   useEffect(() => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
     function onWheel(e: WheelEvent) {
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
-        const containerWidth = container!.clientWidth;
+        const container = scrollContainerRef.current;
+        const containerWidth = container ? container.clientWidth : window.innerWidth;
         // fitZoom = zoom at which page exactly fills container (accounting for 32px horizontal padding)
         const fitZoom = (containerWidth - 32) / 768;
         setZoom((prev) => {
@@ -120,8 +132,8 @@ export default function Viewer() {
         });
       }
     }
-    container.addEventListener("wheel", onWheel, { passive: false });
-    return () => container.removeEventListener("wheel", onWheel);
+    window.addEventListener("wheel", onWheel, { passive: false });
+    return () => window.removeEventListener("wheel", onWheel);
   }, []);
 
   // Auto-fit zoom on small screens so the PDF isn't wider than the viewport
@@ -131,11 +143,62 @@ export default function Viewer() {
     setZoom(Math.max(0.25, Math.min(1.0, fitZoom)));
   }, []);
 
+  // Search all pages for find query
+  useEffect(() => {
+    if (!findQuery.trim() || !viewerFile || pageCount === 0) {
+      setFindMatches([]);
+      setFindCurrentIdx(0);
+      return;
+    }
+    let cancelled = false;
+    const q = findQuery.trim().toLowerCase();
+
+    async function search() {
+      try {
+        const doc = await loadDocument(viewerFile!.path);
+        const matches: { page: number }[] = [];
+        for (let p = 1; p <= pageCount; p++) {
+          if (cancelled) return;
+          const page = await doc.getPage(p);
+          const tc = await page.getTextContent();
+          const text = (tc.items as { str?: string }[])
+            .map((item) => item.str ?? "")
+            .join("");
+          if (text.toLowerCase().includes(q)) {
+            matches.push({ page: p });
+          }
+        }
+        if (!cancelled) {
+          setFindMatches(matches);
+          setFindCurrentIdx(0);
+        }
+      } catch { /* ignore */ }
+    }
+
+    search();
+    return () => { cancelled = true; };
+  }, [findQuery, viewerFile?.path, pageCount]);
+
+  // Navigate to current find match page
+  useEffect(() => {
+    if (findMatches.length === 0) return;
+    const match = findMatches[findCurrentIdx];
+    if (match) scrollToPage(match.page);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [findCurrentIdx, findMatches]);
+
   // Keyboard shortcuts
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
+
+      if (e.key === "Escape" && findOpen) {
+        e.preventDefault();
+        setFindOpen(false);
+        setFindQuery("");
+        return;
+      }
 
       if (e.key === "Escape" && confirmingBack) {
         e.preventDefault();
@@ -144,6 +207,12 @@ export default function Viewer() {
       }
 
       const mod = e.metaKey || e.ctrlKey;
+
+      if (mod && e.key === "f") {
+        e.preventDefault();
+        setFindOpen(true);
+        return;
+      }
 
       if (mod && (e.key === "=" || e.key === "+")) {
         e.preventDefault();
@@ -200,7 +269,7 @@ export default function Viewer() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [isViewerDirty, confirmingBack, currentPage, pageCount, viewerFile, undoViewerFile, originalViewerPath, zoom, activeTool, undoStroke]);
+  }, [isViewerDirty, confirmingBack, findOpen, currentPage, pageCount, viewerFile, undoViewerFile, originalViewerPath, zoom, activeTool, undoStroke]);
 
   if (!viewerFile) return null;
 
@@ -435,11 +504,54 @@ export default function Viewer() {
           )}
         </div>
 
-        {/* Page indicator */}
+        {/* Page indicator / go-to-page input */}
         {pageCount > 0 && (
-          <span className="text-xs shrink-0 tabular-nums hidden sm:inline" style={{ color: "var(--viewer-text-muted)" }}>
-            {currentPage} / {pageCount}
-          </span>
+          editingPage ? (
+            <input
+              type="number"
+              min={1}
+              max={pageCount}
+              value={pageInputValue}
+              autoFocus
+              className="text-xs tabular-nums rounded px-1 py-0.5 hidden sm:block"
+              style={{
+                width: "5rem",
+                background: "var(--viewer-elevated)",
+                border: "1px solid var(--viewer-border)",
+                color: "var(--viewer-text)",
+                caretColor: "var(--viewer-text)",
+                textAlign: "center",
+              }}
+              onChange={(e) => setPageInputValue(e.target.value)}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === "Enter") {
+                  const p = parseInt(pageInputValue, 10);
+                  if (p >= 1 && p <= pageCount) scrollToPage(p);
+                  setEditingPage(false);
+                } else if (e.key === "Escape") {
+                  setEditingPage(false);
+                }
+              }}
+              onBlur={() => {
+                const p = parseInt(pageInputValue, 10);
+                if (p >= 1 && p <= pageCount) scrollToPage(p);
+                setEditingPage(false);
+              }}
+            />
+          ) : (
+            <button
+              onClick={() => {
+                setPageInputValue(String(currentPage));
+                setEditingPage(true);
+              }}
+              className="text-xs shrink-0 tabular-nums hidden sm:inline rounded px-1 py-0.5"
+              style={{ color: "var(--viewer-text-muted)" }}
+              title="Go to page — click to jump"
+            >
+              {currentPage} / {pageCount}
+            </button>
+          )
         )}
 
         {/* Zoom controls */}
@@ -606,6 +718,19 @@ export default function Viewer() {
         </div>
       )}
 
+      {/* Find bar — shown when Ctrl+F is pressed */}
+      {findOpen && (
+        <FindBar
+          query={findQuery}
+          onQueryChange={(q) => { setFindQuery(q); setFindCurrentIdx(0); }}
+          matchCount={findMatches.length}
+          currentMatch={findMatches.length === 0 ? 0 : findCurrentIdx + 1}
+          onNext={() => setFindCurrentIdx((i) => (i + 1) % Math.max(1, findMatches.length))}
+          onPrev={() => setFindCurrentIdx((i) => (i - 1 + Math.max(1, findMatches.length)) % Math.max(1, findMatches.length))}
+          onClose={() => { setFindOpen(false); setFindQuery(""); }}
+        />
+      )}
+
       {/* Draw toolbar — shown when draw mode is active */}
       {activeTool === "draw" && (
         <DrawToolbar
@@ -764,6 +889,13 @@ export default function Viewer() {
                           </div>
                         </div>
                       )}
+                      <TextLayer
+                        pdfPath={viewerFile.path}
+                        pageNum={page}
+                        zoom={zoom}
+                        findQuery={findOpen ? findQuery : undefined}
+                        isDrawingMode={activeTool === "draw"}
+                      />
                       <DrawingCanvas
                         pageSlotId={slot.slotId}
                         docPath={viewerFile.path}

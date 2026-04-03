@@ -1,4 +1,4 @@
-# NotAcrobat
+# Quire
 
 The free, offline, open-source PDF Swiss Army Knife. Built with Tauri + React + TypeScript.
 

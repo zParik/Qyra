@@ -1,4 +1,5 @@
-import { openFile, showInFolder } from "../lib/tauri";
+import { openFile, showInFolder, shareFile } from "../lib/tauri";
+import { isAndroid } from "../lib/androidFileUtils";
 import { ProgressBar, Spinner } from "../components/ProgressBar";
 import type { ProgressData } from "./usePanelCommand";
 
@@ -86,18 +87,29 @@ export function PanelOutput({
       </p>
 
       <div className="flex gap-1.5 flex-wrap">
-        <button
-          onClick={() => openFile(mainPath).catch(() => {})}
-          className="v-output-btn text-xs px-2 py-1 rounded"
-        >
-          Open
-        </button>
-        <button
-          onClick={() => showInFolder(mainPath).catch(() => {})}
-          className="v-output-btn text-xs px-2 py-1 rounded"
-        >
-          {revealLabel}
-        </button>
+        {isAndroid() ? (
+          <button
+            onClick={() => shareFile(mainPath).catch(() => {})}
+            className="v-output-btn text-xs px-2 py-1 rounded"
+          >
+            Save to Downloads
+          </button>
+        ) : (
+          <>
+            <button
+              onClick={() => openFile(mainPath).catch(() => {})}
+              className="v-output-btn text-xs px-2 py-1 rounded"
+            >
+              Open
+            </button>
+            <button
+              onClick={() => showInFolder(mainPath).catch(() => {})}
+              className="v-output-btn text-xs px-2 py-1 rounded"
+            >
+              {revealLabel}
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

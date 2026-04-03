@@ -1,5 +1,6 @@
 import { useNavigate } from "react-router-dom";
-import { openFile as openFilePath, showInFolder } from "../lib/tauri";
+import { openFile as openFilePath, showInFolder, shareFile } from "../lib/tauri";
+import { isAndroid } from "../lib/androidFileUtils";
 
 interface FileResultProps {
   result?: string | null;
@@ -50,18 +51,23 @@ export function FileResult({ result, resultFiles = [], message, onDoMore }: File
       )}
 
       <div className="flex flex-wrap gap-2">
-        <button
-          onClick={() => openFile(allFiles[0])}
-          className="btn-secondary text-sm"
-        >
-          Open File
-        </button>
-        <button
-          onClick={() => openFolder(allFiles[0])}
-          className="btn-secondary text-sm"
-        >
-          Open Folder
-        </button>
+        {isAndroid() ? (
+          <button
+            onClick={() => shareFile(allFiles[0]).catch(console.error)}
+            className="btn-secondary text-sm"
+          >
+            Save to Downloads
+          </button>
+        ) : (
+          <>
+            <button onClick={() => openFile(allFiles[0])} className="btn-secondary text-sm">
+              Open File
+            </button>
+            <button onClick={() => openFolder(allFiles[0])} className="btn-secondary text-sm">
+              Open Folder
+            </button>
+          </>
+        )}
         {onDoMore ? (
           <button onClick={onDoMore} className="btn-primary text-sm">
             Do More

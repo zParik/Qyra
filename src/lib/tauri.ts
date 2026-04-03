@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { save, open } from "@tauri-apps/plugin-dialog";
+import { isAndroid, androidSavePath, androidOutputDir } from "./androidFileUtils";
 
 export interface PageRange {
   start: number;
@@ -95,20 +96,27 @@ export const openFile = (path: string) =>
 export const showInFolder = (path: string) =>
   invoke<void>("show_in_folder", { path });
 
-export const showSaveDialog = (defaultPath?: string) =>
-  save({
-    defaultPath,
-    filters: [{ name: "PDF", extensions: ["pdf"] }],
-  });
+export const showSaveDialog = async (defaultPath?: string): Promise<string | null> => {
+  if (isAndroid()) {
+    const name = defaultPath ? (defaultPath.split(/[\\/]/).pop() ?? "output.pdf") : "output.pdf";
+    return androidSavePath(name);
+  }
+  return save({ defaultPath, filters: [{ name: "PDF", extensions: ["pdf"] }] });
+};
 
 export const writeBytes = (path: string, data: number[]) =>
   invoke<void>("write_bytes", { path, data });
 
-export const pickDirectory = () =>
-  open({ directory: true, multiple: false }) as Promise<string | null>;
+export const pickDirectory = async (): Promise<string | null> => {
+  if (isAndroid()) return androidOutputDir();
+  return open({ directory: true, multiple: false }) as Promise<string | null>;
+};
 
 export const getContentUriDisplayName = (uri: string) =>
   invoke<string>("get_content_uri_display_name", { uri });
+
+export const shareFile = (path: string) =>
+  invoke<void>("share_file", { path });
 
 export interface StrokeAnnotation {
   tool: string;

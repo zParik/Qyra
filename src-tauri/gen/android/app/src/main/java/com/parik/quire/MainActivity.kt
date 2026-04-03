@@ -1,4 +1,4 @@
-package com.parik.notacrobat
+package com.parik.quire
 
 import android.os.Bundle
 import androidx.activity.enableEdgeToEdge

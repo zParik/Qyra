@@ -1,12 +1,12 @@
 [package]
-name = "notacrobat"
+name = "quire"
 version = "0.1.0"
 description = "The free, offline, open-source PDF Swiss Army Knife"
 authors = ["you"]
 edition = "2021"
 
 [lib]
-name = "notacrobat_lib"
+name = "quire_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

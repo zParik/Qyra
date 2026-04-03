@@ -5,6 +5,7 @@ import { readFile, writeFile } from "@tauri-apps/plugin-fs";
 import { appCacheDir, join } from "@tauri-apps/api/path";
 import { useAppStore } from "../store/useAppStore";
 import { getPdfInfo, getContentUriDisplayName } from "../lib/tauri";
+import { isAndroid, pickFilesAndroid } from "../lib/androidFileUtils";
 
 interface RecentFile {
   path: string;
@@ -12,7 +13,7 @@ interface RecentFile {
   openedAt: number;
 }
 
-const RECENT_KEY = "notacrobat-recent";
+const RECENT_KEY = "quire-recent";
 const MAX_RECENT = 8;
 
 function loadRecent(): RecentFile[] {
@@ -102,6 +103,22 @@ export default function Home() {
 
   const handleBrowse = useCallback(async () => {
     try {
+      if (isAndroid()) {
+        const picked = await pickFilesAndroid("application/pdf,.pdf", false);
+        if (!picked.length) return;
+        // Files are already in app cache dir; name was resolved from the File object
+        const { path, name } = picked[0];
+        setLoading(name);
+        try {
+          const info = await getPdfInfo(path);
+          setViewerFile({ path, name, info });
+        } catch {
+          setViewerFile({ path, name });
+        }
+        addToRecent(path, name);
+        navigate("/view");
+        return;
+      }
       const selected = await open({
         multiple: false,
         filters: [{ name: "PDF Files", extensions: ["pdf"] }],
@@ -156,7 +173,7 @@ export default function Home() {
                 className="font-bold text-sm tracking-tight"
                 style={{ color: "var(--text-primary)" }}
               >
-                NotAcrobat
+                Quire
               </span>
               <span className="text-xs" style={{ color: "var(--text-muted)" }}>
                 Free · Offline · Open Source

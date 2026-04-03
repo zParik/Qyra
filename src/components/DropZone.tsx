@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getPdfInfo } from "../lib/tauri";
 import { useAppStore, LoadedFile } from "../store/useAppStore";
+import { isAndroid, pickFilesAndroid } from "../lib/androidFileUtils";
 
 interface DropZoneProps {
   accept?: string[];
@@ -29,6 +30,15 @@ export function DropZone({ accept = [".pdf"], multiple = true, label }: DropZone
 
   const handleBrowse = useCallback(async () => {
     try {
+      if (isAndroid()) {
+        const mimeAccept = accept.includes(".pdf")
+          ? "application/pdf,.pdf"
+          : "image/png,image/jpeg,image/webp,.heic";
+        const picked = await pickFilesAndroid(mimeAccept, multiple);
+        if (!picked.length) return;
+        await handlePaths(picked.map((f) => f.path));
+        return;
+      }
       const selected = await open({
         multiple,
         filters: accept.includes(".pdf")

@@ -66,8 +66,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
-          releaseName: ${{ github.ref_type == 'tag' && format('NotAcrobat {0}', github.ref_name) || '' }}
-          releaseBody: 'Cross-platform build for NotAcrobat.'
+          releaseName: ${{ github.ref_type == 'tag' && format('Quire {0}', github.ref_name) || '' }}
+          releaseBody: 'Cross-platform build for Quire.'
           releaseDraft: ${{ github.ref_type == 'tag' }}
           prerelease: false
           args: ${{ matrix.args }}
@@ -109,7 +109,7 @@ jobs:
         if: matrix.platform == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: notacrobat-windows
+          name: quire-windows
           path: |
             src-tauri/target/release/bundle/msi/*.msi
             src-tauri/target/release/bundle/nsis/*.exe
@@ -120,7 +120,7 @@ jobs:
         if: matrix.platform == 'ubuntu-24.04'
         uses: actions/upload-artifact@v4
         with:
-          name: notacrobat-linux
+          name: quire-linux
           path: |
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/rpm/*.rpm

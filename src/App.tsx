@@ -5,6 +5,13 @@ import Home from "./tools/Home";
 import Merge from "./tools/Merge";
 import ImagesToPdf from "./tools/ImagesToPdf";
 import Viewer from "./viewer/Viewer";
+import { useOpenWithFile } from "./hooks/useOpenWithFile";
+
+/** Handles "Open with" / double-click file association — must live inside BrowserRouter */
+function OpenWithHandler() {
+  useOpenWithFile();
+  return null;
+}
 
 export default function App() {
   const clearFiles = useAppStore((s) => s.clearFiles);
@@ -19,6 +26,7 @@ export default function App() {
 
   return (
     <BrowserRouter>
+      <OpenWithHandler />
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/view" element={<Viewer />} />

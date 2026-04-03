@@ -2,7 +2,8 @@ import {
   DndContext,
   closestCenter,
   KeyboardSensor,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   useSensor,
   useSensors,
   DragEndEvent,
@@ -64,6 +65,7 @@ function FileCard({
       {/* Drag handle */}
       <div
         {...listeners}
+        style={{ touchAction: "none" }}
         className="absolute top-1 left-1 p-1 cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 z-10"
       >
         <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
@@ -113,7 +115,8 @@ function FileCard({
 
 export function PageGrid({ files, onRemove, onReorder, selectable, selected, onToggleSelect }: PageGridProps) {
   const sensors = useSensors(
-    useSensor(PointerSensor),
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 

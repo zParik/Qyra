@@ -48,7 +48,7 @@ export function seedThumbnailsForReorder(
   }
 }
 
-async function loadDocument(path: string): Promise<pdfjsLib.PDFDocumentProxy> {
+export async function loadDocument(path: string): Promise<pdfjsLib.PDFDocumentProxy> {
   if (docCache.has(path)) return docCache.get(path)!;
 
   const base64 = await readPdfBytes(path);

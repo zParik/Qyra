@@ -2,10 +2,26 @@ mod commands;
 mod utils;
 
 use commands::*;
+use tauri::Emitter;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .setup(|app| {
+            // When opened via "Open with" or double-click, the file path is passed as a CLI arg.
+            // Emit it to the frontend after a short delay so the webview has time to load.
+            let file_path = std::env::args()
+                .skip(1)
+                .find(|a| !a.starts_with('-'));
+            if let Some(path) = file_path {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(800));
+                    handle.emit("open-pdf", path).ok();
+                });
+            }
+            Ok(())
+        })
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -33,6 +49,7 @@ pub fn run() {
             files::show_in_folder,
             files::write_bytes,
             files::get_content_uri_display_name,
+            files::share_file,
             annotate::bake_annotations,
         ])
         .run(tauri::generate_context!())

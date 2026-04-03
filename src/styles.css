@@ -367,3 +367,46 @@
     padding: 0.75rem;
   }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   PDF.js text layer — enables text selection and find-in-document highlights
+   The layer sits absolutely over the page image inside a `position: relative`
+   container and renders transparent spans whose positions match the rendered text.
+───────────────────────────────────────────────────────────────────────── */
+.textLayer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  line-height: 1;
+  /* Ensure layer doesn't create unwanted visual noise */
+  opacity: 1;
+}
+
+.textLayer span,
+.textLayer br {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+.textLayer ::selection {
+  background: rgba(0, 120, 255, 0.30);
+  color: transparent;
+}
+
+/* Find-in-document highlight — applied by TextLayer after renderTextLayer */
+.textLayer .find-highlight {
+  background: rgba(255, 195, 0, 0.50);
+  border-radius: 2px;
+  /* Show a faint color on the match so the user can see where it is */
+  color: rgba(0, 0, 0, 0.01);
+}
+
+/* Current (active) match gets a stronger highlight */
+.textLayer .find-highlight-active {
+  background: rgba(255, 130, 0, 0.65);
+  border-radius: 2px;
+  color: rgba(0, 0, 0, 0.01);
+}
