@@ -54,22 +54,14 @@ jobs:
           echo "${{ secrets.ANDROID_KEYSTORE }}" | base64 --decode > $RUNNER_TEMP/keystore.jks
 
       - name: Build Android APK
-        uses: tauri-apps/tauri-action@v0
+        run: npm run tauri android build
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NDK_HOME: ${{ env.NDK_HOME }}
           ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
-          TAURI_SIGNING_ANDROID_KEYSTORE: $RUNNER_TEMP/keystore.jks
+          TAURI_SIGNING_ANDROID_KEYSTORE: ${{ runner.temp }}/keystore.jks
           TAURI_SIGNING_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           TAURI_SIGNING_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           TAURI_SIGNING_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        with:
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
-          releaseName: ${{ github.ref_type == 'tag' && format('Quire {0}', github.ref_name) || '' }}
-          releaseBody: 'Android build for Quire.'
-          releaseDraft: ${{ github.ref_type == 'tag' }}
-          prerelease: false
-          args: --target android
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -80,3 +72,13 @@ jobs:
             src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
           if-no-files-found: warn
           retention-days: 30
+
+      - name: Upload to GitHub Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          name: Quire ${{ github.ref_name }}
+          files: |
+            src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+            src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
