@@ -7,6 +7,7 @@ use tauri::Emitter;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(commands::cache::SessionCacheState::new())
         .setup(|app| {
             // When opened via "Open with" or double-click, the file path is passed as a CLI arg.
             // Emit it to the frontend after a short delay so the webview has time to load.
@@ -51,6 +52,13 @@ pub fn run() {
             files::get_content_uri_display_name,
             files::share_file,
             annotate::bake_annotations,
+            cache::cache_put,
+            cache::cache_get,
+            cache::cache_has,
+            cache::cache_remove,
+            cache::cache_evict_prefix,
+            cache::cache_stats,
+            cache::cache_clear,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

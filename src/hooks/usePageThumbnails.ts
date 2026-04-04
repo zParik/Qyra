@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import * as pdfjsLib from "pdfjs-dist";
-import { readPdfBytes } from "../lib/tauri";
+import { readFile } from "@tauri-apps/plugin-fs";
+import { sessionCache, thumbKey, thumbPrefix } from "../lib/sessionCache";
 
 // Wire up the PDF.js worker (Vite resolves ?url at build time)
 import pdfjsWorkerUrl from "pdfjs-dist/build/pdf.worker.mjs?url";
@@ -18,6 +19,8 @@ export function evictPathFromThumbnailCache(path: string) {
   for (const key of thumbCache.keys()) {
     if (key.startsWith(`${path}:`)) thumbCache.delete(key);
   }
+  // Also evict from the disk-backed session cache
+  sessionCache.evictPrefix(thumbPrefix(path));
 }
 
 /**
@@ -43,6 +46,8 @@ export function seedThumbnailsForReorder(
       const cached = thumbCache.get(`${oldPath}:${oldPageNum}:${scale}`);
       if (cached) {
         thumbCache.set(`${newPath}:${newPos}:${scale}`, cached);
+        // Also seed the disk cache (fire-and-forget)
+        sessionCache.put(thumbKey(newPath, newPos, scale), cached);
       }
     }
   }
@@ -51,14 +56,21 @@ export function seedThumbnailsForReorder(
 export async function loadDocument(path: string): Promise<pdfjsLib.PDFDocumentProxy> {
   if (docCache.has(path)) return docCache.get(path)!;
 
-  const base64 = await readPdfBytes(path);
+  let data: ArrayBuffer | Uint8Array;
 
-  // Decode base64 via fetch — browser-native and non-blocking.
-  // The old charCodeAt loop over 90M+ bytes was synchronous and froze the UI.
-  const response = await fetch(`data:application/pdf;base64,${base64}`);
-  const buffer = await response.arrayBuffer();
+  try {
+    // Prefer Tauri plugin-fs readFile — binary IPC, no base64 overhead.
+    data = await readFile(path);
+  } catch {
+    // Fallback: readPdfBytes via invoke (base64 encoded — slower, higher memory).
+    const { readPdfBytes } = await import("../lib/tauri");
+    const base64 = await readPdfBytes(path);
+    const response = await fetch(`data:application/pdf;base64,${base64}`);
+    data = await response.arrayBuffer();
+    console.warn("[loadDocument] readFile failed, fell back to base64 path");
+  }
 
-  const doc = await pdfjsLib.getDocument({ data: buffer }).promise;
+  const doc = await pdfjsLib.getDocument({ data }).promise;
   docCache.set(path, doc);
   return doc;
 }
@@ -66,6 +78,14 @@ export async function loadDocument(path: string): Promise<pdfjsLib.PDFDocumentPr
 export async function renderPage(path: string, pageNum: number, scale: number): Promise<string> {
   const key = `${path}:${pageNum}:${scale}`;
   if (thumbCache.has(key)) return thumbCache.get(key)!;
+
+  // Check the disk-backed session cache before doing expensive PDF rendering
+  const diskKey = thumbKey(path, pageNum, scale);
+  const diskHit = await sessionCache.get(diskKey);
+  if (diskHit) {
+    thumbCache.set(key, diskHit);
+    return diskHit;
+  }
 
   const doc = await loadDocument(path);
   const page = await doc.getPage(pageNum);
@@ -83,6 +103,8 @@ export async function renderPage(path: string, pageNum: number, scale: number): 
 
   const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
   thumbCache.set(key, dataUrl);
+  // Write-through: persist to disk cache (fire-and-forget)
+  sessionCache.put(diskKey, dataUrl);
   return dataUrl;
 }
 
@@ -126,10 +148,85 @@ export async function renderPageForExport(
 }
 
 /**
- * Renders thumbnails for all pages of a single PDF using PDF.js.
- * Pages render sequentially so page 1 appears immediately; later pages fill in progressively.
+ * LAZY thumbnail hook — only renders pages whose IDs appear in `visiblePageNums`.
+ * Pages that scroll out of view keep their cached thumbnail (no re-render needed).
+ *
+ * This is the primary hook used by the Viewer's center pane.
  */
-export function usePageThumbnails(path: string | null, pageCount: number, scale = 1.2) {
+export function usePageThumbnails(
+  path: string | null,
+  pageCount: number,
+  scale: number,
+  visiblePageNums?: Set<number>,
+) {
+  const [thumbnails, setThumbnails] = useState<Record<number, string>>({});
+  const activeRef = useRef(true);
+  // Track in-flight renders to avoid duplicate work
+  const inFlightRef = useRef<Set<number>>(new Set());
+
+  // Reset when path changes
+  useEffect(() => {
+    activeRef.current = true;
+    setThumbnails({});
+    inFlightRef.current.clear();
+    return () => {
+      activeRef.current = false;
+    };
+  }, [path, pageCount, scale]);
+
+  // Render visible pages on demand
+  useEffect(() => {
+    if (!path || pageCount === 0 || !visiblePageNums || visiblePageNums.size === 0) return;
+
+    let cancelled = false;
+
+    async function renderVisible() {
+      // Sort so pages render top-to-bottom
+      const pages = Array.from(visiblePageNums!).sort((a, b) => a - b);
+
+      for (const page of pages) {
+        if (cancelled || !activeRef.current) break;
+        if (page < 1 || page > pageCount) continue;
+
+        // Already rendered or in flight
+        const key = `${path}:${page}:${scale}`;
+        if (thumbnails[page]) continue; // already in state — skip to avoid infinite loop
+        if (thumbCache.has(key)) {
+          // Cache hit — just update state
+          setThumbnails((prev) => ({ ...prev, [page]: thumbCache.get(key)! }));
+          continue;
+        }
+        if (inFlightRef.current.has(page)) continue;
+
+        inFlightRef.current.add(page);
+        try {
+          const dataUrl = await renderPage(path!, page, scale);
+          if (!cancelled && activeRef.current) {
+            setThumbnails((prev) => ({ ...prev, [page]: dataUrl }));
+          }
+        } catch (e) {
+          console.error(`Page ${page} render failed:`, e);
+        } finally {
+          inFlightRef.current.delete(page);
+        }
+      }
+    }
+
+    renderVisible();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path, pageCount, scale, visiblePageNums]);
+
+  return thumbnails;
+}
+
+/**
+ * Eager thumbnail hook — renders ALL pages sequentially (original behavior).
+ * Used by PageStrip where all thumbnails eventually need to be generated
+ * but are small (0.3x scale).  Still renders progressively so page 1 appears
+ * first.
+ */
+export function usePageThumbnailsEager(path: string | null, pageCount: number, scale = 1.2) {
   const [thumbnails, setThumbnails] = useState<Record<number, string>>({});
   const activeRef = useRef(true);
 

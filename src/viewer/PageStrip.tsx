@@ -1,4 +1,4 @@
-import { Fragment } from "react";
+import { Fragment, useRef, useEffect, useState, useCallback } from "react";
 
 interface PageStripProps {
   pageCount: number;
@@ -11,6 +11,14 @@ interface PageStripProps {
   splitAfter?: number;
   onSplitAfterChange?: (page: number) => void;
 }
+
+/**
+ * Fixed height for each thumbnail slot (image + label + gap).
+ * Using a fixed height lets us calculate which items are visible
+ * without measuring every element.
+ */
+const SLOT_HEIGHT = 120; // px (thumbnail ~96px + label ~16px + padding ~8px)
+const BUFFER_PX = 400;   // render this many pixels ahead/behind viewport
 
 export function PageStrip({
   pageCount,
@@ -27,16 +35,51 @@ export function PageStrip({
 
   const isSplitMode = onSplitAfterChange !== undefined;
 
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [visibleRange, setVisibleRange] = useState<[number, number]>([1, 20]);
+
+  // Calculate which pages are visible based on scroll position
+  const updateVisibleRange = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const scrollTop = el.scrollTop;
+    const viewportHeight = el.clientHeight;
+
+    const firstVisible = Math.max(1, Math.floor((scrollTop - BUFFER_PX) / SLOT_HEIGHT) + 1);
+    const lastVisible = Math.min(pageCount, Math.ceil((scrollTop + viewportHeight + BUFFER_PX) / SLOT_HEIGHT));
+    setVisibleRange((prev) => {
+      if (prev[0] === firstVisible && prev[1] === lastVisible) return prev;
+      return [firstVisible, lastVisible];
+    });
+  }, [pageCount]);
+
+  useEffect(() => {
+    updateVisibleRange();
+  }, [pageCount, updateVisibleRange]);
+
+  // On scroll, update visible range
+  const handleScroll = useCallback(() => {
+    updateVisibleRange();
+  }, [updateVisibleRange]);
+
+  // Total scrollable height
+  const totalHeight = pageCount * SLOT_HEIGHT;
+
   return (
     <div
-      className="w-32.5 shrink-0 overflow-y-auto"
+      ref={scrollRef}
+      className="w-32.5 flex-1 min-h-0 overflow-y-auto"
       style={{
         background: "var(--viewer-bg)",
         borderRight: "1px solid var(--viewer-border)",
       }}
+      onScroll={handleScroll}
     >
-      <div className="p-2 space-y-1.5">
-        {Array.from({ length: pageCount }, (_, i) => i + 1).map((page) => {
+      <div style={{ height: totalHeight, position: "relative" }}>
+        {Array.from(
+          { length: visibleRange[1] - visibleRange[0] + 1 },
+          (_, i) => visibleRange[0] + i,
+        ).map((page) => {
           const isSelected = selectionMode && !isSplitMode && (selectedPages?.has(page) ?? false);
           const isActive = !selectionMode && !isSplitMode && page === currentPage;
           const isSplitPoint = isSplitMode && splitAfter === page;
@@ -51,13 +94,20 @@ export function PageStrip({
             }
           }
 
+          const top = (page - 1) * SLOT_HEIGHT;
+
           return (
             <Fragment key={page}>
               <button
                 onClick={handleClick}
-                className="w-full rounded-lg overflow-hidden border-2 transition-colors block relative"
+                className="rounded-lg overflow-hidden border-2 transition-colors block relative"
                 title={isSplitMode ? `Split after page ${page}` : undefined}
                 style={{
+                  position: "absolute",
+                  top,
+                  left: 8,
+                  right: 8,
+                  height: SLOT_HEIGHT - 6,
                   borderColor: isSelected
                     ? "var(--v-bad-border, #ef4444)"
                     : isActive || isSplitPoint
@@ -75,8 +125,8 @@ export function PageStrip({
                 }}
               >
                 <div
-                  className="aspect-3/4 flex items-center justify-center relative"
-                  style={{ background: "var(--viewer-elevated)" }}
+                  className="flex items-center justify-center relative"
+                  style={{ background: "var(--viewer-elevated)", height: SLOT_HEIGHT - 28 }}
                 >
                   {thumbnails[page] ? (
                     <img
@@ -126,8 +176,15 @@ export function PageStrip({
               {/* Split divider — rendered after page N when splitAfter === N */}
               {isSplitMode && splitAfter === page && page < pageCount && (
                 <div
-                  className="relative flex items-center gap-1.5 py-0.5 mx-0.5"
-                  style={{ color: "var(--action)" }}
+                  className="relative flex items-center gap-1.5"
+                  style={{
+                    position: "absolute",
+                    top: top + SLOT_HEIGHT - 4,
+                    left: 8,
+                    right: 8,
+                    height: 8,
+                    color: "var(--action)",
+                  }}
                 >
                   <div className="flex-1 h-px" style={{ background: "var(--action)" }} />
                   <svg
