@@ -1,10 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAppStore, LoadedFile } from "../store/useAppStore";
 import { useNotesStore, PageTemplate, VirtualPage } from "../store/useNotesStore";
 
 const EMPTY_VIRTUAL_PAGES: VirtualPage[] = [];
-import { usePageThumbnails } from "../hooks/usePageThumbnails";
+import { usePageThumbnails, usePageThumbnailsEager } from "../hooks/usePageThumbnails";
 import { PageStrip } from "./PageStrip";
 import { ToolSidebar, ViewerTool } from "./ToolSidebar";
 import { getPdfInfo, copyFile, showSaveDialog, bakeAnnotations } from "../lib/tauri";
@@ -16,6 +16,7 @@ import { DrawToolbar } from "./tools/DrawToolbar";
 import { TextLayer } from "./TextLayer";
 import { FindBar } from "./FindBar";
 import { loadDocument } from "../hooks/usePageThumbnails";
+import { useVisiblePages } from "../hooks/useVisiblePages";
 
 export default function Viewer() {
   const navigate = useNavigate();
@@ -98,11 +99,51 @@ export default function Viewer() {
     return slots;
   }, [virtualPages, pageCount]);
 
-  const stripThumbnails = usePageThumbnails(viewerFile?.path ?? null, pageCount, 0.3);
-  const centerThumbnails = usePageThumbnails(viewerFile?.path ?? null, pageCount, 2.0);
-
+  // --- Visibility tracking for lazy rendering ---
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const { visibleIds, observe, unobserve: _unobserve } = useVisiblePages(scrollContainerRef, 1200);
+
+  // Derive the set of visible PDF page numbers from visible slot IDs
+  const visiblePageNums = useMemo(() => {
+    const nums = new Set<number>();
+    for (const id of visibleIds) {
+      if (id.startsWith("pdf-")) {
+        const n = parseInt(id.slice(4), 10);
+        if (!isNaN(n)) nums.add(n);
+      }
+    }
+    return nums;
+  }, [visibleIds]);
+
+  const stripThumbnails = usePageThumbnailsEager(viewerFile?.path ?? null, pageCount, 0.3);
+  const centerThumbnails = usePageThumbnails(viewerFile?.path ?? null, pageCount, 2.0, visiblePageNums);
+
   const pageRefs = useRef<Record<number, HTMLDivElement | null>>({});
+
+  const pageCallbacksRef = useRef<Record<string, (el: HTMLDivElement | null) => void>>({});
+  
+  // Stable ref-callback factory to prevent infinite detached/attached DOM polling
+  const getPageRef = useCallback((slotId: string) => {
+    if (!pageCallbacksRef.current[slotId]) {
+      pageCallbacksRef.current[slotId] = (el: HTMLDivElement | null) => {
+        if (slotId.startsWith("pdf-")) {
+          const pageNum = parseInt(slotId.slice(4), 10);
+          if (!isNaN(pageNum)) pageRefs.current[pageNum] = el;
+        }
+        // Observe directly if observer is ready
+        if (el) observe(el, slotId);
+      };
+    }
+    return pageCallbacksRef.current[slotId];
+  }, [observe]);
+
+  // Fallback: If observer wasn't ready when refs first attached, observe them now
+  useEffect(() => {
+    for (let page = 1; page <= pageCount; page++) {
+      const el = pageRefs.current[page];
+      if (el) observe(el, `pdf-${page}`);
+    }
+  }, [observe, pageCount]);
 
   useEffect(() => {
     if (!viewerFile) navigate("/");
@@ -310,7 +351,15 @@ export default function Viewer() {
 
   function scrollToPage(page: number) {
     setCurrentPage(page);
-    pageRefs.current[page]?.scrollIntoView({ behavior: "smooth", block: "start" });
+    const container = scrollContainerRef.current;
+    const el = pageRefs.current[page];
+    if (container && el) {
+      const gbcContainer = container.getBoundingClientRect();
+      const gbcEl = el.getBoundingClientRect();
+      container.scrollTop += gbcEl.top - gbcContainer.top;
+    } else {
+      pageRefs.current[page]?.scrollIntoView({ behavior: "auto", block: "start" });
+    }
   }
 
   async function handleOpenFile(path: string) {
@@ -748,7 +797,7 @@ export default function Viewer() {
       <div className="flex flex-1 overflow-hidden relative">
         {/* Left: page strip — always visible on desktop, slide-in drawer on mobile */}
         <div
-          className={`h-full flex-col ${
+          className={`h-full shrink-0 flex-col ${
             showStrip
               ? "flex absolute inset-y-0 left-0 z-20 sm:static sm:flex"
               : "hidden sm:flex"
@@ -842,13 +891,15 @@ export default function Viewer() {
             )}
 
             {pageSlots.map((slot) => {
+              const isVisible = visibleIds.has(slot.slotId);
+
               if (slot.type === 'pdf') {
                 const page = slot.pdfPage;
                 const isSelected = activeTool === "remove" && selectedPages.has(page);
                 return (
                   <React.Fragment key={slot.slotId}>
                     <div
-                      ref={(el) => { pageRefs.current[page] = el; }}
+                      ref={getPageRef(slot.slotId)}
                       className="relative my-4 sm:my-8"
                       style={{
                         width: `min(${Math.round(zoom * 768)}px, 100%)`,
@@ -856,52 +907,72 @@ export default function Viewer() {
                       }}
                       onClick={activeTool === "remove" ? () => handlePageToggle(page) : undefined}
                     >
-                      {centerThumbnails[page] ? (
-                        <img
-                          src={centerThumbnails[page]}
-                          alt={`Page ${page}`}
-                          className="w-full rounded shadow-2xl block"
-                          draggable={false}
-                          style={isSelected ? { outline: "3px solid #ef4444", borderRadius: "0.5rem" } : undefined}
-                        />
+                      {/* Only render heavy content (image, text layer, drawing canvas) for visible pages */}
+                      {isVisible || centerThumbnails[page] ? (
+                        <>
+                          {centerThumbnails[page] ? (
+                            <img
+                              src={centerThumbnails[page]}
+                              alt={`Page ${page}`}
+                              className="w-full rounded shadow-2xl block"
+                              draggable={false}
+                              style={isSelected ? { outline: "3px solid #ef4444", borderRadius: "0.5rem" } : undefined}
+                            />
+                          ) : (
+                            <div
+                              className="rounded flex flex-col items-center justify-center gap-2"
+                              style={{
+                                aspectRatio: "1/1.4142",
+                                background: "color-mix(in oklch, var(--viewer-elevated) 60%, transparent)",
+                                border: isSelected ? "3px solid #ef4444" : "1px solid var(--viewer-border-sub)",
+                              }}
+                            >
+                              <svg className="w-6 h-6 animate-spin" style={{ color: "var(--viewer-text-muted)" }} fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                              </svg>
+                              <span className="text-xs" style={{ color: "var(--viewer-text-muted)" }}>Page {page}</span>
+                            </div>
+                          )}
+                          {isSelected && (
+                            <div className="absolute inset-0 rounded flex items-center justify-center pointer-events-none"
+                              style={{ background: "rgba(239, 68, 68, 0.25)" }}>
+                              <div className="rounded-full p-2" style={{ background: "rgba(239, 68, 68, 0.85)" }}>
+                                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </div>
+                            </div>
+                          )}
+                          {isVisible && (
+                            <TextLayer
+                              pdfPath={viewerFile.path}
+                              pageNum={page}
+                              zoom={zoom}
+                              findQuery={findOpen ? findQuery : undefined}
+                              isDrawingMode={activeTool === "draw"}
+                            />
+                          )}
+                          {isVisible && (
+                            <DrawingCanvas
+                              pageSlotId={slot.slotId}
+                              docPath={viewerFile.path}
+                              isDrawingMode={activeTool === "draw"}
+                              zoom={zoom}
+                            />
+                          )}
+                        </>
                       ) : (
+                        /* Lightweight placeholder for off-screen pages — maintains scroll height */
                         <div
-                          className="aspect-3/4 rounded flex flex-col items-center justify-center gap-2"
+                          className="rounded"
                           style={{
-                            background: "color-mix(in oklch, var(--viewer-elevated) 60%, transparent)",
+                            aspectRatio: "1/1.4142",
+                            background: "color-mix(in oklch, var(--viewer-elevated) 40%, transparent)",
                             border: isSelected ? "3px solid #ef4444" : "1px solid var(--viewer-border-sub)",
                           }}
-                        >
-                          <svg className="w-8 h-8" style={{ color: "var(--viewer-text-muted)" }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1}
-                              d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                          </svg>
-                          <span className="text-xs" style={{ color: "var(--viewer-text-muted)" }}>Page {page}</span>
-                        </div>
+                        />
                       )}
-                      {isSelected && (
-                        <div className="absolute inset-0 rounded flex items-center justify-center pointer-events-none"
-                          style={{ background: "rgba(239, 68, 68, 0.25)" }}>
-                          <div className="rounded-full p-2" style={{ background: "rgba(239, 68, 68, 0.85)" }}>
-                            <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                          </div>
-                        </div>
-                      )}
-                      <TextLayer
-                        pdfPath={viewerFile.path}
-                        pageNum={page}
-                        zoom={zoom}
-                        findQuery={findOpen ? findQuery : undefined}
-                        isDrawingMode={activeTool === "draw"}
-                      />
-                      <DrawingCanvas
-                        pageSlotId={slot.slotId}
-                        docPath={viewerFile.path}
-                        isDrawingMode={activeTool === "draw"}
-                        zoom={zoom}
-                      />
                     </div>
                     {/* Add-page bar after this real page */}
                     {activeTool === "draw" && (
@@ -917,31 +988,36 @@ export default function Viewer() {
                 return (
                   <div
                     key={slot.slotId}
+                    ref={getPageRef(slot.slotId)}
                     className="relative my-4 sm:my-8 rounded shadow-2xl overflow-hidden"
                     style={{ width: `min(${pageW}px, 100%)`, aspectRatio: `${pageW}/${pageH}` }}
                   >
-                    <VirtualPageBackground
-                      template={vp.template}
-                      width={pageW}
-                      height={pageH}
-                    />
-                    <DrawingCanvas
-                      pageSlotId={slot.slotId}
-                      docPath={viewerFile.path}
-                      isDrawingMode={activeTool === "draw"}
-                      zoom={zoom}
-                    />
-                    {/* Label */}
-                    <div
-                      className="absolute top-2 right-2 text-xs px-1.5 py-0.5 rounded pointer-events-none"
-                      style={{
-                        background: "rgba(0,0,0,0.12)",
-                        color: "#888",
-                        textTransform: "capitalize",
-                      }}
-                    >
-                      {vp.template}
-                    </div>
+                    {isVisible ? (
+                      <>
+                        <VirtualPageBackground
+                          template={vp.template}
+                          width={pageW}
+                          height={pageH}
+                        />
+                        <DrawingCanvas
+                          pageSlotId={slot.slotId}
+                          docPath={viewerFile.path}
+                          isDrawingMode={activeTool === "draw"}
+                          zoom={zoom}
+                        />
+                        {/* Label */}
+                        <div
+                          className="absolute top-2 right-2 text-xs px-1.5 py-0.5 rounded pointer-events-none"
+                          style={{
+                            background: "rgba(0,0,0,0.12)",
+                            color: "#888",
+                            textTransform: "capitalize",
+                          }}
+                        >
+                          {vp.template}
+                        </div>
+                      </>
+                    ) : null}
                   </div>
                 );
               }

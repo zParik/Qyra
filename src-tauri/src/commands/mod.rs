@@ -13,3 +13,4 @@ pub mod metadata;
 pub mod files;
 pub mod print;
 pub mod annotate;
+pub mod cache;
