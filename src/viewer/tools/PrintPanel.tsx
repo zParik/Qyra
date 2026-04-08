@@ -1,12 +1,10 @@
 import * as pdfjsLib from "pdfjs-dist";
-import { readPdfBytes } from "../../lib/tauri";
+import { convertFileSrc } from "@tauri-apps/api/core";
 
 /** Render every page of a PDF to image data-URLs via PDF.js, then print via a hidden iframe. */
 export async function triggerPrint(path: string): Promise<void> {
-  const base64 = await readPdfBytes(path);
-  const resp = await fetch(`data:application/pdf;base64,${base64}`);
-  const buffer = await resp.arrayBuffer();
-  const doc = await pdfjsLib.getDocument({ data: buffer }).promise;
+  const url = convertFileSrc(path);
+  const doc = await pdfjsLib.getDocument({ url }).promise;
 
   const images: string[] = [];
   for (let i = 1; i <= doc.numPages; i++) {

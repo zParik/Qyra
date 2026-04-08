@@ -42,8 +42,14 @@ export const splitPdf = (path: string, ranges: PageRange[], outputDir?: string) 
 export const splitPdfPerPage = (path: string, outputDir?: string) =>
   invoke<string[]>("split_pdf_per_page", { path, outputDir });
 
+export interface CompressResult {
+  path: string;
+  original_bytes: number;
+  compressed_bytes: number;
+}
+
 export const compressPdf = (path: string, output?: string, level?: number) =>
-  invoke<string>("compress_pdf", { path, output, level });
+  invoke<CompressResult>("compress_pdf", { path, output, level });
 
 export const rotatePages = (path: string, pages: number[], degrees: number, output?: string) =>
   invoke<string>("rotate_pages", { path, pages, degrees, output });

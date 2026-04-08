@@ -14,3 +14,4 @@ pub mod files;
 pub mod print;
 pub mod annotate;
 pub mod cache;
+pub mod page_count;

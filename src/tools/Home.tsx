@@ -4,7 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { readFile, writeFile } from "@tauri-apps/plugin-fs";
 import { appCacheDir, join } from "@tauri-apps/api/path";
 import { useAppStore } from "../store/useAppStore";
-import { getPdfInfo, getContentUriDisplayName } from "../lib/tauri";
+import { getContentUriDisplayName } from "../lib/tauri";
 import { isAndroid, pickFilesAndroid } from "../lib/androidFileUtils";
 
 interface RecentFile {
@@ -91,12 +91,9 @@ export default function Home() {
     setLoading(name);
     // Resolve Android content:// URIs to a real temp file path before invoking Rust commands
     const path = await resolveAndroidUri(rawPath).catch(() => rawPath);
-    try {
-      const info = await getPdfInfo(path);
-      setViewerFile({ path, name, info });
-    } catch {
-      setViewerFile({ path, name });
-    }
+    // Navigate immediately — the Viewer loads page count and metadata lazily so we don't
+    // block here on a full lopdf document parse (which is very slow for large PDFs).
+    setViewerFile({ path, name });
     addToRecent(path, name);
     navigate("/view");
   }
@@ -109,12 +106,7 @@ export default function Home() {
         // Files are already in app cache dir; name was resolved from the File object
         const { path, name } = picked[0];
         setLoading(name);
-        try {
-          const info = await getPdfInfo(path);
-          setViewerFile({ path, name, info });
-        } catch {
-          setViewerFile({ path, name });
-        }
+        setViewerFile({ path, name });
         addToRecent(path, name);
         navigate("/view");
         return;

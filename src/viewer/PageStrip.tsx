@@ -10,6 +10,7 @@ interface PageStripProps {
   onPageToggle?: (page: number) => void;
   splitAfter?: number;
   onSplitAfterChange?: (page: number) => void;
+  onVisibleRangeChange?: (range: [number, number]) => void;
 }
 
 /**
@@ -30,13 +31,16 @@ export function PageStrip({
   onPageToggle,
   splitAfter,
   onSplitAfterChange,
+  onVisibleRangeChange,
 }: PageStripProps) {
-  if (pageCount === 0) return null;
-
   const isSplitMode = onSplitAfterChange !== undefined;
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [visibleRange, setVisibleRange] = useState<[number, number]>([1, 20]);
+  // Start tiny; first layout pass computes the real viewport range.
+  // This avoids kicking off a large burst of thumbnail renders on open.
+  const [visibleRange, setVisibleRange] = useState<[number, number]>([1, 1]);
+  // Track range in a ref so updateVisibleRange can dedup without stale closure issues
+  const visibleRangeRef = useRef<[number, number]>([1, 1]);
 
   // Calculate which pages are visible based on scroll position
   const updateVisibleRange = useCallback(() => {
@@ -47,11 +51,17 @@ export function PageStrip({
 
     const firstVisible = Math.max(1, Math.floor((scrollTop - BUFFER_PX) / SLOT_HEIGHT) + 1);
     const lastVisible = Math.min(pageCount, Math.ceil((scrollTop + viewportHeight + BUFFER_PX) / SLOT_HEIGHT));
-    setVisibleRange((prev) => {
-      if (prev[0] === firstVisible && prev[1] === lastVisible) return prev;
-      return [firstVisible, lastVisible];
-    });
-  }, [pageCount]);
+
+    const [pf, pl] = visibleRangeRef.current;
+    if (pf === firstVisible && pl === lastVisible) return;
+
+    const next: [number, number] = [firstVisible, lastVisible];
+    visibleRangeRef.current = next;
+    setVisibleRange(next);
+    // Must be called outside the setState updater — calling setState on another
+    // component from inside a state reducer triggers a React invariant error.
+    onVisibleRangeChange?.(next);
+  }, [pageCount, onVisibleRangeChange]);
 
   useEffect(() => {
     updateVisibleRange();
@@ -64,6 +74,9 @@ export function PageStrip({
 
   // Total scrollable height
   const totalHeight = pageCount * SLOT_HEIGHT;
+
+  // Keep hooks order stable across renders.
+  if (pageCount === 0) return null;
 
   return (
     <div

@@ -3548,6 +3548,7 @@ name = "quire"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "flate2",
  "image",
  "jni",
  "lopdf 0.40.0",
@@ -3562,6 +3563,7 @@ dependencies = [
  "tauri-plugin-fs",
  "tauri-plugin-opener",
  "tempfile",
+ "thiserror 1.0.69",
  "tokio",
 ]
 

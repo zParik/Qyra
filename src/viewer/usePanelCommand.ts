@@ -8,7 +8,7 @@ export interface ProgressData {
 }
 
 /** Map raw Rust / system error strings to user-readable messages. */
-function sanitizeError(e: unknown): string {
+export function sanitizeError(e: unknown): string {
   const raw = String(e);
 
   if (/password|encrypted|decrypt|wrong password|incorrect password/i.test(raw))
