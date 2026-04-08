@@ -7,7 +7,7 @@ const EMPTY_VIRTUAL_PAGES: VirtualPage[] = [];
 import { usePageThumbnails } from "../hooks/usePageThumbnails";
 import { PageStrip } from "./PageStrip";
 import { ToolSidebar, ViewerTool } from "./ToolSidebar";
-import { getPdfInfo, copyFile, showSaveDialog, bakeAnnotations } from "../lib/tauri";
+import { copyFile, showSaveDialog, bakeAnnotations } from "../lib/tauri";
 import { triggerPrint } from "./tools/PrintPanel";
 import { evictPathFromThumbnailCache } from "../hooks/usePageThumbnails";
 import { DrawingCanvas } from "./DrawingCanvas";
