@@ -9,6 +9,7 @@ interface TextLayerProps {
   zoom: number;
   findQuery?: string;
   isDrawingMode?: boolean;
+  enabled?: boolean;
 }
 
 /**
@@ -18,12 +19,16 @@ interface TextLayerProps {
  * Must be placed inside a `position: relative` container that is sized to match
  * the displayed page image.
  */
-export function TextLayer({ pdfPath, pageNum, zoom, findQuery, isDrawingMode }: TextLayerProps) {
+export function TextLayer({ pdfPath, pageNum, zoom, findQuery, isDrawingMode, enabled = true }: TextLayerProps) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
+    if (!enabled) {
+      el.innerHTML = "";
+      return;
+    }
 
     let cancelled = false;
     let renderTask: PdfjsTextLayer | null = null;
@@ -81,7 +86,7 @@ export function TextLayer({ pdfPath, pageNum, zoom, findQuery, isDrawingMode }: 
         try { renderTask.cancel(); } catch { /* cancelled render throws, ignore */ }
       }
     };
-  }, [pdfPath, pageNum, zoom, findQuery]);
+  }, [pdfPath, pageNum, zoom, findQuery, enabled]);
 
   return (
     <div

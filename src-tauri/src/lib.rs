@@ -1,4 +1,5 @@
 mod commands;
+mod pdf;
 mod utils;
 
 use commands::*;
@@ -52,6 +53,8 @@ pub fn run() {
             files::get_content_uri_display_name,
             files::share_file,
             annotate::bake_annotations,
+            page_count::get_page_count,
+            page_count::get_file_size,
             cache::cache_put,
             cache::cache_get,
             cache::cache_has,

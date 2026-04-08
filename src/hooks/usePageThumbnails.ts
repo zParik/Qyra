@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 import { readFile } from "@tauri-apps/plugin-fs";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { sessionCache, thumbKey, thumbPrefix } from "../lib/sessionCache";
 
 // Wire up the PDF.js worker (Vite resolves ?url at build time)
@@ -12,6 +13,34 @@ const docCache = new Map<string, pdfjsLib.PDFDocumentProxy>();
 
 // Cache rendered thumbnails: "path:page:scale" -> data URL
 const thumbCache = new Map<string, string>();
+
+// Global render queue — ensures only one PDF.js canvas render runs at a time.
+// Without this, strip (0.3x) and center (2.0x) renders compete, pegging the worker.
+let renderSlotFree = true;
+const renderWaiters: Array<() => void> = [];
+let renderTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+function acquireRenderSlot(): Promise<void> {
+  if (renderSlotFree) {
+    renderSlotFree = false;
+    // Set a 30s timeout safety net in case releaseRenderSlot never gets called
+    renderTimeoutId = setTimeout(() => {
+      console.warn("[acquireRenderSlot] Timeout: render slot not released after 30s, forcing release");
+      releaseRenderSlot();
+    }, 30000);
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve) => renderWaiters.push(resolve));
+}
+
+function releaseRenderSlot(): void {
+  if (renderTimeoutId) {
+    clearTimeout(renderTimeoutId);
+    renderTimeoutId = null;
+  }
+  const next = renderWaiters.shift();
+  if (next) { next(); } else { renderSlotFree = true; }
+}
 
 /** Evict all cache entries for a given path so the next render reads fresh data from disk. */
 export function evictPathFromThumbnailCache(path: string) {
@@ -56,13 +85,25 @@ export function seedThumbnailsForReorder(
 export async function loadDocument(path: string): Promise<pdfjsLib.PDFDocumentProxy> {
   if (docCache.has(path)) return docCache.get(path)!;
 
-  let data: ArrayBuffer | Uint8Array;
-
+  // Primary path: serve via asset:// so PDF.js uses HTTP range requests.
+  // PDF.js fetches only the XRef table + the bytes for each rendered page on
+  // demand — never loads the full file upfront. Critical for large PDFs.
   try {
-    // Prefer Tauri plugin-fs readFile — binary IPC, no base64 overhead.
+    const url = convertFileSrc(path);
+    const doc = await pdfjsLib.getDocument({ url }).promise;
+    docCache.set(path, doc);
+    return doc;
+  } catch {
+    // Falls through to full-buffer fallback (e.g. Android content URIs that
+    // the asset protocol can't serve, or if range requests aren't supported).
+    console.warn("[loadDocument] asset:// load failed, falling back to full buffer load");
+  }
+
+  // Fallback: load entire file into memory as ArrayBuffer.
+  let data: ArrayBuffer | Uint8Array;
+  try {
     data = await readFile(path);
   } catch {
-    // Fallback: readPdfBytes via invoke (base64 encoded — slower, higher memory).
     const { readPdfBytes } = await import("../lib/tauri");
     const base64 = await readPdfBytes(path);
     const response = await fetch(`data:application/pdf;base64,${base64}`);
@@ -87,25 +128,44 @@ export async function renderPage(path: string, pageNum: number, scale: number): 
     return diskHit;
   }
 
-  const doc = await loadDocument(path);
-  const page = await doc.getPage(pageNum);
-  const viewport = page.getViewport({ scale });
+  // Serialize all canvas renders through a single slot so the PDF.js worker
+  // isn't hit from multiple concurrent callers (strip + center hooks).
+  await acquireRenderSlot();
+  try {
+    // Re-check cache in case another render completed while we were waiting
+    if (thumbCache.has(key)) return thumbCache.get(key)!;
 
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.floor(viewport.width);
-  canvas.height = Math.floor(viewport.height);
+    const doc = await loadDocument(path);
+    const page = await doc.getPage(pageNum);
+    const viewport = page.getViewport({ scale });
 
-  await page.render({
-    canvasContext: canvas.getContext("2d")!,
-    viewport,
-    canvas,
-  }).promise;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.floor(viewport.width));
+    canvas.height = Math.max(1, Math.floor(viewport.height));
 
-  const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
-  thumbCache.set(key, dataUrl);
-  // Write-through: persist to disk cache (fire-and-forget)
-  sessionCache.put(diskKey, dataUrl);
-  return dataUrl;
+    const startTime = performance.now();
+    await page.render({
+      canvasContext: canvas.getContext("2d")!,
+      viewport,
+      canvas,
+    }).promise;
+    const renderTime = performance.now() - startTime;
+
+    if (pageNum <= 3) {
+      console.log(`[render] Page ${pageNum} at ${scale}x took ${renderTime.toFixed(0)}ms`);
+    }
+
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+    thumbCache.set(key, dataUrl);
+    // Write-through: persist to disk cache (fire-and-forget)
+    sessionCache.put(diskKey, dataUrl);
+    return dataUrl;
+  } catch (e) {
+    console.error(`[renderPage] Error rendering page ${pageNum}:`, e);
+    throw e;
+  } finally {
+    releaseRenderSlot();
+  }
 }
 
 /**
@@ -123,8 +183,8 @@ export async function renderPageForExport(
   const viewport = page.getViewport({ scale });
 
   const canvas = document.createElement("canvas");
-  canvas.width = Math.floor(viewport.width);
-  canvas.height = Math.floor(viewport.height);
+  canvas.width = Math.max(1, Math.floor(viewport.width));
+  canvas.height = Math.max(1, Math.floor(viewport.height));
 
   await page.render({
     canvasContext: canvas.getContext("2d")!,
@@ -163,6 +223,10 @@ export function usePageThumbnails(
   const activeRef = useRef(true);
   // Track in-flight renders to avoid duplicate work
   const inFlightRef = useRef<Set<number>>(new Set());
+  // Stable key for visible pages to avoid re-runs when Set object changes but pages are the same
+  const visibleKey = visiblePageNums
+    ? Array.from(visiblePageNums).sort((a, b) => a - b).join(',')
+    : '';
 
   // Reset when path changes
   useEffect(() => {
@@ -178,44 +242,32 @@ export function usePageThumbnails(
   useEffect(() => {
     if (!path || pageCount === 0 || !visiblePageNums || visiblePageNums.size === 0) return;
 
-    let cancelled = false;
+    const pagesRequested = Array.from(visiblePageNums!)
+      .sort((a, b) => a - b); // Prioritize top-to-bottom
 
-    async function renderVisible() {
-      // Sort so pages render top-to-bottom
-      const pages = Array.from(visiblePageNums!).sort((a, b) => a - b);
+    // Queue all visible pages for rendering (render slot serializes the actual rendering)
+    for (const page of pagesRequested) {
+      if (page < 1 || page > pageCount) continue;
 
-      for (const page of pages) {
-        if (cancelled || !activeRef.current) break;
-        if (page < 1 || page > pageCount) continue;
+      const key = `${path}:${page}:${scale}`;
+      // Skip if already rendered or in-flight
+      if (thumbCache.has(key) || inFlightRef.current.has(page)) continue;
 
-        // Already rendered or in flight
-        const key = `${path}:${page}:${scale}`;
-        if (thumbnails[page]) continue; // already in state — skip to avoid infinite loop
-        if (thumbCache.has(key)) {
-          // Cache hit — just update state
-          setThumbnails((prev) => ({ ...prev, [page]: thumbCache.get(key)! }));
-          continue;
-        }
-        if (inFlightRef.current.has(page)) continue;
-
-        inFlightRef.current.add(page);
-        try {
-          const dataUrl = await renderPage(path!, page, scale);
-          if (!cancelled && activeRef.current) {
+      inFlightRef.current.add(page);
+      renderPage(path!, page, scale)
+        .then((dataUrl) => {
+          if (activeRef.current) {
             setThumbnails((prev) => ({ ...prev, [page]: dataUrl }));
           }
-        } catch (e) {
+        })
+        .catch((e) => {
           console.error(`Page ${page} render failed:`, e);
-        } finally {
+        })
+        .finally(() => {
           inFlightRef.current.delete(page);
-        }
-      }
+        });
     }
-
-    renderVisible();
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path, pageCount, scale, visiblePageNums]);
+  }, [path, pageCount, scale, visibleKey]);
 
   return thumbnails;
 }

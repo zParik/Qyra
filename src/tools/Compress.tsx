@@ -8,21 +8,21 @@ import { compressPdf } from "../lib/tauri";
 const LEVELS = [
   {
     value: 0,
-    label: "Low",
+    label: "Lossless",
     desc: "Lossless",
-    detail: "Object stream compression only. No quality loss.",
+    detail: "Re-compresses all streams at maximum zlib level and removes unused objects. No quality loss.",
   },
   {
     value: 1,
-    label: "High",
-    desc: "Strip metadata",
-    detail: "Low + removes XMP metadata, document info, and page thumbnails.",
+    label: "Lossy",
+    desc: "JPEG 72%",
+    detail: "Low + strips metadata, converts lossless images to JPEG at 72% quality, and downsamples images over 2048px.",
   },
   {
     value: 2,
-    label: "Extreme",
-    desc: "Grayscale images",
-    detail: "High + converts all color images to grayscale JPEG. Maximum size reduction.",
+    label: "Aggressive",
+    desc: "Grayscale 50%",
+    detail: "High + downsamples images to 1440px and converts them to grayscale at 50% quality.",
   },
 ] as const;
 

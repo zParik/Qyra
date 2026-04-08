@@ -1,10 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAppStore, LoadedFile } from "../store/useAppStore";
+import { useAppStore } from "../store/useAppStore";
 import { useNotesStore, PageTemplate, VirtualPage } from "../store/useNotesStore";
 
 const EMPTY_VIRTUAL_PAGES: VirtualPage[] = [];
-import { usePageThumbnails, usePageThumbnailsEager } from "../hooks/usePageThumbnails";
+import { usePageThumbnails } from "../hooks/usePageThumbnails";
 import { PageStrip } from "./PageStrip";
 import { ToolSidebar, ViewerTool } from "./ToolSidebar";
 import { getPdfInfo, copyFile, showSaveDialog, bakeAnnotations } from "../lib/tauri";
@@ -16,7 +16,6 @@ import { DrawToolbar } from "./tools/DrawToolbar";
 import { TextLayer } from "./TextLayer";
 import { FindBar } from "./FindBar";
 import { loadDocument } from "../hooks/usePageThumbnails";
-import { useVisiblePages } from "../hooks/useVisiblePages";
 
 export default function Viewer() {
   const navigate = useNavigate();
@@ -99,55 +98,111 @@ export default function Viewer() {
     return slots;
   }, [virtualPages, pageCount]);
 
-  // --- Visibility tracking for lazy rendering ---
+  // --- Virtual scroll for center pane ---
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const { visibleIds, observe, unobserve: _unobserve } = useVisiblePages(scrollContainerRef, 1200);
+  const [centerScrollTop, setCenterScrollTop] = useState(0);
 
-  // Derive the set of visible PDF page numbers from visible slot IDs
+  // Slot height: page content (A4 aspect ratio at current zoom) + vertical margins (sm:my-8 = 32px each side)
+  const SLOT_MARGIN = 64;   // 32px top + 32px bottom per slot
+  const TOP_PAD    = 32;    // sm:py-8
+  const SIDE_PAD   = 32;    // sm:px-8
+  const BUFFER_SLOTS = 2;   // small buffer to avoid gaps when scrolling
+
+  const slotH = zoom * 768 * 1.4142 + SLOT_MARGIN;
+  const containerH = scrollContainerRef.current?.clientHeight ?? 600;
+  const firstSlot  = Math.max(0, Math.floor((centerScrollTop - TOP_PAD) / slotH) - BUFFER_SLOTS);
+  const lastSlot   = Math.min(pageSlots.length - 1, Math.ceil((centerScrollTop + containerH - TOP_PAD) / slotH) + BUFFER_SLOTS);
+  const totalH     = TOP_PAD * 2 + pageSlots.length * slotH;
+
+  // Visible PDF page numbers come from the virtual scroll window — no IntersectionObserver needed
   const visiblePageNums = useMemo(() => {
     const nums = new Set<number>();
-    for (const id of visibleIds) {
-      if (id.startsWith("pdf-")) {
-        const n = parseInt(id.slice(4), 10);
-        if (!isNaN(n)) nums.add(n);
-      }
+    for (let i = firstSlot; i <= lastSlot; i++) {
+      const slot = pageSlots[i];
+      if (slot?.type === 'pdf') nums.add(slot.pdfPage);
     }
     return nums;
-  }, [visibleIds]);
+  }, [firstSlot, lastSlot, pageSlots]);
 
-  const stripThumbnails = usePageThumbnailsEager(viewerFile?.path ?? null, pageCount, 0.3);
-  const centerThumbnails = usePageThumbnails(viewerFile?.path ?? null, pageCount, 2.0, visiblePageNums);
+  // O(1) lookup: PDF page number → slot index, used by scrollToPage
+  const pageToSlotIndex = useMemo(() => {
+    const m = new Map<number, number>();
+    pageSlots.forEach((slot, i) => { if (slot.type === 'pdf') m.set(slot.pdfPage, i); });
+    return m;
+  }, [pageSlots]);
 
-  const pageRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const [stripVisibleRange, setStripVisibleRange] = useState<[number, number]>([1, 20]);
+  const stripVisibleNums = useMemo(() => {
+    const s = new Set<number>();
+    for (let p = stripVisibleRange[0]; p <= stripVisibleRange[1]; p++) s.add(p);
+    return s;
+  }, [stripVisibleRange]);
 
-  const pageCallbacksRef = useRef<Record<string, (el: HTMLDivElement | null) => void>>({});
-  
-  // Stable ref-callback factory to prevent infinite detached/attached DOM polling
-  const getPageRef = useCallback((slotId: string) => {
-    if (!pageCallbacksRef.current[slotId]) {
-      pageCallbacksRef.current[slotId] = (el: HTMLDivElement | null) => {
-        if (slotId.startsWith("pdf-")) {
-          const pageNum = parseInt(slotId.slice(4), 10);
-          if (!isNaN(pageNum)) pageRefs.current[pageNum] = el;
-        }
-        // Observe directly if observer is ready
-        if (el) observe(el, slotId);
-      };
-    }
-    return pageCallbacksRef.current[slotId];
-  }, [observe]);
+  const stripThumbnails = usePageThumbnails(viewerFile?.path ?? null, pageCount, 0.3, stripVisibleNums);
+  // Match render scale to current zoom instead of always over-rendering at 1.5x.
+  const centerRenderScale = Math.min(2.0, Math.max(1.0, zoom * 1.15));
+  const centerThumbnails = usePageThumbnails(viewerFile?.path ?? null, pageCount, centerRenderScale, visiblePageNums);
 
-  // Fallback: If observer wasn't ready when refs first attached, observe them now
+  // Re-anchor scroll position when zoom changes so the current page stays in view
+  const prevZoomRef = useRef(zoom);
   useEffect(() => {
-    for (let page = 1; page <= pageCount; page++) {
-      const el = pageRefs.current[page];
-      if (el) observe(el, `pdf-${page}`);
-    }
-  }, [observe, pageCount]);
+    if (prevZoomRef.current === zoom) return;
+    prevZoomRef.current = zoom;
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const idx = pageToSlotIndex.get(currentPage) ?? 0;
+    const newSlotH = zoom * 768 * 1.4142 + SLOT_MARGIN;
+    const newSt = TOP_PAD + idx * newSlotH;
+    container.scrollTop = newSt;
+    setCenterScrollTop(newSt);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoom]);
 
   useEffect(() => {
     if (!viewerFile) navigate("/");
   }, [viewerFile]);
+
+  // Populate page count fast via Rust (reads only XRef + 2 objects — no full parse).
+  // Falls back to PDF.js range requests if the fast path fails (e.g. XRef streams).
+  // PDF.js loadDocument is NOT called eagerly here — it's deferred until the first
+  // page actually needs rendering, which eliminates the XRef-parsing CPU spike on open.
+  useEffect(() => {
+    if (!viewerFile?.path) return;
+    if (viewerFile.info?.page_count) return;
+
+    let cancelled = false;
+    const path = viewerFile.path;
+
+    async function loadPageCount() {
+      const { invoke } = await import("@tauri-apps/api/core");
+      let count = 0;
+      let fileSize = 0;
+      try {
+        count = await invoke<number>("get_page_count", { path });
+      } catch {
+        // Fast path failed (XRef stream PDF) — fall back to PDF.js
+        try {
+          const doc = await loadDocument(path);
+          count = doc.numPages;
+        } catch { return; }
+      }
+      try {
+        fileSize = await invoke<number>("get_file_size", { path });
+      } catch {
+        fileSize = 0;
+      }
+      if (cancelled || count <= 0) return;
+      const current = useAppStore.getState().viewerFile;
+      if (current?.path !== path) return;
+      setViewerFile({ ...current, info: { file_size: fileSize, metadata: {}, page_count: count } });
+      // Skip background metadata load for large PDFs — getPdfInfo parses entire document
+      // which causes CPU spike. Metadata is nice-to-have, not essential.
+      // TODO: Optimize metadata extraction to not parse full doc.
+    }
+
+    loadPageCount();
+    return () => { cancelled = true; };
+  }, [viewerFile?.path]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (viewerFile && !isViewerDirty) {
@@ -337,42 +392,31 @@ export default function Viewer() {
   function handleScroll() {
     const container = scrollContainerRef.current;
     if (!container) return;
-    const containerTop = container.getBoundingClientRect().top;
-    let closest = 1;
-    let closestDist = Infinity;
-    for (let page = 1; page <= pageCount; page++) {
-      const el = pageRefs.current[page];
-      if (!el) continue;
-      const dist = Math.abs(el.getBoundingClientRect().top - containerTop);
-      if (dist < closestDist) { closestDist = dist; closest = page; }
+    const st = container.scrollTop;
+    setCenterScrollTop(st);
+    // Derive current page from scroll position — O(1), no DOM queries
+    const rawIdx = Math.max(0, Math.min(pageSlots.length - 1, Math.floor((st - TOP_PAD) / slotH)));
+    for (let i = rawIdx; i >= 0; i--) {
+      const slot = pageSlots[i];
+      if (slot?.type === 'pdf') { setCurrentPage(slot.pdfPage); break; }
     }
-    setCurrentPage(closest);
   }
 
   function scrollToPage(page: number) {
     setCurrentPage(page);
     const container = scrollContainerRef.current;
-    const el = pageRefs.current[page];
-    if (container && el) {
-      const gbcContainer = container.getBoundingClientRect();
-      const gbcEl = el.getBoundingClientRect();
-      container.scrollTop += gbcEl.top - gbcContainer.top;
-    } else {
-      pageRefs.current[page]?.scrollIntoView({ behavior: "auto", block: "start" });
-    }
+    if (!container) return;
+    const idx = pageToSlotIndex.get(page) ?? 0;
+    const newSt = TOP_PAD + idx * slotH;
+    container.scrollTop = newSt;
+    setCenterScrollTop(newSt);
   }
 
-  async function handleOpenFile(path: string) {
-    try {
-      const info = await getPdfInfo(path);
-      const name = path.split(/[\\/]/).pop() ?? path;
-      setViewerFile({ path, name, info } as LoadedFile);
-      setCurrentPage(1);
-    } catch {
-      const name = path.split(/[\\/]/).pop() ?? path;
-      setViewerFile({ path, name });
-      setCurrentPage(1);
-    }
+  function handleOpenFile(path: string) {
+    const name = path.split(/[\\/]/).pop() ?? path;
+    // Set immediately — page count + info will populate via the lazy effect above
+    setViewerFile({ path, name });
+    setCurrentPage(1);
   }
 
   async function handleApplied(path: string) {
@@ -813,6 +857,7 @@ export default function Viewer() {
             onPageToggle={handlePageToggle}
             splitAfter={activeTool === "split" ? splitAfter : undefined}
             onSplitAfterChange={activeTool === "split" ? setSplitAfter : undefined}
+            onVisibleRangeChange={setStripVisibleRange}
           />
         </div>
 
@@ -823,181 +868,155 @@ export default function Viewer() {
           style={{ background: "var(--viewer-canvas)" }}
           onScroll={handleScroll}
         >
-          <div className="flex flex-col items-center py-4 px-4 gap-0 sm:py-8 sm:px-8">
-
-            {/* Inline "Add page" template picker */}
-            {addPageAt !== null && activeTool === "draw" && (
+          {/* "Add page" template picker — fixed overlay, unaffected by virtual scroll */}
+          {addPageAt !== null && activeTool === "draw" && (
+            <div
+              className="fixed inset-0 z-30 flex items-center justify-center"
+              style={{ background: "rgba(0,0,0,0.3)" }}
+              onClick={() => setAddPageAt(null)}
+            >
               <div
-                className="fixed inset-0 z-30 flex items-center justify-center"
-                style={{ background: "rgba(0,0,0,0.3)" }}
-                onClick={() => setAddPageAt(null)}
+                className="flex flex-col gap-3 rounded-xl px-5 py-4 w-72"
+                style={{
+                  background: "var(--viewer-elevated)",
+                  border: "1px solid var(--viewer-border)",
+                  boxShadow: "0 8px 32px rgba(0,0,0,0.3)",
+                }}
+                onClick={(e) => e.stopPropagation()}
               >
-                <div
-                  className="flex flex-col gap-3 rounded-xl px-5 py-4 w-72"
-                  style={{
-                    background: "var(--viewer-elevated)",
-                    border: "1px solid var(--viewer-border)",
-                    boxShadow: "0 8px 32px rgba(0,0,0,0.3)",
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <p className="text-sm font-semibold" style={{ color: "var(--viewer-text)" }}>
-                    Insert page {addPageAt === 0 ? "before start" : `after page ${addPageAt}`}
-                  </p>
-                  <div className="grid grid-cols-2 gap-2">
-                    {([
-                      { id: 'blank',  label: 'Blank',  preview: '□' },
-                      { id: 'ruled',  label: 'Ruled',  preview: '≡' },
-                      { id: 'grid',   label: 'Grid',   preview: '⊞' },
-                      { id: 'dotted', label: 'Dotted', preview: '⠿' },
-                    ] as { id: PageTemplate; label: string; preview: string }[]).map((tmpl) => (
-                      <button
-                        key={tmpl.id}
-                        onClick={() => {
-                          const vp: VirtualPage = {
-                            id: crypto.randomUUID(),
-                            template: tmpl.id,
-                            afterRealPage: addPageAt,
-                          };
-                          addVirtualPage(viewerFile.path, vp);
-                          setAddPageAt(null);
-                        }}
-                        className="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm"
-                        style={{
-                          background: "var(--viewer-surface)",
-                          border: "1px solid var(--viewer-border)",
-                          color: "var(--viewer-text)",
-                        }}
-                      >
-                        <span className="text-lg leading-none">{tmpl.preview}</span>
-                        <span>{tmpl.label}</span>
-                      </button>
-                    ))}
-                  </div>
-                  <button
-                    onClick={() => setAddPageAt(null)}
-                    className="text-xs text-center mt-1"
-                    style={{ color: "var(--viewer-text-muted)" }}
-                  >
-                    Cancel
-                  </button>
+                <p className="text-sm font-semibold" style={{ color: "var(--viewer-text)" }}>
+                  Insert page {addPageAt === 0 ? "before start" : `after page ${addPageAt}`}
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {([
+                    { id: 'blank',  label: 'Blank',  preview: '□' },
+                    { id: 'ruled',  label: 'Ruled',  preview: '≡' },
+                    { id: 'grid',   label: 'Grid',   preview: '⊞' },
+                    { id: 'dotted', label: 'Dotted', preview: '⠿' },
+                  ] as { id: PageTemplate; label: string; preview: string }[]).map((tmpl) => (
+                    <button
+                      key={tmpl.id}
+                      onClick={() => {
+                        const vp: VirtualPage = {
+                          id: crypto.randomUUID(),
+                          template: tmpl.id,
+                          afterRealPage: addPageAt,
+                        };
+                        addVirtualPage(viewerFile.path, vp);
+                        setAddPageAt(null);
+                      }}
+                      className="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm"
+                      style={{
+                        background: "var(--viewer-surface)",
+                        border: "1px solid var(--viewer-border)",
+                        color: "var(--viewer-text)",
+                      }}
+                    >
+                      <span className="text-lg leading-none">{tmpl.preview}</span>
+                      <span>{tmpl.label}</span>
+                    </button>
+                  ))}
                 </div>
+                <button
+                  onClick={() => setAddPageAt(null)}
+                  className="text-xs text-center mt-1"
+                  style={{ color: "var(--viewer-text-muted)" }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {pageCount === 0 && (
+            <p className="text-sm m-8" style={{ color: "var(--viewer-text-muted)" }}>
+              No pages found
+            </p>
+          )}
+
+          {/* Virtual scroll container — only renders the visible window of slots */}
+          <div style={{ position: "relative", height: totalH }}>
+
+            {/* Add-page bar before first page (draw mode) */}
+            {activeTool === "draw" && pageSlots.length > 0 && (
+              <div style={{ position: "absolute", top: 4, left: SIDE_PAD, right: SIDE_PAD }}>
+                <AddPageBar onAdd={() => setAddPageAt(0)} />
               </div>
             )}
 
-            {/* Add-page bar before all pages */}
-            {activeTool === "draw" && (
-              <AddPageBar onAdd={() => setAddPageAt(0)} />
-            )}
-
-            {pageSlots.map((slot) => {
-              const isVisible = visibleIds.has(slot.slotId);
+            {pageSlots.slice(firstSlot, lastSlot + 1).map((slot, i) => {
+              const slotIndex = firstSlot + i;
+              const topPos = TOP_PAD + slotIndex * slotH;
 
               if (slot.type === 'pdf') {
                 const page = slot.pdfPage;
+                const pageW = Math.round(zoom * 768);
                 const isSelected = activeTool === "remove" && selectedPages.has(page);
+                const shouldRenderTextLayer = findOpen || page === currentPage;
                 return (
                   <React.Fragment key={slot.slotId}>
                     <div
-                      ref={getPageRef(slot.slotId)}
-                      className="relative my-4 sm:my-8"
                       style={{
-                        width: `min(${Math.round(zoom * 768)}px, 100%)`,
-                        cursor: activeTool === "remove" ? "pointer" : undefined,
+                        position: "absolute",
+                        top: topPos + SLOT_MARGIN / 2,
+                        left: 0,
+                        right: 0,
+                        display: "flex",
+                        justifyContent: "center",
+                        paddingLeft: SIDE_PAD,
+                        paddingRight: SIDE_PAD,
                       }}
-                      onClick={activeTool === "remove" ? () => handlePageToggle(page) : undefined}
                     >
-                      {/* Only render heavy content (image, text layer, drawing canvas) for visible pages */}
-                      {isVisible || centerThumbnails[page] ? (
-                        <>
-                          {centerThumbnails[page] ? (
-                            <img
-                              src={centerThumbnails[page]}
-                              alt={`Page ${page}`}
-                              className="w-full rounded shadow-2xl block"
-                              draggable={false}
-                              style={isSelected ? { outline: "3px solid #ef4444", borderRadius: "0.5rem" } : undefined}
-                            />
-                          ) : (
-                            <div
-                              className="rounded flex flex-col items-center justify-center gap-2"
-                              style={{
-                                aspectRatio: "1/1.4142",
-                                background: "color-mix(in oklch, var(--viewer-elevated) 60%, transparent)",
-                                border: isSelected ? "3px solid #ef4444" : "1px solid var(--viewer-border-sub)",
-                              }}
-                            >
-                              <svg className="w-6 h-6 animate-spin" style={{ color: "var(--viewer-text-muted)" }} fill="none" viewBox="0 0 24 24">
-                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                      <div
+                        className="relative"
+                        style={{
+                          width: `min(${pageW}px, 100%)`,
+                          aspectRatio: "1/1.4142",
+                          cursor: activeTool === "remove" ? "pointer" : undefined,
+                        }}
+                        onClick={activeTool === "remove" ? () => handlePageToggle(page) : undefined}
+                      >
+                        {centerThumbnails[page] ? (
+                          <img
+                            src={centerThumbnails[page]}
+                            alt={`Page ${page}`}
+                            className="w-full h-full rounded shadow-2xl block object-cover"
+                            draggable={false}
+                            style={isSelected ? { outline: "3px solid #ef4444", borderRadius: "0.5rem" } : undefined}
+                          />
+                        ) : (
+                          <div
+                            className="rounded flex flex-col items-center justify-center gap-2"
+                            style={{
+                              aspectRatio: "1/1.4142",
+                              background: "color-mix(in oklch, var(--viewer-elevated) 60%, transparent)",
+                              border: isSelected ? "3px solid #ef4444" : "1px solid var(--viewer-border-sub)",
+                            }}
+                          >
+                            <svg className="w-6 h-6 animate-spin" style={{ color: "var(--viewer-text-muted)" }} fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                            </svg>
+                            <span className="text-xs" style={{ color: "var(--viewer-text-muted)" }}>Page {page}</span>
+                          </div>
+                        )}
+                        {isSelected && (
+                          <div className="absolute inset-0 rounded flex items-center justify-center pointer-events-none"
+                            style={{ background: "rgba(239, 68, 68, 0.25)" }}>
+                            <div className="rounded-full p-2" style={{ background: "rgba(239, 68, 68, 0.85)" }}>
+                              <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
                               </svg>
-                              <span className="text-xs" style={{ color: "var(--viewer-text-muted)" }}>Page {page}</span>
                             </div>
-                          )}
-                          {isSelected && (
-                            <div className="absolute inset-0 rounded flex items-center justify-center pointer-events-none"
-                              style={{ background: "rgba(239, 68, 68, 0.25)" }}>
-                              <div className="rounded-full p-2" style={{ background: "rgba(239, 68, 68, 0.85)" }}>
-                                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
-                                </svg>
-                              </div>
-                            </div>
-                          )}
-                          {isVisible && (
-                            <TextLayer
-                              pdfPath={viewerFile.path}
-                              pageNum={page}
-                              zoom={zoom}
-                              findQuery={findOpen ? findQuery : undefined}
-                              isDrawingMode={activeTool === "draw"}
-                            />
-                          )}
-                          {isVisible && (
-                            <DrawingCanvas
-                              pageSlotId={slot.slotId}
-                              docPath={viewerFile.path}
-                              isDrawingMode={activeTool === "draw"}
-                              zoom={zoom}
-                            />
-                          )}
-                        </>
-                      ) : (
-                        /* Lightweight placeholder for off-screen pages — maintains scroll height */
-                        <div
-                          className="rounded"
-                          style={{
-                            aspectRatio: "1/1.4142",
-                            background: "color-mix(in oklch, var(--viewer-elevated) 40%, transparent)",
-                            border: isSelected ? "3px solid #ef4444" : "1px solid var(--viewer-border-sub)",
-                          }}
-                        />
-                      )}
-                    </div>
-                    {/* Add-page bar after this real page */}
-                    {activeTool === "draw" && (
-                      <AddPageBar onAdd={() => setAddPageAt(page)} />
-                    )}
-                  </React.Fragment>
-                );
-              } else {
-                // Virtual page
-                const vp = slot.vp;
-                const pageW = Math.round(zoom * 768);
-                const pageH = Math.round(pageW * 1.4142); // A4 ratio
-                return (
-                  <div
-                    key={slot.slotId}
-                    ref={getPageRef(slot.slotId)}
-                    className="relative my-4 sm:my-8 rounded shadow-2xl overflow-hidden"
-                    style={{ width: `min(${pageW}px, 100%)`, aspectRatio: `${pageW}/${pageH}` }}
-                  >
-                    {isVisible ? (
-                      <>
-                        <VirtualPageBackground
-                          template={vp.template}
-                          width={pageW}
-                          height={pageH}
+                          </div>
+                        )}
+                        <TextLayer
+                          pdfPath={viewerFile.path}
+                          pageNum={page}
+                          zoom={zoom}
+                          findQuery={findOpen ? findQuery : undefined}
+                          isDrawingMode={activeTool === "draw"}
+                          enabled={shouldRenderTextLayer}
                         />
                         <DrawingCanvas
                           pageSlotId={slot.slotId}
@@ -1005,29 +1024,57 @@ export default function Viewer() {
                           isDrawingMode={activeTool === "draw"}
                           zoom={zoom}
                         />
-                        {/* Label */}
-                        <div
-                          className="absolute top-2 right-2 text-xs px-1.5 py-0.5 rounded pointer-events-none"
-                          style={{
-                            background: "rgba(0,0,0,0.12)",
-                            color: "#888",
-                            textTransform: "capitalize",
-                          }}
-                        >
-                          {vp.template}
-                        </div>
-                      </>
-                    ) : null}
+                      </div>
+                    </div>
+                    {/* Add-page bar after this page (draw mode) */}
+                    {activeTool === "draw" && (
+                      <div style={{ position: "absolute", top: topPos + slotH - 28, left: SIDE_PAD, right: SIDE_PAD }}>
+                        <AddPageBar onAdd={() => setAddPageAt(page)} />
+                      </div>
+                    )}
+                  </React.Fragment>
+                );
+              } else {
+                // Virtual (blank/ruled/grid/dotted) page
+                const vp = slot.vp;
+                const pageW = Math.round(zoom * 768);
+                const pageH = Math.round(pageW * 1.4142);
+                return (
+                  <div
+                    key={slot.slotId}
+                    style={{
+                      position: "absolute",
+                      top: topPos + SLOT_MARGIN / 2,
+                      left: 0,
+                      right: 0,
+                      display: "flex",
+                      justifyContent: "center",
+                      paddingLeft: SIDE_PAD,
+                      paddingRight: SIDE_PAD,
+                    }}
+                  >
+                    <div
+                      className="relative rounded shadow-2xl overflow-hidden"
+                      style={{ width: `min(${pageW}px, 100%)`, aspectRatio: `${pageW}/${pageH}` }}
+                    >
+                      <VirtualPageBackground template={vp.template} width={pageW} height={pageH} />
+                      <DrawingCanvas
+                        pageSlotId={slot.slotId}
+                        docPath={viewerFile.path}
+                        isDrawingMode={activeTool === "draw"}
+                        zoom={zoom}
+                      />
+                      <div
+                        className="absolute top-2 right-2 text-xs px-1.5 py-0.5 rounded pointer-events-none"
+                        style={{ background: "rgba(0,0,0,0.12)", color: "#888", textTransform: "capitalize" }}
+                      >
+                        {vp.template}
+                      </div>
+                    </div>
                   </div>
                 );
               }
             })}
-
-            {pageCount === 0 && (
-              <p className="text-sm my-8" style={{ color: "var(--viewer-text-muted)" }}>
-                No pages found
-              </p>
-            )}
           </div>
         </div>
 
