@@ -1,22 +1,17 @@
 import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  MouseSensor,
-  TouchSensor,
-  useSensor,
-  useSensors,
-  DragEndEvent,
+  DndContext, closestCenter, KeyboardSensor,
+  MouseSensor, TouchSensor, useSensor, useSensors, DragEndEvent,
 } from "@dnd-kit/core";
 import {
-  SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
-  rectSortingStrategy,
+  SortableContext, sortableKeyboardCoordinates,
+  useSortable, rectSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { LoadedFile } from "../store/useAppStore";
 import { useThumbnails } from "../hooks/useThumbnails";
+
+const MONO = "'JetBrains Mono', ui-monospace, monospace";
+const UI   = "'Inter', system-ui, sans-serif";
 
 interface PageGridProps {
   files: LoadedFile[];
@@ -27,20 +22,10 @@ interface PageGridProps {
   onToggleSelect?: (path: string) => void;
 }
 
-function FileCard({
-  file,
-  thumbnail,
-  onRemove,
-  selectable,
-  selected,
-  onToggleSelect,
-}: {
-  file: LoadedFile;
-  thumbnail?: string;
-  onRemove: () => void;
-  selectable?: boolean;
-  selected?: boolean;
-  onToggleSelect?: () => void;
+function FileCard({ file, thumbnail, onRemove, selectable, selected, onToggleSelect }: {
+  file: LoadedFile; thumbnail?: string;
+  onRemove: () => void; selectable?: boolean;
+  selected?: boolean; onToggleSelect?: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: file.path });
@@ -54,21 +39,27 @@ function FileCard({
   return (
     <div
       ref={setNodeRef}
-      style={style}
-      {...attributes}
-      className={`
-        relative bg-white dark:bg-gray-800 rounded-lg border shadow-sm overflow-hidden
-        ${selected ? "ring-2 ring-blue-500" : "border-gray-200 dark:border-gray-700"}
-      `}
+      style={{
+        ...style,
+        position: "relative",
+        background: "var(--bg2)",
+        border: `1px solid ${selected ? "var(--accent)" : "var(--line)"}`,
+        borderRadius: 6,
+        overflow: "hidden",
+        boxShadow: selected ? `0 0 0 1px var(--accent)` : undefined,
+      }}
       onClick={selectable ? onToggleSelect : undefined}
     >
       {/* Drag handle */}
       <div
         {...listeners}
-        style={{ touchAction: "none" }}
-        className="absolute top-1 left-1 p-1 cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 z-10"
+        {...attributes}
+        style={{ touchAction: "none", position: "absolute", top: 6, left: 6, zIndex: 10,
+          cursor: "grab", color: "var(--fg3)", padding: 3 }}
+        onMouseEnter={(e) => (e.currentTarget.style.color = "var(--fg1)")}
+        onMouseLeave={(e) => (e.currentTarget.style.color = "var(--fg3)")}
       >
-        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+        <svg width={14} height={14} fill="currentColor" viewBox="0 0 20 20">
           <path d="M7 2a2 2 0 110 4 2 2 0 010-4zm6 0a2 2 0 110 4 2 2 0 010-4zM7 8a2 2 0 110 4 2 2 0 010-4zm6 0a2 2 0 110 4 2 2 0 010-4zM7 14a2 2 0 110 4 2 2 0 010-4zm6 0a2 2 0 110 4 2 2 0 010-4z" />
         </svg>
       </div>
@@ -76,38 +67,59 @@ function FileCard({
       {/* Remove button */}
       <button
         onClick={(e) => { e.stopPropagation(); onRemove(); }}
-        className="absolute top-1 right-1 p-1 text-gray-400 hover:text-red-500 z-10"
+        style={{
+          position: "absolute", top: 6, right: 6, zIndex: 10,
+          background: "transparent", border: "none", cursor: "pointer",
+          color: "var(--fg3)", padding: 3, display: "inline-flex",
+        }}
+        onMouseEnter={(e) => (e.currentTarget.style.color = "var(--danger)")}
+        onMouseLeave={(e) => (e.currentTarget.style.color = "var(--fg3)")}
       >
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+        <svg width={14} height={14} fill="none" stroke="currentColor" strokeWidth={1.5}
+          strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 16 16">
+          <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" />
         </svg>
       </button>
 
       {/* Thumbnail */}
-      <div className="aspect-[3/4] bg-gray-100 dark:bg-gray-700 flex items-center justify-center">
+      <div style={{
+        aspectRatio: "3/4",
+        background: "var(--bg3)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        borderBottom: "1px solid var(--line2)",
+      }}>
         {thumbnail ? (
-          <img src={thumbnail} alt={file.name} className="w-full h-full object-contain" />
+          <img src={thumbnail} alt={file.name} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
         ) : (
-          <svg className="w-10 h-10 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-              d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+          <svg width={32} height={32} fill="none" stroke="currentColor" strokeWidth={1.5}
+            strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"
+            style={{ color: "var(--fg3)" }}>
+            <path d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
           </svg>
         )}
       </div>
 
       {/* File info */}
-      <div className="p-2">
-        <p className="text-xs font-medium truncate text-gray-800 dark:text-gray-200" title={file.name}>
+      <div style={{ padding: "6px 8px" }}>
+        <p style={{ fontFamily: UI, fontSize: 11, fontWeight: 500, color: "var(--fg0)",
+          margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+          title={file.name}>
           {file.name}
         </p>
         {file.info && (
-          <p className="text-xs text-gray-400">{file.info.page_count} page{file.info.page_count !== 1 ? "s" : ""}</p>
+          <p style={{ fontFamily: MONO, fontSize: 10, color: "var(--fg2)", margin: "2px 0 0" }}>
+            {file.info.page_count} pg
+          </p>
         )}
       </div>
 
-      {/* Selection indicator */}
+      {/* Selection overlay */}
       {selectable && selected && (
-        <div className="absolute inset-0 bg-blue-500 bg-opacity-10 pointer-events-none" />
+        <div style={{
+          position: "absolute", inset: 0,
+          background: "var(--accent-soft)",
+          pointerEvents: "none",
+        }} />
       )}
     </div>
   );
@@ -119,7 +131,6 @@ export function PageGrid({ files, onRemove, onReorder, selectable, selected, onT
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
-
   const thumbnails = useThumbnails(files.map((f) => f.path));
 
   function handleDragEnd(event: DragEndEvent) {
@@ -136,7 +147,10 @@ export function PageGrid({ files, onRemove, onReorder, selectable, selected, onT
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
       <SortableContext items={files.map((f) => f.path)} strategy={rectSortingStrategy}>
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+        <div style={{
+          display: "grid", gap: 10,
+          gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
+        }}>
           {files.map((file) => (
             <FileCard
               key={file.path}

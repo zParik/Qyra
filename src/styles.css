@@ -1,93 +1,130 @@
 @import "tailwindcss";
 @import "@fontsource-variable/geist";
 
+@keyframes spin { to { transform: rotate(360deg); } }
+
 /* ─────────────────────────────────────────────────────────────────────────
-   Design tokens
-   • --app-* : adaptive shell (Home + outer chrome)
-   • --viewer-* : always-dark viewer chrome
-   • --brand : warm red accent
-   • --action : blue primary action
-   • --{ok,bad,warn}-* : semantic state colors (two sets: light + dark)
+   Design tokens — dense pro-tool, amber accent
+   Primary palette: deep warm neutrals, single amber accent
+   Typography: Inter for UI, JetBrains Mono for metadata
 ───────────────────────────────────────────────────────────────────────── */
 
 @layer base {
   :root {
-    /* Adaptive shell — light mode */
-    --app-bg:            oklch(98% 0.007 40);
-    --app-surface:       oklch(95% 0.008 40);
-    --app-elevated:      oklch(100% 0.003 40);
-    --app-border:        oklch(84% 0.013 40);
-    --app-border-subtle: oklch(90% 0.010 40);
-    --text-primary:      oklch(15% 0.012 40);
-    --text-secondary:    oklch(44% 0.012 40);
-    --text-muted:        oklch(63% 0.010 40);
-    --text-on-dark:      oklch(94% 0.007 40);
+    /* ── Amber accent ── */
+    --accent:       oklch(0.74 0.16 60);
+    --accent-soft:  oklch(0.74 0.16 60 / 0.14);
+    --accent-line:  oklch(0.74 0.16 60 / 0.45);
+    --accent-text:  oklch(0.18 0.06 60);
 
-    /* Viewer chrome — always warm dark */
-    --viewer-bg:          oklch(12% 0.009 40);
-    --viewer-surface:     oklch(16% 0.010 40);
-    --viewer-elevated:    oklch(20% 0.011 40);
-    --viewer-canvas:      oklch(23% 0.010 40);
-    --viewer-border:      oklch(27% 0.011 40);
-    --viewer-border-sub:  oklch(22% 0.010 40);
-    --viewer-text:        oklch(94% 0.007 40);
-    --viewer-text-sec:    oklch(70% 0.008 40);
-    --viewer-text-muted:  oklch(50% 0.008 40);
+    /* ── Shell — light mode ── */
+    --bg0:   oklch(0.96 0.006 55);
+    --bg1:   oklch(0.98 0.005 55);
+    --bg2:   oklch(1.00 0.003 55);
+    --bg3:   oklch(0.93 0.008 55);
+    --bg4:   oklch(0.89 0.010 55);
+    --line:  oklch(0.87 0.010 55);
+    --line2: oklch(0.92 0.008 55);
+    --fg0:   oklch(0.15 0.012 40);
+    --fg1:   oklch(0.44 0.012 40);
+    --fg2:   oklch(0.60 0.010 40);
+    --fg3:   oklch(0.75 0.009 40);
+    --title-bar: oklch(0.93 0.008 55);
+    --danger: oklch(0.55 0.20 25);
 
-    /* Brand (warm red) */
-    --brand:        oklch(54% 0.22 22);
-    --brand-dim:    oklch(28% 0.10 22);
-    --brand-subtle: oklch(95% 0.04 22);
+    /* Legacy aliases (viewer + other tools use these) */
+    --app-bg:            var(--bg0);
+    --app-surface:       var(--bg1);
+    --app-elevated:      var(--bg2);
+    --app-border:        var(--line);
+    --app-border-subtle: var(--line2);
+    --text-primary:      var(--fg0);
+    --text-secondary:    var(--fg1);
+    --text-muted:        var(--fg2);
+    --text-on-dark:      oklch(0.94 0.007 40);
 
-    /* Primary action (blue) */
-    --action:          oklch(56% 0.18 255);
-    --action-hover:    oklch(50% 0.18 255);
-    --action-active:   oklch(45% 0.18 255);
-    --action-dim:      oklch(78% 0.10 255);
-    --action-text:     oklch(100% 0 0);
-    --action-dim-dark: oklch(28% 0.10 255);
+    /* Viewer chrome — always dark */
+    --viewer-bg:          #0d0d0e;
+    --viewer-surface:     #141416;
+    --viewer-elevated:    #1a1a1d;
+    --viewer-canvas:      #202024;
+    --viewer-border:      #2a2a2f;
+    --viewer-border-sub:  #1f1f23;
+    --viewer-text:        #ededee;
+    --viewer-text-sec:    #9fa0a4;
+    --viewer-text-muted:  #6b6c70;
 
-    /* State — light (used in Home/global context) */
-    --ok-bg:    oklch(95% 0.05 145); --ok-border: oklch(78% 0.10 145); --ok-text: oklch(36% 0.14 145);
-    --bad-bg:   oklch(96% 0.04 22);  --bad-border: oklch(80% 0.12 22);  --bad-text: oklch(40% 0.20 22);
-    --warn-bg:  oklch(97% 0.04 65);  --warn-border: oklch(80% 0.12 65); --warn-text: oklch(40% 0.16 65);
+    /* Brand + action → amber */
+    --brand:        var(--accent);
+    --brand-dim:    oklch(0.30 0.09 60);
+    --brand-subtle: oklch(0.97 0.03 60);
 
-    /* State — dark (used inside viewer chrome, always dark) */
-    --v-ok-bg:   oklch(18% 0.05 145); --v-ok-border: oklch(30% 0.08 145); --v-ok-text: oklch(65% 0.14 145);
-    --v-bad-bg:  oklch(16% 0.06 22);  --v-bad-border: oklch(28% 0.10 22); --v-bad-text: oklch(65% 0.20 22);
-    --v-warn-bg: oklch(18% 0.06 65);  --v-warn-border: oklch(30% 0.10 65); --v-warn-text: oklch(65% 0.16 65);
+    --action:          var(--accent);
+    --action-hover:    oklch(0.70 0.16 60);
+    --action-active:   oklch(0.66 0.16 60);
+    --action-dim:      oklch(0.85 0.10 60);
+    --action-text:     var(--accent-text);
+    --action-dim-dark: oklch(0.28 0.08 60);
+
+    /* State — light context */
+    --ok-bg:    oklch(0.95 0.05 145); --ok-border: oklch(0.78 0.10 145); --ok-text: oklch(0.36 0.14 145);
+    --bad-bg:   oklch(0.96 0.04 22);  --bad-border: oklch(0.80 0.12 22);  --bad-text: oklch(0.40 0.20 22);
+    --warn-bg:  oklch(0.97 0.04 65);  --warn-border: oklch(0.80 0.12 65); --warn-text: oklch(0.40 0.16 65);
+
+    /* State — dark context (viewer) */
+    --v-ok-bg:   oklch(0.18 0.05 145); --v-ok-border: oklch(0.30 0.08 145); --v-ok-text: oklch(0.65 0.14 145);
+    --v-bad-bg:  oklch(0.16 0.06 22);  --v-bad-border: oklch(0.28 0.10 22); --v-bad-text: oklch(0.65 0.20 22);
+    --v-warn-bg: oklch(0.18 0.06 65);  --v-warn-border: oklch(0.30 0.10 65); --v-warn-text: oklch(0.65 0.16 65);
   }
 
   @media (prefers-color-scheme: dark) {
     :root {
-      /* Adaptive shell — dark mode */
-      --app-bg:            oklch(12% 0.009 40);
-      --app-surface:       oklch(16% 0.010 40);
-      --app-elevated:      oklch(20% 0.011 40);
-      --app-border:        oklch(28% 0.011 40);
-      --app-border-subtle: oklch(22% 0.010 40);
-      --text-primary:      oklch(94% 0.007 40);
-      --text-secondary:    oklch(70% 0.008 40);
-      --text-muted:        oklch(50% 0.008 40);
+      /* ── Shell — dark mode ── */
+      --bg0:   #0d0d0e;
+      --bg1:   #141416;
+      --bg2:   #1a1a1d;
+      --bg3:   #202024;
+      --bg4:   #26262b;
+      --line:  #2a2a2f;
+      --line2: #1f1f23;
+      --fg0:   #ededee;
+      --fg1:   #9fa0a4;
+      --fg2:   #6b6c70;
+      --fg3:   #48494d;
+      --title-bar: #161618;
+      --danger: oklch(0.66 0.18 25);
 
-      --brand:        oklch(65% 0.22 22);
-      --brand-subtle: oklch(20% 0.08 22);
+      --app-bg:            var(--bg0);
+      --app-surface:       var(--bg1);
+      --app-elevated:      var(--bg2);
+      --app-border:        var(--line);
+      --app-border-subtle: var(--line2);
+      --text-primary:      var(--fg0);
+      --text-secondary:    var(--fg1);
+      --text-muted:        var(--fg2);
 
-      --action:          oklch(60% 0.18 255);
-      --action-hover:    oklch(65% 0.18 255);
-      --action-active:   oklch(68% 0.18 255);
-      --action-dim:      oklch(28% 0.10 255);
+      --accent:       oklch(0.74 0.16 60);
+      --accent-soft:  oklch(0.74 0.16 60 / 0.14);
+      --accent-line:  oklch(0.74 0.16 60 / 0.45);
+      --accent-text:  #1a1208;
 
-      --ok-bg:   var(--v-ok-bg);   --ok-border: var(--v-ok-border);  --ok-text: var(--v-ok-text);
-      --bad-bg:  var(--v-bad-bg);  --bad-border: var(--v-bad-border); --bad-text: var(--v-bad-text);
+      --brand:        var(--accent);
+      --brand-subtle: oklch(0.20 0.08 60);
+
+      --action:          var(--accent);
+      --action-hover:    oklch(0.70 0.16 60);
+      --action-active:   oklch(0.66 0.16 60);
+      --action-dim:      oklch(0.28 0.08 60);
+      --action-text:     #1a1208;
+      --action-dim-dark: oklch(0.28 0.08 60);
+
+      --ok-bg: var(--v-ok-bg);   --ok-border: var(--v-ok-border);  --ok-text: var(--v-ok-text);
+      --bad-bg: var(--v-bad-bg); --bad-border: var(--v-bad-border); --bad-text: var(--v-bad-text);
       --warn-bg: var(--v-warn-bg); --warn-border: var(--v-warn-border); --warn-text: var(--v-warn-text);
     }
   }
 
-  /* Redefine Tailwind's gray scale with warm tint (hue 40)
-     This makes all existing bg-gray-* / text-gray-* / border-gray-*
-     classes subtly warm instead of cold machine-gray — no component
-     files need touching for this improvement. */
+  /* Warm Tailwind grays */
   @theme {
     --color-gray-50:  oklch(98% 0.004 40);
     --color-gray-100: oklch(96% 0.005 40);
@@ -105,16 +142,15 @@
   *, *::before, *::after { box-sizing: border-box; }
 
   html {
-    font-family: "Geist Variable", "Geist", ui-sans-serif, -apple-system,
-      BlinkMacSystemFont, system-ui, sans-serif;
+    font-family: 'Inter', "Geist Variable", "Geist", ui-sans-serif, -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
     font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
 
   body {
-    background: var(--app-bg);
-    color: var(--text-primary);
+    background: var(--bg0);
+    color: var(--fg0);
     line-height: 1.5;
   }
 
@@ -131,52 +167,52 @@
 ───────────────────────────────────────────────────────────────────────── */
 @layer components {
 
-  /* Global input (Home, Merge, ImagesToPdf — adaptive) */
+  /* Global input */
   .input {
     display: block; width: 100%;
     padding: 0.5rem 0.75rem;
-    background: var(--app-elevated);
-    border: 1px solid var(--app-border);
-    border-radius: 0.5rem;
+    background: var(--bg2);
+    border: 1px solid var(--line);
+    border-radius: 4px;
     font-size: 0.875rem; font-family: inherit;
-    color: var(--text-primary);
+    color: var(--fg0);
     outline: none;
     transition: border-color 150ms, box-shadow 150ms;
   }
-  .input::placeholder { color: var(--text-muted); }
+  .input::placeholder { color: var(--fg2); }
   .input:focus {
-    border-color: var(--action);
-    box-shadow: 0 0 0 3px color-mix(in oklch, var(--action) 18%, transparent);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
   }
 
   .btn-primary {
-    display: inline-flex; align-items: center; justify-content: center;
-    padding: 0.5625rem 1rem;
-    background: var(--action); color: var(--action-text);
-    border: none; border-radius: 0.5rem;
-    font-size: 0.875rem; font-weight: 500; font-family: inherit;
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 0 12px; height: 30px;
+    background: var(--accent); color: var(--accent-text);
+    border: none; border-radius: 4px;
+    font-size: 12.5px; font-weight: 600; font-family: inherit;
     cursor: pointer; outline: none;
-    transition: background 150ms;
+    transition: background 120ms;
   }
   .btn-primary:hover:not(:disabled) { background: var(--action-hover); }
   .btn-primary:disabled { background: var(--action-dim); cursor: not-allowed; }
   .btn-primary:focus-visible {
-    box-shadow: 0 0 0 2px var(--app-bg), 0 0 0 4px var(--action);
+    box-shadow: 0 0 0 2px var(--bg0), 0 0 0 4px var(--accent);
   }
 
   .btn-secondary {
-    display: inline-flex; align-items: center; justify-content: center;
-    padding: 0.5625rem 1rem;
-    background: var(--app-elevated); color: var(--text-primary);
-    border: 1px solid var(--app-border);
-    border-radius: 0.5rem;
-    font-size: 0.875rem; font-weight: 500; font-family: inherit;
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 0 12px; height: 30px;
+    background: var(--bg2); color: var(--fg0);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    font-size: 12.5px; font-weight: 500; font-family: inherit;
     cursor: pointer; outline: none;
-    transition: background 150ms, border-color 150ms;
+    transition: background 120ms, border-color 120ms;
   }
-  .btn-secondary:hover:not(:disabled) { background: var(--app-surface); }
+  .btn-secondary:hover:not(:disabled) { background: var(--bg3); }
   .btn-secondary:focus-visible {
-    box-shadow: 0 0 0 2px var(--app-bg), 0 0 0 4px var(--app-border);
+    box-shadow: 0 0 0 2px var(--bg0), 0 0 0 4px var(--line);
   }
 
   /* Viewer-context input — always dark */
@@ -185,7 +221,7 @@
     padding: 0.5rem 0.75rem;
     background: var(--viewer-surface);
     border: 1px solid var(--viewer-border);
-    border-radius: 0.5rem;
+    border-radius: 4px;
     font-size: 0.875rem; font-family: inherit;
     color: var(--viewer-text);
     outline: none;
@@ -193,14 +229,14 @@
   }
   .v-input::placeholder { color: var(--viewer-text-muted); }
   .v-input:focus {
-    border-color: var(--action);
-    box-shadow: 0 0 0 3px color-mix(in oklch, var(--action) 22%, transparent);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
   }
 
   /* Toggle button states (viewer context) */
   .v-toggle-on {
-    background: var(--action); color: var(--action-text);
-    border: 1px solid var(--action);
+    background: var(--accent); color: var(--accent-text);
+    border: 1px solid var(--accent);
   }
   .v-toggle-off {
     border: 1px solid var(--viewer-border);
@@ -212,16 +248,16 @@
   .v-btn-primary {
     display: block; width: 100%;
     padding: 0.5rem 0;
-    background: var(--action); color: var(--action-text);
-    border: none; border-radius: 0.5rem;
-    font-size: 0.875rem; font-weight: 500; font-family: inherit;
+    background: var(--accent); color: var(--accent-text);
+    border: none; border-radius: 4px;
+    font-size: 0.875rem; font-weight: 600; font-family: inherit;
     cursor: pointer; outline: none;
-    transition: background 150ms;
+    transition: background 120ms;
   }
   .v-btn-primary:hover:not(:disabled) { background: var(--action-hover); }
   .v-btn-primary:disabled { background: var(--action-dim-dark); cursor: not-allowed; }
   .v-btn-primary:focus-visible {
-    box-shadow: 0 0 0 2px var(--viewer-bg), 0 0 0 4px var(--action);
+    box-shadow: 0 0 0 2px var(--viewer-bg), 0 0 0 4px var(--accent);
   }
 
   /* Viewer panel destructive button */
@@ -229,29 +265,29 @@
     display: block; width: 100%;
     padding: 0.5rem 0;
     background: oklch(44% 0.20 22); color: var(--action-text);
-    border: none; border-radius: 0.5rem;
-    font-size: 0.875rem; font-weight: 500; font-family: inherit;
+    border: none; border-radius: 4px;
+    font-size: 0.875rem; font-weight: 600; font-family: inherit;
     cursor: pointer; outline: none;
-    transition: background 150ms;
+    transition: background 120ms;
   }
   .v-btn-danger:hover:not(:disabled) { background: oklch(50% 0.20 22); }
   .v-btn-danger:disabled { background: oklch(24% 0.10 22); cursor: not-allowed; }
 
   /* Panel output states */
   .v-panel-ok {
-    padding: 0.75rem; border-radius: 0.5rem;
+    padding: 0.75rem; border-radius: 4px;
     background: var(--v-ok-bg); border: 1px solid var(--v-ok-border);
   }
   .v-panel-bad {
-    padding: 0.75rem; border-radius: 0.5rem;
+    padding: 0.75rem; border-radius: 4px;
     background: var(--v-bad-bg); border: 1px solid var(--v-bad-border);
   }
   .v-panel-processing {
-    padding: 0.75rem; border-radius: 0.5rem;
+    padding: 0.75rem; border-radius: 4px;
     background: var(--viewer-surface);
   }
 
-  /* ── Viewer icon button (back/nav buttons in header + panel header) ── */
+  /* Viewer icon button */
   .v-icon-btn {
     color: var(--viewer-text-muted);
     transition: background 150ms, color 150ms;
@@ -265,7 +301,7 @@
     box-shadow: 0 0 0 2px var(--viewer-bg), 0 0 0 4px var(--viewer-border);
   }
 
-  /* ── Viewer sidebar row button (tool list items + print row) ── */
+  /* Viewer sidebar row button */
   .v-row-btn {
     color: var(--viewer-text-sec);
     transition: background 150ms, color 150ms;
@@ -289,11 +325,11 @@
     box-shadow: inset 0 0 0 2px var(--viewer-border);
   }
 
-  /* ── Adaptive row button (Home tool list + recent files) ── */
+  /* Adaptive row button */
   .row-btn { transition: background 150ms; }
-  .row-btn:hover { background: var(--app-surface); }
+  .row-btn:hover { background: var(--bg3); }
 
-  /* ── Viewer output action buttons (Open / Reveal) ── */
+  /* Viewer output action buttons */
   .v-output-btn {
     background: var(--viewer-elevated);
     color: var(--viewer-text-sec);
@@ -304,27 +340,27 @@
     color: var(--viewer-text);
   }
 
-  /* ── Drop zone (Home) ── */
+  /* Drop zone */
   .drop-zone {
-    border-color: var(--app-border);
+    border-color: var(--line);
     background: transparent;
     transition: border-color 150ms, background 150ms;
   }
   .drop-zone:hover {
-    border-color: var(--text-muted);
-    background: var(--app-surface);
+    border-color: var(--fg2);
+    background: var(--bg1);
   }
 
-  /* ── Small header action buttons (viewer header) ── */
+  /* Small header action buttons */
   .v-btn-primary-sm {
-    background: var(--action);
-    color: var(--action-text);
+    background: var(--accent);
+    color: var(--accent-text);
     transition: background 150ms;
   }
   .v-btn-primary-sm:hover:not(:disabled) { background: var(--action-hover); }
   .v-btn-primary-sm:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px var(--viewer-bg), 0 0 0 4px var(--action);
+    box-shadow: 0 0 0 2px var(--viewer-bg), 0 0 0 4px var(--accent);
   }
 
   .v-btn-secondary-sm {
@@ -341,49 +377,64 @@
     box-shadow: 0 0 0 2px var(--viewer-bg), 0 0 0 4px var(--viewer-border);
   }
 
-  /* ── Fix missing focus-visible on toggles ── */
   .v-toggle-on:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px var(--viewer-bg), 0 0 0 4px var(--action);
+    box-shadow: 0 0 0 2px var(--viewer-bg), 0 0 0 4px var(--accent);
   }
   .v-toggle-off:focus-visible {
     outline: none;
     box-shadow: 0 0 0 2px var(--viewer-bg), 0 0 0 4px var(--viewer-border);
   }
 
-  /* ── Page chip (ReorderPanel draggable items) ── */
+  /* Page chip (ReorderPanel) */
   .v-page-chip {
     background: var(--viewer-elevated);
     border: 1px solid var(--viewer-border);
     color: var(--viewer-text-sec);
     transition: border-color 150ms;
   }
-  .v-page-chip:hover { border-color: var(--action); }
+  .v-page-chip:hover { border-color: var(--accent); }
 
-  /* ── Stat/info box (CompressPanel file info) ── */
+  /* Stat/info box (CompressPanel) */
   .v-stat-box {
     background: var(--viewer-elevated);
-    border-radius: 0.5rem;
+    border-radius: 4px;
     padding: 0.75rem;
   }
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   PDF.js text layer — enables text selection and find-in-document highlights
-   The layer sits absolutely over the page image inside a `position: relative`
-   container and renders transparent spans whose positions match the rendered text.
+   PDF.js text layer
 ───────────────────────────────────────────────────────────────────────── */
 .textLayer {
   position: absolute;
+  text-align: initial;
   inset: 0;
-  overflow: hidden;
-  line-height: 1;
-  /* Ensure layer doesn't create unwanted visual noise */
+  overflow: clip;
   opacity: 1;
+  line-height: 1;
+  -webkit-text-size-adjust: none;
+     -moz-text-size-adjust: none;
+          text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+  z-index: 20;
+  
+  /* Multiply blending allows us to use solid selection colors that don't compound 
+     into dark stripes when spans overlap. It blends nicely over the canvas text. */
+  mix-blend-mode: multiply;
+
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
 }
 
-.textLayer span,
-.textLayer br {
+.textLayer.highlighting {
+  touch-action: none;
+}
+
+.textLayer :is(span, br) {
   color: transparent;
   position: absolute;
   white-space: pre;
@@ -391,22 +442,69 @@
   transform-origin: 0% 0%;
 }
 
+.textLayer > span:not(.markedContent),
+.textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+  
+  /* Bridge small gaps between absolutely positioned words (common in justified text)
+     by artificially expanding the span's bounding box without shifting the layout. */
+  padding-inline: 0.25em;
+  margin-inline: -0.25em;
+  /* Adding a tiny vertical padding also helps smooth out multi-line selections */
+  padding-block: 0.1em;
+  margin-block: -0.1em;
+}
+
+.textLayer .markedContent {
+  display: contents;
+}
+
+.textLayer span[role="img"] {
+  -webkit-user-select: none;
+     -moz-user-select: none;
+          user-select: none;
+  cursor: default;
+}
+
 .textLayer ::selection {
-  background: rgba(0, 120, 255, 0.30);
+  /* Use a solid color. Because .textLayer has mix-blend-mode: multiply, 
+     overlapping solid backgrounds stay the exact same color, avoiding dark stripes! */
+  background: #a6d2ff;
   color: transparent;
 }
 
-/* Find-in-document highlight — applied by TextLayer after renderTextLayer */
-.textLayer .find-highlight {
-  background: rgba(255, 195, 0, 0.50);
-  border-radius: 2px;
-  /* Show a faint color on the match so the user can see where it is */
-  color: rgba(0, 0, 0, 0.01);
+.textLayer br::selection {
+  background: transparent;
 }
 
-/* Current (active) match gets a stronger highlight */
-.textLayer .find-highlight-active {
-  background: rgba(255, 130, 0, 0.65);
+.textLayer .find-highlight {
+  background: #ffd666;
   border-radius: 2px;
-  color: rgba(0, 0, 0, 0.01);
+  color: transparent;
+}
+
+.textLayer .find-highlight-active {
+  background: #ff9d00;
+  border-radius: 2px;
+  color: transparent;
+}
+
+.textLayer .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  -webkit-user-select: none;
+     -moz-user-select: none;
+          user-select: none;
+}
+
+.textLayer.selecting .endOfContent {
+  top: 0;
 }

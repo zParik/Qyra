@@ -100,3 +100,32 @@ export function thumbKey(path: string, page: number, scale: number): string {
 export function thumbPrefix(path: string): string {
   return `thumb:${path}:`;
 }
+
+// ─── Persistent thumbnail store (survives restarts) ──────────────────────────
+
+/** Fetch a thumbnail from the persistent on-disk store. Returns null on miss. */
+export async function thumbStoreGet(path: string, page: number, scale: number): Promise<string | null> {
+  try {
+    return await invoke<string | null>("thumb_get", { path, page, scale });
+  } catch {
+    return null;
+  }
+}
+
+/** Write a thumbnail to the persistent on-disk store (fire-and-forget safe). */
+export async function thumbStorePut(path: string, page: number, scale: number, data: string): Promise<void> {
+  try {
+    await invoke("thumb_put", { path, page, scale, data });
+  } catch {
+    /* non-critical */
+  }
+}
+
+/** Evict all persistent thumbnails for a given file path. */
+export async function thumbStoreEvict(path: string): Promise<void> {
+  try {
+    await invoke("thumb_evict", { path });
+  } catch {
+    /* non-critical */
+  }
+}

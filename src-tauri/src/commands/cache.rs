@@ -1,9 +1,8 @@
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::SystemTime;
 
 /// Per-session disk cache for rendered thumbnails and other transient data.
 ///
@@ -34,9 +33,7 @@ impl SessionCacheState {
     }
 
     fn file_for_key(&self, key: &str) -> PathBuf {
-        // Hash the key to a safe filename (no path traversal, fixed length).
-        let hash = simple_hash(key);
-        self.root.join(hash)
+        self.root.join(crate::utils::fnv1a_hex(key))
     }
 }
 
@@ -45,17 +42,6 @@ impl Drop for SessionCacheState {
         // Best-effort cleanup — remove the entire session directory.
         let _ = fs::remove_dir_all(&self.root);
     }
-}
-
-/// Fast, non-cryptographic hash for cache keys.  We only need uniqueness within
-/// a single session, so FNV-1a (64-bit) is more than sufficient.
-fn simple_hash(input: &str) -> String {
-    let mut hash: u64 = 0xcbf29ce484222325;
-    for byte in input.as_bytes() {
-        hash ^= *byte as u64;
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    format!("{:016x}", hash)
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

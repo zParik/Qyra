@@ -20,7 +20,15 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self' tauri: https://tauri.localhost ipc: http://ipc.localhost; script-src 'self' 'wasm-unsafe-eval' blob: tauri: https://tauri.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: asset: https://asset.localhost tauri: https://tauri.localhost; font-src 'self' data:; connect-src ipc: http://ipc.localhost tauri: https://tauri.localhost; worker-src blob:;"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI3OTFGNTJENEUxOEVCOTQKUldTVTZ4aE9MZldSSjI1TnVqOVd5cUtkdnJoL0ZsMjd4UE9BT2ZqcjBRSHdDRldMa0Q0T0NkN3kK",
+      "endpoints": [
+        "https://github.com/zparik/qyra/releases/latest/download/latest.json"
+      ]
     }
   },
   "bundle": {

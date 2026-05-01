@@ -53,8 +53,32 @@ export function TextLayer({ pdfPath, pageNum, zoom, findQuery, isDrawingMode, en
 
         el.innerHTML = "";
 
-        const textContent = await page.getTextContent();
+        // pdfjs-dist v5 TextLayer uses CSS custom property --total-scale-factor
+        // in setLayerDimensions() to compute width/height via calc(). Without it
+        // the container collapses to 0×0 and all text spans pile at (0,0).
+        // We set it to 1 because our viewport is already at the correct scale.
+        el.style.setProperty("--total-scale-factor", "1");
+        // Also set rounding vars that pdfjs may reference
+        el.style.setProperty("--scale-round-x", "1px");
+        el.style.setProperty("--scale-round-y", "1px");
+
+        const textContent = await page.getTextContent({ includeMarkedContent: true });
         if (cancelled) return;
+
+        // PDF text items are often out of visual order in the DOM, which causes
+        // native text selection to warp and select unrelated paragraphs.
+        // Sorting them by visual position (Y descending, X ascending) fixes this.
+        textContent.items.sort((a: any, b: any) => {
+          if (!a.transform || !b.transform) return 0;
+          const yA = a.transform[5];
+          const yB = b.transform[5];
+          // If items are on different lines (difference > 5 units), sort top-to-bottom
+          if (Math.abs(yA - yB) > 5) {
+            return yB - yA; // Higher Y means visually higher on the page
+          }
+          // If on the same line, sort left-to-right
+          return a.transform[4] - b.transform[4];
+        });
 
         const task = new PdfjsTextLayer({
           textContentSource: textContent,
@@ -63,6 +87,13 @@ export function TextLayer({ pdfPath, pageNum, zoom, findQuery, isDrawingMode, en
         });
         renderTask = task;
         await task.render();
+
+        // pdfjs setLayerDimensions sets explicit width/height using calc(),
+        // but we want the layer to fill its parent (already correctly sized
+        // by the page image). Override to 100% so percentage-based span
+        // positions align with the displayed page.
+        el.style.width = "100%";
+        el.style.height = "100%";
 
         // Highlight spans matching the find query
         if (findQuery?.trim() && !cancelled) {
@@ -74,7 +105,7 @@ export function TextLayer({ pdfPath, pageNum, zoom, findQuery, isDrawingMode, en
           });
         }
       } catch {
-        // Cancelled render tasks throw — ignore silently
+        // Render errors are non-fatal; the page image is still visible
       }
     }
 

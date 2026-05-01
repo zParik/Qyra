@@ -15,3 +15,7 @@ pub mod print;
 pub mod annotate;
 pub mod cache;
 pub mod page_count;
+pub mod comments;
+pub mod disk;
+pub mod library;
+pub mod thumb_store;

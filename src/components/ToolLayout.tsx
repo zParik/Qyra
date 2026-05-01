@@ -4,6 +4,8 @@ import { ProgressBar, Spinner } from "./ProgressBar";
 import { FileResult } from "./FileResult";
 import { ErrorBanner } from "./ErrorBanner";
 
+const MONO = "'JetBrains Mono', ui-monospace, monospace";
+
 interface ToolLayoutProps {
   title: string;
   description?: string;
@@ -15,32 +17,58 @@ export function ToolLayout({ title, description, children }: ToolLayoutProps) {
   const { isProcessing, progress, result, resultFiles, error, setError } = useAppStore();
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
+    <div style={{ minHeight: "100vh", background: "var(--bg0)", color: "var(--fg0)" }}>
       {/* Header */}
-      <header className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 px-4" style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 0.75rem)", paddingBottom: "0.75rem" }}>
-        <div className="max-w-3xl mx-auto flex items-center gap-3">
+      <header style={{
+        background: "var(--bg1)",
+        borderBottom: "1px solid var(--line)",
+        paddingTop: "calc(env(safe-area-inset-top, 0px) + 10px)",
+        paddingBottom: "10px",
+        paddingLeft: 16, paddingRight: 16,
+      }}>
+        <div style={{ maxWidth: 720, margin: "0 auto", display: "flex", alignItems: "center", gap: 12 }}>
           <button
             onClick={() => navigate("/")}
-            className="p-2 sm:p-1.5 rounded-lg text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+            className="btn-secondary"
+            style={{ width: 28, height: 28, padding: 0, flexShrink: 0 }}
+            title="Back to home"
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            <svg width={14} height={14} fill="none" stroke="currentColor" strokeWidth={1.5}
+              strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 16 16">
+              <path d="M10 4L6 8l4 4" />
             </svg>
           </button>
-          <div>
-            <h1 className="font-semibold text-gray-900 dark:text-gray-100">{title}</h1>
-            {description && <p className="text-xs text-gray-500 dark:text-gray-400">{description}</p>}
+
+          {/* Breadcrumb */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontFamily: MONO, fontSize: 10.5, color: "var(--fg2)" }}>~/</span>
+            <span style={{ fontFamily: MONO, fontSize: 10.5, color: "var(--fg2)" }}>Home</span>
+            <svg width={10} height={10} fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 16 16" style={{ color: "var(--fg3)", flexShrink: 0 }}>
+              <path d="M6 4l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span style={{ fontFamily: "'Inter', system-ui, sans-serif", fontSize: 13, fontWeight: 600, color: "var(--fg0)" }}>
+              {title}
+            </span>
           </div>
+
+          {description && (
+            <>
+              <div style={{ width: 1, height: 14, background: "var(--line)" }} />
+              <span style={{ fontFamily: MONO, fontSize: 10.5, color: "var(--fg2)" }}>{description}</span>
+            </>
+          )}
         </div>
       </header>
 
       {/* Content */}
-      <main className="max-w-3xl mx-auto px-4 py-6 space-y-4">
+      <main style={{ maxWidth: 720, margin: "0 auto", padding: "24px 16px", display: "flex", flexDirection: "column", gap: 16 }}>
         {children}
 
-        {/* Processing state */}
         {isProcessing && (
-          <div className="p-4 bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800">
+          <div style={{
+            padding: 16, background: "var(--bg1)",
+            border: "1px solid var(--line)", borderRadius: 6,
+          }}>
             {progress ? (
               <ProgressBar current={progress.current} total={progress.total} message={progress.message} />
             ) : (
@@ -49,10 +77,8 @@ export function ToolLayout({ title, description, children }: ToolLayoutProps) {
           </div>
         )}
 
-        {/* Error */}
         {error && <ErrorBanner error={error} onDismiss={() => setError(null)} />}
 
-        {/* Result */}
         {(result || resultFiles.length > 0) && !isProcessing && (
           <FileResult result={result} resultFiles={resultFiles} />
         )}

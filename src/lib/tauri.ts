@@ -1,35 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { isAndroid, androidSavePath, androidOutputDir } from "./androidFileUtils";
+import type {
+  PageRange, PageNumberOptions, PdfMetadata, PdfInfo,
+  CompressResult, StrokeAnnotation, PageAnnotation,
+  DiskSpace, LibraryEntry,
+} from "./schemas";
 
-export interface PageRange {
-  start: number;
-  end: number;
-}
-
-export interface PageNumberOptions {
-  start_at?: number;
-  position?: "bottom-center" | "bottom-right" | "bottom-left" | "top-center" | "top-right" | "top-left";
-  font_size?: number;
-  margin?: number;
-}
-
-export interface PdfMetadata {
-  title?: string;
-  author?: string;
-  subject?: string;
-  keywords?: string;
-  creator?: string;
-  producer?: string;
-  creation_date?: string;
-  mod_date?: string;
-}
-
-export interface PdfInfo {
-  page_count: number;
-  file_size: number;
-  metadata: PdfMetadata;
-}
+export type {
+  PageRange, PageNumberOptions, PdfMetadata, PdfInfo,
+  CompressResult, StrokeAnnotation, PageAnnotation,
+  DiskSpace, LibraryEntry,
+};
 
 // --- Core PDF commands ---
 
@@ -41,12 +23,6 @@ export const splitPdf = (path: string, ranges: PageRange[], outputDir?: string) 
 
 export const splitPdfPerPage = (path: string, outputDir?: string) =>
   invoke<string[]>("split_pdf_per_page", { path, outputDir });
-
-export interface CompressResult {
-  path: string;
-  original_bytes: number;
-  compressed_bytes: number;
-}
 
 export const compressPdf = (path: string, output?: string, level?: number) =>
   invoke<CompressResult>("compress_pdf", { path, output, level });
@@ -124,17 +100,23 @@ export const getContentUriDisplayName = (uri: string) =>
 export const shareFile = (path: string) =>
   invoke<void>("share_file", { path });
 
-export interface StrokeAnnotation {
-  tool: string;
-  color: string;
-  thickness: number;
-  points: [number, number][];
-}
-
-export interface PageAnnotation {
-  page: number;
-  strokes: StrokeAnnotation[];
-}
-
 export const bakeAnnotations = (path: string, annotations: PageAnnotation[], output?: string) =>
   invoke<string>("bake_annotations", { path, annotations, output });
+
+export const loadComments = (path: string) =>
+  invoke<string>("load_comments", { path });
+
+export const saveComments = (path: string, commentsJson: string) =>
+  invoke<void>("save_comments", { path, commentsJson });
+
+export const getDiskSpace = () => invoke<DiskSpace>("get_disk_space");
+
+export const setStarred = (path: string, name: string, starred: boolean) =>
+  invoke<void>("set_starred", { path, name, starred });
+
+export const setArchived = (path: string, name: string, archived: boolean) =>
+  invoke<void>("set_archived", { path, name, archived });
+
+export const getStarred = () => invoke<LibraryEntry[]>("get_starred");
+export const getArchived = () => invoke<LibraryEntry[]>("get_archived");
+export const getEntry = (path: string) => invoke<LibraryEntry | null>("get_entry", { path });

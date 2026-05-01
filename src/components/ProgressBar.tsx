@@ -1,3 +1,5 @@
+const MONO = "'JetBrains Mono', ui-monospace, monospace";
+
 interface ProgressBarProps {
   current: number;
   total: number;
@@ -8,22 +10,18 @@ export function ProgressBar({ current, total, message }: ProgressBarProps) {
   const pct = total > 0 ? Math.round((current / total) * 100) : 0;
 
   return (
-    <div className="space-y-1">
-      <div
-        className="flex justify-between text-xs"
-        style={{ color: "var(--viewer-text-muted, #9ca3af)" }}
-      >
-        <span>{message ?? "Processing..."}</span>
-        <span>{pct}%</span>
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontFamily: MONO, fontSize: 10.5 }}>
+        <span style={{ color: "var(--fg2)" }}>{message ?? "Processing…"}</span>
+        <span style={{ color: "var(--fg1)" }}>{pct}%</span>
       </div>
-      <div
-        className="h-1.5 rounded-full overflow-hidden"
-        style={{ background: "var(--viewer-border, #374151)" }}
-      >
-        <div
-          className="h-full rounded-full transition-all duration-150"
-          style={{ width: `${pct}%`, background: "var(--action, #3b82f6)" }}
-        />
+      <div style={{ height: 4, borderRadius: 2, overflow: "hidden", background: "var(--line)" }}>
+        <div style={{
+          height: "100%", borderRadius: 2,
+          width: `${pct}%`,
+          background: "var(--accent)",
+          transition: "width 150ms ease",
+        }} />
       </div>
     </div>
   );
@@ -31,13 +29,14 @@ export function ProgressBar({ current, total, message }: ProgressBarProps) {
 
 export function Spinner({ label }: { label?: string }) {
   return (
-    <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
-      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-        <path className="opacity-75" fill="currentColor"
-          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+    <div style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: "'Inter', system-ui, sans-serif", fontSize: 12, color: "var(--fg2)" }}>
+      <svg width={16} height={16} fill="none" viewBox="0 0 16 16"
+        style={{ animation: "spin 0.8s linear infinite", flexShrink: 0 }}>
+        <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth={1.5} strokeOpacity={0.2} />
+        <path d="M8 2a6 6 0 016 6" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" style={{ color: "var(--accent)" }} />
       </svg>
-      <span>{label ?? "Processing..."}</span>
+      <span>{label ?? "Processing…"}</span>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }

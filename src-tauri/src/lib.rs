@@ -3,13 +3,42 @@ mod pdf;
 mod utils;
 
 use commands::*;
-use tauri::Emitter;
+use std::sync::Mutex;
+use tauri::{Emitter, Manager};
+
+fn cleanup_stale_sessions(current_pid: u32) {
+    let temp = std::env::temp_dir();
+    let now = std::time::SystemTime::now();
+    let Ok(entries) = std::fs::read_dir(&temp) else { return };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !name_str.starts_with("qyra-session-") { continue; }
+        if let Some(pid_str) = name_str.strip_prefix("qyra-session-") {
+            if pid_str.parse::<u32>().ok() == Some(current_pid) { continue; }
+        }
+        if let Ok(meta) = entry.metadata() {
+            if let Ok(modified) = meta.modified() {
+                if let Ok(age) = now.duration_since(modified) {
+                    if age.as_secs() > 3600 {
+                        let _ = std::fs::remove_dir_all(entry.path());
+                    }
+                }
+            }
+        }
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(commands::cache::SessionCacheState::new())
         .setup(|app| {
+            cleanup_stale_sessions(std::process::id());
+            let conn = commands::library::open_db(app.handle())
+                .expect("failed to open library db");
+            app.manage(commands::library::LibraryDb(Mutex::new(conn)));
+            app.manage(commands::thumb_store::ThumbStore::new(app.handle()));
             // When opened via "Open with" or double-click, the file path is passed as a CLI arg.
             // Emit it to the frontend after a short delay so the webview has time to load.
             let file_path = std::env::args()
@@ -24,6 +53,8 @@ pub fn run() {
             }
             Ok(())
         })
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -53,6 +84,16 @@ pub fn run() {
             files::get_content_uri_display_name,
             files::share_file,
             annotate::bake_annotations,
+            comments::load_comments,
+            comments::save_comments,
+            library::set_starred,
+            library::set_archived,
+            library::get_starred,
+            library::get_archived,
+            library::get_entry,
+            thumb_store::thumb_get,
+            thumb_store::thumb_put,
+            thumb_store::thumb_evict,
             page_count::get_page_count,
             page_count::get_file_size,
             cache::cache_put,
@@ -62,6 +103,7 @@ pub fn run() {
             cache::cache_evict_prefix,
             cache::cache_stats,
             cache::cache_clear,
+            disk::get_disk_space,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,7 +1,7 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getPdfInfo } from "../lib/tauri";
-import { useAppStore, LoadedFile } from "../store/useAppStore";
+import { useAppStore } from "../store/useAppStore";
 import { isAndroid, pickFilesAndroid } from "../lib/androidFileUtils";
 
 interface DropZoneProps {
@@ -13,6 +13,7 @@ interface DropZoneProps {
 export function DropZone({ accept = [".pdf"], multiple = true, label }: DropZoneProps) {
   const { addFile, setError } = useAppStore();
   const [dragging, setDragging] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   async function handlePaths(paths: string[]) {
     for (const path of paths) {
@@ -21,7 +22,6 @@ export function DropZone({ accept = [".pdf"], multiple = true, label }: DropZone
         const info = await getPdfInfo(path);
         addFile({ path, name, info });
       } catch {
-        // Still add file even if info fetch fails
         addFile({ path, name });
       }
     }
@@ -52,43 +52,89 @@ export function DropZone({ accept = [".pdf"], multiple = true, label }: DropZone
     }
   }, [multiple, accept]);
 
-  const handleDrop = useCallback(
-    async (e: React.DragEvent) => {
-      e.preventDefault();
-      setDragging(false);
-      const paths: string[] = [];
-      for (const item of Array.from(e.dataTransfer.items)) {
-        const file = item.getAsFile();
-        if (file && (file as any).path) paths.push((file as any).path);
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+  }, []);
+
+  // Tauri v2: use onDragDropEvent for actual file system paths (file.path doesn't exist in webview)
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    (async () => {
+      try {
+        const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+        const webview = getCurrentWebviewWindow();
+        unlisten = await webview.onDragDropEvent(async (event) => {
+          const el = containerRef.current;
+          if (!el) return;
+          const rect = el.getBoundingClientRect();
+          const pos = (event.payload as any).position;
+          const isOver = pos
+            ? pos.x >= rect.left && pos.x <= rect.right && pos.y >= rect.top && pos.y <= rect.bottom
+            : false;
+
+          if (event.payload.type === "over") {
+            setDragging(isOver);
+          } else if (event.payload.type === "leave") {
+            setDragging(false);
+          } else if (event.payload.type === "drop" && isOver) {
+            setDragging(false);
+            const paths = (event.payload as any).paths as string[];
+            const filtered = multiple ? paths : paths.slice(0, 1);
+            if (filtered.length > 0) await handlePaths(filtered);
+          }
+        });
+      } catch {
+        // Not in Tauri — HTML drag events remain as fallback
       }
-      if (paths.length > 0) await handlePaths(paths);
-    },
-    []
-  );
+    })();
+    return () => { unlisten?.(); };
+  }, [accept, multiple]);
 
   return (
     <div
+      ref={containerRef}
       onClick={handleBrowse}
       onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
       onDragLeave={() => setDragging(false)}
       onDrop={handleDrop}
-      className={`
-        border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-all
-        ${dragging
-          ? "border-blue-500 bg-blue-50 dark:bg-blue-950"
-          : "border-gray-300 dark:border-gray-600 hover:border-blue-400 hover:bg-gray-50 dark:hover:bg-gray-800"
-        }
-      `}
+      style={{
+        position: "relative", borderRadius: 6,
+        border: `1px ${dragging ? "solid" : "dashed"} ${dragging ? "var(--accent)" : "var(--line)"}`,
+        background: dragging ? "var(--accent-soft)" : "var(--bg1)",
+        padding: "32px 24px", textAlign: "center", cursor: "pointer",
+        transition: "all 120ms ease",
+        overflow: "hidden",
+      }}
+      onMouseEnter={(e) => {
+        if (!dragging) (e.currentTarget as HTMLDivElement).style.borderColor = "var(--fg2)";
+      }}
+      onMouseLeave={(e) => {
+        if (!dragging) (e.currentTarget as HTMLDivElement).style.borderColor = "var(--line)";
+      }}
     >
-      <div className="flex flex-col items-center gap-3 text-gray-500 dark:text-gray-400">
-        <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-            d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+      {/* Subtle stripe */}
+      <div style={{
+        position: "absolute", inset: 0, pointerEvents: "none",
+        opacity: dragging ? 0.12 : 0.03,
+        background: "repeating-linear-gradient(45deg, transparent 0 11px, var(--fg1) 11px 12px)",
+        transition: "opacity 120ms",
+      }} />
+
+      <div style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+        <svg width={32} height={32} fill="none" stroke="currentColor" strokeWidth={1.5}
+          strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"
+          style={{ color: dragging ? "var(--accent)" : "var(--fg2)" }}>
+          <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
         </svg>
-        <p className="text-sm font-medium">
-          {label ?? `Drop ${accept.join(", ")} files here or click to browse`}
-        </p>
-        <p className="text-xs text-gray-400">Your files never leave your device</p>
+        <div>
+          <p style={{ fontFamily: "'Inter', system-ui, sans-serif", fontSize: 13, fontWeight: 500, color: "var(--fg0)", margin: 0 }}>
+            {label ?? `Drop ${accept.join(", ")} files here or click to browse`}
+          </p>
+          <p style={{ fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 10.5, color: "var(--fg2)", margin: "4px 0 0" }}>
+            Files never leave your device
+          </p>
+        </div>
       </div>
     </div>
   );

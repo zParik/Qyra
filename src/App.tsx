@@ -1,11 +1,16 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { useEffect } from "react";
+import { ErrorBoundary } from "react-error-boundary";
 import { useAppStore } from "./store/useAppStore";
 import Home from "./tools/Home";
 import Merge from "./tools/Merge";
 import ImagesToPdf from "./tools/ImagesToPdf";
 import Viewer from "./viewer/Viewer";
 import { useOpenWithFile } from "./hooks/useOpenWithFile";
+import { ViewerErrorFallback } from "./components/ErrorFallback";
+import { useUpdater } from "./hooks/useUpdater";
+import { UpdateBanner } from "./components/UpdateBanner";
+import { ErrorFallback } from "./components/ErrorFallback";
 
 /** Handles "Open with" / double-click file association — must live inside BrowserRouter */
 function OpenWithHandler() {
@@ -16,6 +21,7 @@ function OpenWithHandler() {
 export default function App() {
   const clearFiles = useAppStore((s) => s.clearFiles);
   const reset = useAppStore((s) => s.reset);
+  const { state: updaterState, installUpdate, restartApp, dismiss } = useUpdater();
 
   useEffect(() => {
     return () => {
@@ -25,14 +31,26 @@ export default function App() {
   }, []);
 
   return (
+    <ErrorBoundary FallbackComponent={ErrorFallback}>
     <BrowserRouter>
       <OpenWithHandler />
+      <UpdateBanner
+        state={updaterState}
+        onInstall={installUpdate}
+        onRestart={restartApp}
+        onDismiss={dismiss}
+      />
       <Routes>
         <Route path="/" element={<Home />} />
-        <Route path="/view" element={<Viewer />} />
+        <Route path="/view" element={
+          <ErrorBoundary FallbackComponent={ViewerErrorFallback} key="viewer">
+            <Viewer />
+          </ErrorBoundary>
+        } />
         <Route path="/merge" element={<Merge />} />
         <Route path="/images-to-pdf" element={<ImagesToPdf />} />
       </Routes>
     </BrowserRouter>
+    </ErrorBoundary>
   );
 }

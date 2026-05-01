@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 import { readFile } from "@tauri-apps/plugin-fs";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { sessionCache, thumbKey, thumbPrefix } from "../lib/sessionCache";
+import { sessionCache, thumbKey, thumbPrefix, thumbStoreGet, thumbStorePut, thumbStoreEvict } from "../lib/sessionCache";
 
 // Wire up the PDF.js worker (Vite resolves ?url at build time)
 import pdfjsWorkerUrl from "pdfjs-dist/build/pdf.worker.mjs?url";
@@ -48,8 +48,8 @@ export function evictPathFromThumbnailCache(path: string) {
   for (const key of thumbCache.keys()) {
     if (key.startsWith(`${path}:`)) thumbCache.delete(key);
   }
-  // Also evict from the disk-backed session cache
   sessionCache.evictPrefix(thumbPrefix(path));
+  thumbStoreEvict(path); // also purge persistent cache
 }
 
 /**
@@ -118,21 +118,29 @@ export async function loadDocument(path: string): Promise<pdfjsLib.PDFDocumentPr
 
 export async function renderPage(path: string, pageNum: number, scale: number): Promise<string> {
   const key = `${path}:${pageNum}:${scale}`;
+
+  // Layer 1: in-memory
   if (thumbCache.has(key)) return thumbCache.get(key)!;
 
-  // Check the disk-backed session cache before doing expensive PDF rendering
+  // Layer 2: session cache (fast IPC, survives reloads within same session)
   const diskKey = thumbKey(path, pageNum, scale);
-  const diskHit = await sessionCache.get(diskKey);
-  if (diskHit) {
-    thumbCache.set(key, diskHit);
-    return diskHit;
+  const sessionHit = await sessionCache.get(diskKey);
+  if (sessionHit) {
+    thumbCache.set(key, sessionHit);
+    return sessionHit;
   }
 
-  // Serialize all canvas renders through a single slot so the PDF.js worker
-  // isn't hit from multiple concurrent callers (strip + center hooks).
+  // Layer 3: persistent cache (survives app restarts, keyed with file mtime)
+  const persistHit = await thumbStoreGet(path, pageNum, scale);
+  if (persistHit) {
+    thumbCache.set(key, persistHit);
+    sessionCache.put(diskKey, persistHit); // warm session cache for this run
+    return persistHit;
+  }
+
+  // Layer 4: render from PDF
   await acquireRenderSlot();
   try {
-    // Re-check cache in case another render completed while we were waiting
     if (thumbCache.has(key)) return thumbCache.get(key)!;
 
     const doc = await loadDocument(path);
@@ -157,8 +165,8 @@ export async function renderPage(path: string, pageNum: number, scale: number): 
 
     const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
     thumbCache.set(key, dataUrl);
-    // Write-through: persist to disk cache (fire-and-forget)
     sessionCache.put(diskKey, dataUrl);
+    thumbStorePut(path, pageNum, scale, dataUrl); // persist for next launch (fire-and-forget)
     return dataUrl;
   } catch (e) {
     console.error(`[renderPage] Error rendering page ${pageNum}:`, e);
@@ -250,8 +258,16 @@ export function usePageThumbnails(
       if (page < 1 || page > pageCount) continue;
 
       const key = `${path}:${page}:${scale}`;
-      // Skip if already rendered or in-flight
-      if (thumbCache.has(key) || inFlightRef.current.has(page)) continue;
+      // If already in memory cache, update state synchronously
+      if (thumbCache.has(key)) {
+        setThumbnails((prev) => {
+          if (prev[page] === thumbCache.get(key)) return prev;
+          return { ...prev, [page]: thumbCache.get(key)! };
+        });
+        continue;
+      }
+
+      if (inFlightRef.current.has(page)) continue;
 
       inFlightRef.current.add(page);
       renderPage(path!, page, scale)

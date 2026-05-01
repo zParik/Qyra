@@ -5,19 +5,38 @@ interface ErrorBannerProps {
 
 export function ErrorBanner({ error, onDismiss }: ErrorBannerProps) {
   return (
-    <div className="rounded-xl border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950 p-4 flex items-start gap-3">
-      <svg className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-          d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+    <div style={{
+      borderRadius: 6, border: "1px solid var(--bad-border)",
+      background: "var(--bad-bg)", padding: "12px 14px",
+      display: "flex", alignItems: "flex-start", gap: 10,
+    }}>
+      <svg width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.5}
+        strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"
+        style={{ color: "var(--bad-text)", flexShrink: 0, marginTop: 1 }}>
+        <path d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
       </svg>
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-red-700 dark:text-red-400">Error</p>
-        <p className="text-sm text-red-600 dark:text-red-300 mt-0.5 break-words">{error}</p>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p style={{ fontFamily: "'Inter', system-ui, sans-serif", fontSize: 12, fontWeight: 600, color: "var(--bad-text)", margin: 0 }}>
+          Error
+        </p>
+        <p style={{ fontFamily: "'Inter', system-ui, sans-serif", fontSize: 12, color: "var(--bad-text)", opacity: 0.85, margin: "2px 0 0", wordBreak: "break-word" }}>
+          {error}
+        </p>
       </div>
       {onDismiss && (
-        <button onClick={onDismiss} className="text-red-400 hover:text-red-600">
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+        <button
+          onClick={onDismiss}
+          style={{
+            background: "transparent", border: "none", cursor: "pointer",
+            color: "var(--bad-text)", opacity: 0.7, padding: 2, flexShrink: 0,
+            display: "inline-flex", alignItems: "center",
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")}
+          onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.7")}
+        >
+          <svg width={14} height={14} fill="none" stroke="currentColor" strokeWidth={1.5}
+            strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 16 16">
+            <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" />
           </svg>
         </button>
       )}
