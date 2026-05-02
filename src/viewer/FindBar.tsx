@@ -9,6 +9,10 @@ interface FindBarProps {
   onNext: () => void;
   onPrev: () => void;
   onClose: () => void;
+  /** True while OCR scanning is in progress */
+  ocrSearching?: boolean;
+  /** Progress through OCR scanning: { page, total } */
+  ocrProgress?: { page: number; total: number };
 }
 
 export function FindBar({
@@ -19,6 +23,8 @@ export function FindBar({
   onNext,
   onPrev,
   onClose,
+  ocrSearching,
+  ocrProgress,
 }: FindBarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -28,7 +34,6 @@ export function FindBar({
   }, []);
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    // Prevent viewer-level shortcuts from firing while typing
     e.stopPropagation();
     if (e.key === "Enter") {
       e.shiftKey ? onPrev() : onNext();
@@ -37,9 +42,14 @@ export function FindBar({
     }
   }
 
-  const statusText =
-    query.trim() === ""
-      ? ""
+  const hasQuery = query.trim() !== "";
+
+  const statusText = !hasQuery
+    ? ""
+    : ocrSearching
+      ? ocrProgress
+        ? `Scanning ${ocrProgress.page} / ${ocrProgress.total}…`
+        : "Scanning…"
       : matchCount === 0
         ? "No results"
         : `${currentMatch} / ${matchCount}`;
@@ -84,18 +94,25 @@ export function FindBar({
         }}
       />
 
-      {statusText && (
-        <span
-          className="text-xs shrink-0 tabular-nums"
-          style={{
-            color:
-              matchCount === 0 && query.trim() !== ""
-                ? "var(--v-bad-text)"
-                : "var(--viewer-text-muted)",
-          }}
-        >
-          {statusText}
-        </span>
+      {/* Status */}
+      {hasQuery && (
+        ocrSearching ? (
+          <span className="flex items-center gap-1.5 text-xs shrink-0 tabular-nums"
+            style={{ color: "var(--viewer-text-muted)" }}>
+            <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <circle cx="12" cy="12" r="10" strokeWidth={2} strokeOpacity={0.25} />
+              <path d="M12 2a10 10 0 0 1 10 10" strokeWidth={2} strokeLinecap="round" />
+            </svg>
+            {statusText}
+          </span>
+        ) : (
+          <span
+            className="text-xs shrink-0 tabular-nums"
+            style={{ color: matchCount === 0 ? "var(--v-bad-text)" : "var(--viewer-text-muted)" }}
+          >
+            {statusText}
+          </span>
+        )
       )}
 
       <button

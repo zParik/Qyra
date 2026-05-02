@@ -8,6 +8,11 @@ interface TextLayerProps {
   /** Current zoom level — used as a dep to re-measure parent width on zoom change */
   zoom: number;
   findQuery?: string;
+  /**
+   * 0-based index of the current find match among matches on this page (same order
+   * as document-wide find). Use -1 when no match on this page is current.
+   */
+  findActiveMatchOrdinal?: number;
   isDrawingMode?: boolean;
   enabled?: boolean;
 }
@@ -19,7 +24,15 @@ interface TextLayerProps {
  * Must be placed inside a `position: relative` container that is sized to match
  * the displayed page image.
  */
-export function TextLayer({ pdfPath, pageNum, zoom, findQuery, isDrawingMode, enabled = true }: TextLayerProps) {
+export function TextLayer({
+  pdfPath,
+  pageNum,
+  zoom,
+  findQuery,
+  findActiveMatchOrdinal = -1,
+  isDrawingMode,
+  enabled = true,
+}: TextLayerProps) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -54,10 +67,10 @@ export function TextLayer({ pdfPath, pageNum, zoom, findQuery, isDrawingMode, en
         el.innerHTML = "";
 
         // pdfjs-dist v5 TextLayer uses CSS custom property --total-scale-factor
-        // in setLayerDimensions() to compute width/height via calc(). Without it
-        // the container collapses to 0×0 and all text spans pile at (0,0).
-        // We set it to 1 because our viewport is already at the correct scale.
-        el.style.setProperty("--total-scale-factor", "1");
+        // in setLayerDimensions() to compute width/height via calc().
+        // We set it to the actual viewport scale so the DOM font sizes perfectly
+        // match the zoomed canvas text, aligning selection boxes and highlights.
+        el.style.setProperty("--total-scale-factor", scale.toString());
         // Also set rounding vars that pdfjs may reference
         el.style.setProperty("--scale-round-x", "1px");
         el.style.setProperty("--scale-round-y", "1px");
@@ -95,12 +108,89 @@ export function TextLayer({ pdfPath, pageNum, zoom, findQuery, isDrawingMode, en
         el.style.width = "100%";
         el.style.height = "100%";
 
-        // Highlight spans matching the find query
+        // Highlight text, supporting cross-span matches and split words
         if (findQuery?.trim() && !cancelled) {
           const q = findQuery.trim().toLowerCase();
-          el.querySelectorAll<HTMLElement>("span").forEach((span) => {
-            if (span.textContent?.toLowerCase().includes(q)) {
-              span.classList.add("find-highlight");
+          
+          // Get all leaf spans in visual order
+          const spans = Array.from(el.querySelectorAll<HTMLElement>("span")).filter(s => s.children.length === 0);
+          
+          let fullText = "";
+          const spanStarts: number[] = [];
+          
+          spans.forEach(span => {
+            spanStarts.push(fullText.length);
+            fullText += span.textContent ?? "";
+          });
+          
+          const lowerFull = fullText.toLowerCase();
+          const matches: {start: number, end: number}[] = [];
+          let idx = 0;
+          while ((idx = lowerFull.indexOf(q, idx)) !== -1) {
+            matches.push({ start: idx, end: idx + q.length });
+            idx += q.length; // Move past the matched string
+          }
+          
+          const layerRect = el.getBoundingClientRect();
+          if (layerRect.width === 0 || layerRect.height === 0) return;
+
+          const highlightContainer = document.createElement("div");
+          highlightContainer.className = "find-highlight-container";
+          highlightContainer.style.position = "absolute";
+          highlightContainer.style.inset = "0";
+          highlightContainer.style.pointerEvents = "none";
+          highlightContainer.style.zIndex = "0";
+          el.appendChild(highlightContainer);
+
+          const activeOrdinal =
+            findActiveMatchOrdinal >= 0 && findActiveMatchOrdinal < matches.length
+              ? findActiveMatchOrdinal
+              : -1;
+
+          const appendHighlightRects = (
+            span: HTMLElement,
+            hl: { start: number; end: number },
+            matchIdx: number
+          ) => {
+            const textNode = Array.from(span.childNodes).find((n) => n.nodeType === Node.TEXT_NODE);
+            if (!textNode) return;
+            const range = document.createRange();
+            try {
+              range.setStart(textNode, hl.start);
+              range.setEnd(textNode, hl.end);
+              const rects = range.getClientRects();
+              const isActive = matchIdx === activeOrdinal;
+              for (let r = 0; r < rects.length; r++) {
+                const rect = rects[r];
+                const div = document.createElement("div");
+                div.className = isActive ? "find-highlight-active" : "find-highlight";
+                div.style.position = "absolute";
+                div.style.left = `${((rect.left - layerRect.left) / layerRect.width) * 100}%`;
+                div.style.top = `${((rect.top - layerRect.top) / layerRect.height) * 100}%`;
+                div.style.width = `${(rect.width / layerRect.width) * 100}%`;
+                div.style.height = `${(rect.height / layerRect.height) * 100}%`;
+                div.style.padding = "1px 0";
+                div.style.marginTop = "-1px";
+                if (isActive) div.style.zIndex = "1";
+                highlightContainer.appendChild(div);
+              }
+            } catch {
+              /* offsets out of bounds */
+            }
+          };
+
+          matches.forEach((match, matchIdx) => {
+            for (let i = 0; i < spans.length; i++) {
+              const spanStart = spanStarts[i];
+              const spanLen = (spans[i].textContent ?? "").length;
+              const spanEnd = spanStart + spanLen;
+
+              if (match.end <= spanStart) break;
+              if (match.start >= spanEnd) continue;
+
+              const overlapStart = Math.max(0, match.start - spanStart);
+              const overlapEnd = Math.min(spanLen, match.end - spanStart);
+              appendHighlightRects(spans[i], { start: overlapStart, end: overlapEnd }, matchIdx);
             }
           });
         }
@@ -117,7 +207,7 @@ export function TextLayer({ pdfPath, pageNum, zoom, findQuery, isDrawingMode, en
         try { renderTask.cancel(); } catch { /* cancelled render throws, ignore */ }
       }
     };
-  }, [pdfPath, pageNum, zoom, findQuery, enabled]);
+  }, [pdfPath, pageNum, zoom, findQuery, findActiveMatchOrdinal, enabled]);
 
   return (
     <div

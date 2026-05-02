@@ -5,6 +5,7 @@ import { useAppStore } from "./store/useAppStore";
 import Home from "./tools/Home";
 import Merge from "./tools/Merge";
 import ImagesToPdf from "./tools/ImagesToPdf";
+import Ocr from "./tools/Ocr";
 import Viewer from "./viewer/Viewer";
 import { useOpenWithFile } from "./hooks/useOpenWithFile";
 import { ViewerErrorFallback } from "./components/ErrorFallback";
@@ -49,6 +50,7 @@ export default function App() {
         } />
         <Route path="/merge" element={<Merge />} />
         <Route path="/images-to-pdf" element={<ImagesToPdf />} />
+        <Route path="/ocr" element={<Ocr />} />
       </Routes>
     </BrowserRouter>
     </ErrorBoundary>

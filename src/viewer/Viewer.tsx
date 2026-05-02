@@ -15,8 +15,24 @@ import { TextLayer } from "./TextLayer";
 import { FindBar } from "./FindBar";
 import { CommentLayer, CommentEditor } from "./CommentLayer";
 import { useCommentsStore } from "../store/useCommentsStore";
+import { getPageOcrText } from "../lib/ocrEngine";
 
 const EMPTY_VIRTUAL_PAGES: VirtualPage[] = [];
+
+/** 0-based index of the current find hit among hits on `page`, or -1 if none. */
+function findActiveMatchOrdinalOnPage(
+  page: number,
+  findMatches: { page: number }[],
+  globalIdx: number
+): number {
+  if (findMatches.length === 0 || globalIdx < 0 || globalIdx >= findMatches.length) return -1;
+  if (findMatches[globalIdx].page !== page) return -1;
+  let ordinal = -1;
+  for (let i = 0; i <= globalIdx; i++) {
+    if (findMatches[i].page === page) ordinal++;
+  }
+  return ordinal;
+}
 
 export default function Viewer() {
   const navigate = useNavigate();
@@ -52,6 +68,8 @@ export default function Viewer() {
   const [findQuery, setFindQuery] = useState("");
   const [findMatches, setFindMatches] = useState<{ page: number }[]>([]);
   const [findCurrentIdx, setFindCurrentIdx] = useState(0);
+  const [ocrSearching, setOcrSearching] = useState(false);
+  const [ocrProgress, setOcrProgress] = useState<{ page: number; total: number } | undefined>();
 
   // Go-to-page input
   const [editingPage, setEditingPage] = useState(false);
@@ -392,36 +410,72 @@ export default function Viewer() {
     setZoom(Math.max(0.25, Math.min(1.0, fitZoom)));
   }, []);
 
-  // Search all pages for find query
+  // Search pages — PDF text first, then OCR automatically if no text matches
   useEffect(() => {
     if (!findQuery.trim() || !viewerFile || pageCount === 0) {
       setFindMatches([]);
       setFindCurrentIdx(0);
+      setOcrSearching(false);
+      setOcrProgress(undefined);
       return;
     }
     let cancelled = false;
     const q = findQuery.trim().toLowerCase();
+    setOcrSearching(false);
+    setOcrProgress(undefined);
 
     async function search() {
       try {
         const doc = await loadDocument(viewerFile!.path);
-        const matches: { page: number }[] = [];
+
+        // Phase 1: PDF text layer
+        const textMatches: { page: number }[] = [];
         for (let p = 1; p <= pageCount; p++) {
           if (cancelled) return;
           const page = await doc.getPage(p);
           const tc = await page.getTextContent();
-          const text = (tc.items as { str?: string }[])
-            .map((item) => item.str ?? "")
-            .join("");
-          if (text.toLowerCase().includes(q)) {
-            matches.push({ page: p });
+          const text = (tc.items as { str?: string }[]).map((i) => i.str ?? "").join("").toLowerCase();
+          let idx = 0;
+          while (true) {
+            const pos = text.indexOf(q, idx);
+            if (pos === -1) break;
+            textMatches.push({ page: p });
+            idx = pos + 1;
+          }
+        }
+        if (cancelled) return;
+        if (textMatches.length > 0) {
+          setFindMatches(textMatches);
+          setFindCurrentIdx(0);
+          return;
+        }
+
+        // Phase 2: OCR fallback (automatic)
+        if (!cancelled) setOcrSearching(true);
+        const ocrMatches: { page: number }[] = [];
+        for (let p = 1; p <= pageCount; p++) {
+          if (cancelled) break;
+          setOcrProgress({ page: p, total: pageCount });
+          const text = await getPageOcrText(viewerFile!.path, p, doc);
+          const lower = text.toLowerCase();
+          let idx = 0;
+          while (true) {
+            const pos = lower.indexOf(q, idx);
+            if (pos === -1) break;
+            ocrMatches.push({ page: p });
+            idx = pos + 1;
           }
         }
         if (!cancelled) {
-          setFindMatches(matches);
+          setFindMatches(ocrMatches);
           setFindCurrentIdx(0);
         }
-      } catch { /* ignore */ }
+      } catch { /* ignore */ } finally {
+        if (!cancelled) {
+          setOcrSearching(false);
+          setOcrProgress(undefined);
+        }
+      }
     }
 
     search();
@@ -1019,6 +1073,8 @@ export default function Viewer() {
           onNext={() => setFindCurrentIdx((i) => (i + 1) % Math.max(1, findMatches.length))}
           onPrev={() => setFindCurrentIdx((i) => (i - 1 + Math.max(1, findMatches.length)) % Math.max(1, findMatches.length))}
           onClose={() => { setFindOpen(false); setFindQuery(""); }}
+          ocrSearching={ocrSearching}
+          ocrProgress={ocrProgress}
         />
       )}
 
@@ -1198,9 +1254,27 @@ export default function Viewer() {
           )}
 
           {pageCount === 0 && (
-            <p className="text-sm m-8" style={{ color: "var(--viewer-text-muted)" }}>
-              No pages found
-            </p>
+            <div
+              aria-label="Loading document"
+              aria-busy="true"
+              style={{
+                display: "flex", flexDirection: "column", alignItems: "center",
+                padding: "48px 32px", gap: 16,
+              }}
+            >
+              {[1, 0.75, 0.55].map((w, i) => (
+                <div key={i} style={{
+                  width: `min(${Math.round(768 * w)}px, calc(100% - 64px))`,
+                  height: i === 0 ? 520 : i === 1 ? 24 : 16,
+                  borderRadius: 4,
+                  background: "var(--viewer-elevated)",
+                  border: "1px solid var(--viewer-border)",
+                  animation: "pulse 1.6s ease-in-out infinite",
+                  animationDelay: `${i * 120}ms`,
+                }} />
+              ))}
+              <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.45} }`}</style>
+            </div>
           )}
 
           {/* Virtual scroll container — only renders the visible window of slots */}
@@ -1284,6 +1358,11 @@ export default function Viewer() {
                           pageNum={page}
                           zoom={zoom}
                           findQuery={findOpen ? findQuery : undefined}
+                          findActiveMatchOrdinal={
+                            findOpen && findQuery.trim()
+                              ? findActiveMatchOrdinalOnPage(page, findMatches, findCurrentIdx)
+                              : -1
+                          }
                           isDrawingMode={activeTool === "draw"}
                           enabled={shouldRenderTextLayer}
                         />

@@ -450,14 +450,6 @@
   --scale-x: 1;
   --rotate: 0deg;
   transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
-  
-  /* Bridge small gaps between absolutely positioned words (common in justified text)
-     by artificially expanding the span's bounding box without shifting the layout. */
-  padding-inline: 0.25em;
-  margin-inline: -0.25em;
-  /* Adding a tiny vertical padding also helps smooth out multi-line selections */
-  padding-block: 0.1em;
-  margin-block: -0.1em;
 }
 
 .textLayer .markedContent {
@@ -483,15 +475,17 @@
 }
 
 .textLayer .find-highlight {
-  background: #ffd666;
+  background: rgba(255, 214, 102, 0.92);
   border-radius: 2px;
   color: transparent;
 }
 
+/* Current find result — distinct from other hits (stronger / cooler tone). */
 .textLayer .find-highlight-active {
-  background: #ff9d00;
+  background: rgba(56, 189, 248, 0.55);
   border-radius: 2px;
   color: transparent;
+  box-shadow: 0 0 0 1px rgba(14, 165, 233, 0.45);
 }
 
 .textLayer .endOfContent {

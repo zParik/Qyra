@@ -120,3 +120,20 @@ export const setArchived = (path: string, name: string, archived: boolean) =>
 export const getStarred = () => invoke<LibraryEntry[]>("get_starred");
 export const getArchived = () => invoke<LibraryEntry[]>("get_archived");
 export const getEntry = (path: string) => invoke<LibraryEntry | null>("get_entry", { path });
+
+// --- OCR ---
+
+export interface OcrWord {
+  text: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface OcrPage {
+  words: OcrWord[];
+}
+
+export const makeSearchable = (path: string, pages: OcrPage[], output?: string) =>
+  invoke<string>("make_searchable", { path, pages, output });

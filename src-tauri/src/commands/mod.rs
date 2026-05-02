@@ -19,3 +19,4 @@ pub mod comments;
 pub mod disk;
 pub mod library;
 pub mod thumb_store;
+pub mod ocr;

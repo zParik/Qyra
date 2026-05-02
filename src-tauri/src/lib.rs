@@ -104,6 +104,7 @@ pub fn run() {
             cache::cache_stats,
             cache::cache_clear,
             disk::get_disk_space,
+            ocr::make_searchable,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -94,7 +94,11 @@ export function DropZone({ accept = [".pdf"], multiple = true, label }: DropZone
   return (
     <div
       ref={containerRef}
+      role="button"
+      tabIndex={0}
+      aria-label={label ?? `Drop ${accept.join(", ")} files here or click to browse`}
       onClick={handleBrowse}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleBrowse(); } }}
       onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
       onDragLeave={() => setDragging(false)}
       onDrop={handleDrop}
@@ -124,6 +128,7 @@ export function DropZone({ accept = [".pdf"], multiple = true, label }: DropZone
       <div style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
         <svg width={32} height={32} fill="none" stroke="currentColor" strokeWidth={1.5}
           strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"
+          aria-hidden="true"
           style={{ color: dragging ? "var(--accent)" : "var(--fg2)" }}>
           <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
         </svg>

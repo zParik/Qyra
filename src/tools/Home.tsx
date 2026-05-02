@@ -82,6 +82,7 @@ function Ic({ children, size = 16, style }: { children: React.ReactNode; size?: 
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none"
       stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true"
       style={{ flexShrink: 0, ...style }}>
       {children}
     </svg>
@@ -246,6 +247,7 @@ function RailItem({ label, Icon, badge, active, onClick }: {
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      aria-current={active ? "page" : undefined}
       style={{
         background: active ? "var(--bg3)" : hover ? "var(--bg2)" : "transparent",
         border: "none", borderRadius: 4,
@@ -356,7 +358,6 @@ function DropHero({ drag, onDragOver, onDragLeave, onDrop, onClick, loading }: {
 
         <div style={{ display: "flex", gap: 16, fontFamily: MONO, fontSize: 10.5, color: "var(--fg2)" }}>
           <span><span style={{ color: "var(--fg3)" }}>FORMAT</span> .pdf .pdf/a</span>
-          <span><span style={{ color: "var(--fg3)" }}>MAX</span> 250 MB</span>
           <span><span style={{ color: "var(--fg3)" }}>OCR</span> auto</span>
         </div>
       </div>
@@ -555,7 +556,8 @@ function RecentCard({ file, onOpen, starred, archived, onToggleStar, onToggleArc
             {onToggleStar && (
               <button
                 onClick={(e) => { e.stopPropagation(); onToggleStar(); }}
-                title={starred ? "Unstar" : "Star"}
+                aria-label={starred ? `Unstar ${file.name}` : `Star ${file.name}`}
+                aria-pressed={starred}
                 style={{
                   width: 22, height: 22, border: "none", borderRadius: 3, cursor: "pointer",
                   background: starred ? "var(--accent)" : "var(--bg2)",
@@ -570,7 +572,8 @@ function RecentCard({ file, onOpen, starred, archived, onToggleStar, onToggleArc
             {onToggleArchive && (
               <button
                 onClick={(e) => { e.stopPropagation(); onToggleArchive(); }}
-                title={archived ? "Unarchive" : "Archive"}
+                aria-label={archived ? `Unarchive ${file.name}` : `Archive ${file.name}`}
+                aria-pressed={archived}
                 style={{
                   width: 22, height: 22, border: "none", borderRadius: 3, cursor: "pointer",
                   background: archived ? "var(--bg3)" : "var(--bg2)",
@@ -646,10 +649,11 @@ function ListRow({ file, swatch, index, onOpen, starred, archived, onToggleStar,
   onToggleStar?: () => void; onToggleArchive?: () => void;
 }) {
   const [hover, setHover] = useState(false);
-  const iconBtn = (active: boolean, title: string, Icon: (p: IconProps) => React.ReactElement, onClick: () => void) => (
+  const iconBtn = (active: boolean, label: string, Icon: (p: IconProps) => React.ReactElement, onClick: () => void) => (
     <button
       onClick={(e) => { e.stopPropagation(); onClick(); }}
-      title={title}
+      aria-label={label}
+      aria-pressed={active}
       style={{
         width: 22, height: 22, border: "none", borderRadius: 3, cursor: "pointer",
         background: active ? "var(--accent)" : "transparent",
@@ -667,6 +671,7 @@ function ListRow({ file, swatch, index, onOpen, starred, archived, onToggleStar,
       onClick={onOpen}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      aria-label={`Open ${file.name}`}
       style={{
         display: "grid", gridTemplateColumns: "24px 1fr 120px 52px",
         padding: "8px 14px", gap: 12, alignItems: "center",
@@ -685,8 +690,8 @@ function ListRow({ file, swatch, index, onOpen, starred, archived, onToggleStar,
         {formatRelativeTime(file.openedAt)}
       </span>
       <span style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
-        {onToggleStar && iconBtn(starred ?? false, starred ? "Unstar" : "Star", IcStar, onToggleStar)}
-        {onToggleArchive && iconBtn(archived ?? false, archived ? "Unarchive" : "Archive", IcArchive, onToggleArchive)}
+        {onToggleStar && iconBtn(starred ?? false, starred ? `Unstar ${file.name}` : `Star ${file.name}`, IcStar, onToggleStar)}
+        {onToggleArchive && iconBtn(archived ?? false, archived ? `Unarchive ${file.name}` : `Archive ${file.name}`, IcArchive, onToggleArchive)}
       </span>
     </button>
   );
@@ -696,8 +701,8 @@ function ListRow({ file, swatch, index, onOpen, starred, archived, onToggleStar,
 // View toggle pill + segment pill
 // ─────────────────────────────────────────────────────────────────────────
 function ViewToggle({ mode, setMode }: { mode: "grid" | "list"; setMode: (m: "grid" | "list") => void }) {
-  const btn = (m: "grid" | "list", Icon: (p: IconProps) => React.ReactElement) => (
-    <button onClick={() => setMode(m)} style={{
+  const btn = (m: "grid" | "list", Icon: (p: IconProps) => React.ReactElement, label: string) => (
+    <button onClick={() => setMode(m)} aria-label={label} aria-pressed={mode === m} style={{
       width: 22, height: 22, border: "none",
       background: mode === m ? "var(--bg3)" : "transparent",
       color: mode === m ? "var(--fg0)" : "var(--fg2)",
@@ -709,9 +714,9 @@ function ViewToggle({ mode, setMode }: { mode: "grid" | "list"; setMode: (m: "gr
     </button>
   );
   return (
-    <div style={{ display: "flex", gap: 2 }}>
-      {btn("grid", IcGrid)}
-      {btn("list", IcList)}
+    <div style={{ display: "flex", gap: 2 }} role="group" aria-label="View mode">
+      {btn("grid", IcGrid, "Grid view")}
+      {btn("list", IcList, "List view")}
     </div>
   );
 }
@@ -752,6 +757,7 @@ export default function Home() {
   const [dragging, setDragging] = useState(false);
   const [recentFiles, setRecentFiles] = useState<RecentFile[]>([]);
   const [loading, setLoading] = useState<string | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<Section>("home");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const { data: diskSpaceData } = useDiskSpace();
@@ -793,7 +799,14 @@ export default function Home() {
   }, []);
 
   async function openPdf(rawPath: string) {
+    setFileError(null);
     const name = await getDisplayName(rawPath);
+
+    if (!name.toLowerCase().endsWith(".pdf")) {
+      setFileError(`"${name}" is not a PDF file.`);
+      return;
+    }
+
     setLoading(name);
     const path = await resolveAndroidUri(rawPath).catch(() => rawPath);
     setViewerFile({ path, name });
@@ -899,6 +912,35 @@ export default function Home() {
         {/* Scrollable content */}
         <div style={{ flex: 1, overflow: "auto", padding: "20px 24px 32px" }}>
           <div style={{ maxWidth: 1200, display: "flex", flexDirection: "column", gap: 24 }}>
+
+            {/* File validation error */}
+            {fileError && (
+              <div role="alert" style={{
+                display: "flex", alignItems: "center", gap: 10,
+                padding: "10px 14px",
+                background: "var(--bg1)", border: "1px solid #b94040",
+                borderRadius: 6, fontFamily: UI, fontSize: 12.5, color: "#e07070",
+              }}>
+                <svg width={14} height={14} viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                  strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <circle cx="8" cy="8" r="6"/><path d="M8 5v3.5M8 11v.5"/>
+                </svg>
+                <span style={{ flex: 1 }}>{fileError}</span>
+                <button
+                  onClick={() => setFileError(null)}
+                  aria-label="Dismiss error"
+                  style={{
+                    background: "transparent", border: "none", cursor: "pointer",
+                    color: "var(--fg2)", padding: 2, display: "flex", alignItems: "center",
+                  }}
+                >
+                  <svg width={12} height={12} viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                    strokeWidth={1.5} strokeLinecap="round" aria-hidden="true">
+                    <path d="M3 3l10 10M13 3L3 13"/>
+                  </svg>
+                </button>
+              </div>
+            )}
 
             {/* Hero drop zone */}
             <DropHero
