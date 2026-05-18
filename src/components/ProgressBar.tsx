@@ -1,4 +1,4 @@
-const MONO = "'JetBrains Mono', ui-monospace, monospace";
+import { MONO } from "../lib/tokens";
 
 interface ProgressBarProps {
   current: number;

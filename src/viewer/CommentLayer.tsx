@@ -7,7 +7,7 @@ interface CommentLayerProps {
   isCommentMode: boolean;
 }
 
-const UI = "'Inter', system-ui, sans-serif";
+import { UI } from "../lib/tokens";
 
 // Small speech-bubble pin rendered as an SVG.
 function Pin({ color, selected }: { color: string; selected: boolean }) {

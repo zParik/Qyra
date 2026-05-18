@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNotesStore, PageTemplate, VirtualPage } from "../../store/useNotesStore";
-import { removePages } from "../../lib/tauri";
+import { removePages, getSetting, setSetting } from "../../lib/tauri";
 
 const COLORS = [
   { label: "Black",  value: "#111111" },
@@ -151,7 +151,7 @@ function AddPageDropdown({ docPath, onClose }: { docPath: string; onClose: () =>
         </>
       )}
       <p className="text-xs" style={{ color: "var(--viewer-text-muted)" }}>
-        Annotations are local only. PDF export planned for a future update.
+        Use <strong>Save</strong> to bake annotations and note pages into the PDF.
       </p>
     </div>
   );
@@ -194,6 +194,31 @@ export function DrawToolbar({
   const [addPageOpen, setAddPageOpen]         = useState(false);
   const [isDeleting, setIsDeleting]           = useState(false);
   const [saveState, setSaveState]             = useState<'idle' | 'saving' | 'saved'>('idle');
+
+  // Load draw preferences once on mount
+  useEffect(() => {
+    Promise.all([
+      getSetting("draw_tool"),
+      getSetting("draw_color"),
+      getSetting("draw_thickness"),
+      getSetting("draw_nib_angle"),
+      getSetting("draw_eraser_size"),
+    ]).then(([tool, color, thickness, nibAngle, eraserSize]) => {
+      if (tool) setDrawTool(tool as typeof drawTool);
+      if (color) setDrawColor(color);
+      if (thickness) setDrawThickness(Number(thickness));
+      if (nibAngle) setDrawNibAngle(Number(nibAngle));
+      if (eraserSize) setEraserSize(Number(eraserSize));
+    }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Persist each preference when it changes
+  useEffect(() => { setSetting("draw_tool", drawTool).catch(() => {}); }, [drawTool]);
+  useEffect(() => { setSetting("draw_color", drawColor).catch(() => {}); }, [drawColor]);
+  useEffect(() => { setSetting("draw_thickness", String(drawThickness)).catch(() => {}); }, [drawThickness]);
+  useEffect(() => { setSetting("draw_nib_angle", String(drawNibAngle)).catch(() => {}); }, [drawNibAngle]);
+  useEffect(() => { setSetting("draw_eraser_size", String(eraserSize)).catch(() => {}); }, [eraserSize]);
 
   const toolBtnStyle = (active: boolean): React.CSSProperties =>
     active

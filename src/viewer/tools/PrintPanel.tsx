@@ -1,26 +1,14 @@
-import * as pdfjsLib from "pdfjs-dist";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 
-/** Render every page of a PDF to image data-URLs via PDF.js, then print via a hidden iframe. */
+/** Render every page of a PDF to image data-URLs via MuPDF Rust backend, then print via a hidden iframe. */
 export async function triggerPrint(path: string): Promise<void> {
-  const url = convertFileSrc(path);
-  const doc = await pdfjsLib.getDocument({ url }).promise;
+  const pageCount = await invoke<number>("get_page_count", { path });
 
   const images: string[] = [];
-  for (let i = 1; i <= doc.numPages; i++) {
-    const page = await doc.getPage(i);
-    const viewport = page.getViewport({ scale: 2 });
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.floor(viewport.width);
-    canvas.height = Math.floor(viewport.height);
-    await page.render({
-      canvasContext: canvas.getContext("2d")!,
-      viewport,
-      canvas,
-    }).promise;
-    images.push(canvas.toDataURL("image/png"));
+  for (let i = 1; i <= pageCount; i++) {
+    const base64 = await invoke<string>("render_page", { path, page: i, scale: 2.0 });
+    images.push(`data:image/jpeg;base64,${base64}`);
   }
-  doc.destroy();
 
   const iframe = document.createElement("iframe");
   iframe.style.cssText = "position:fixed;width:0;height:0;border:0;opacity:0";
@@ -55,9 +43,6 @@ export async function triggerPrint(path: string): Promise<void> {
   iframeDoc.close();
 
   // Wait for all images to finish loading before printing.
-  // (Setting iframe.onload before appendChild fires on about:blank; setting it
-  // after iframeDoc.close() can miss the event. Waiting on the images directly
-  // is reliable since data-URLs decode synchronously once the DOM is ready.)
   const imgEls = Array.from(iframeDoc.querySelectorAll("img"));
   await Promise.all(
     imgEls.map(

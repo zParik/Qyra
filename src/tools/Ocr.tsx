@@ -2,13 +2,13 @@ import { useState } from "react";
 import { ToolLayout } from "../components/ToolLayout";
 import { DropZone } from "../components/DropZone";
 import { useAppStore } from "../store/useAppStore";
+import { invoke } from "@tauri-apps/api/core";
 import { makeSearchable, showSaveDialog, openFile, copyFile } from "../lib/tauri";
-import { loadDocument } from "../hooks/usePageThumbnails";
+
 import { ocrImage, getOcrWorker } from "../lib/ocrEngine";
 import type { OcrPage } from "../lib/tauri";
 
-const UI = "'Inter', system-ui, sans-serif";
-const MONO = "'JetBrains Mono', ui-monospace, monospace";
+import { UI, MONO } from "../lib/tokens";
 
 type Status = "idle" | "processing" | "done" | "error";
 
@@ -48,8 +48,7 @@ export default function Ocr() {
     try {
       // Step 1: load PDF
       setProgress({ stage: "Loading PDF…", page: 0, total: 0, pct: 2 });
-      const pdfDoc = await loadDocument(file.path);
-      const totalPages = pdfDoc.numPages;
+      const totalPages = await invoke<number>("get_page_count", { path: file.path });
 
       // Step 2: warm up the OCR worker (may download the English model ~10 MB on first use)
       setProgress({ stage: "Initializing OCR engine…", page: 0, total: totalPages, pct: 5 });
@@ -74,18 +73,21 @@ export default function Ocr() {
           pct: 25 + ((i - 1) / totalPages) * 65,
         });
 
-        const page = await pdfDoc.getPage(i);
+                // Render at 2× scale for better OCR accuracy (~144 DPI for a 72 DPI PDF) using the Tauri backend
+        const base64 = await invoke<string>("render_page", { path: file.path, page: i, scale: 2.0 });
+        const img = new Image();
+        img.src = `data:image/jpeg;base64,${base64}`;
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = reject;
+        });
 
-        // Render at 2× scale for better OCR accuracy (~144 DPI for a 72 DPI PDF)
-        const scale = 2.0;
-        const viewport = page.getViewport({ scale });
         const canvas = document.createElement("canvas");
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
+        canvas.width = img.width;
+        canvas.height = img.height;
         const ctx = canvas.getContext("2d");
         if (!ctx) throw new Error("Canvas 2D context unavailable");
-
-        await page.render({ canvasContext: ctx, viewport, canvas }).promise;
+        ctx.drawImage(img, 0, 0);
 
         const res = await ocrImage(canvas, canvas.width, canvas.height);
 
@@ -155,25 +157,6 @@ export default function Ocr() {
             )}
           </div>
 
-          {/* How-it-works note */}
-          {status === "idle" && (
-            <div style={{
-              padding: "10px 12px",
-              background: "var(--bg2)",
-              border: "1px solid var(--line2)",
-              borderRadius: 5,
-              fontFamily: MONO,
-              fontSize: 10.5,
-              color: "var(--fg2)",
-              lineHeight: 1.55,
-            }}>
-              <span style={{ color: "var(--accent)", fontWeight: 600 }}>OCR</span>
-              {" · "}Renders each page, runs Tesseract to extract text, then embeds
-              an invisible text layer — the result looks identical but is fully searchable.
-              <br />
-              <span style={{ color: "var(--fg3)" }}>Requires internet on first use to download the ~10 MB English model.</span>
-            </div>
-          )}
 
           {/* Progress */}
           {status === "processing" && progress && (
@@ -288,7 +271,6 @@ export default function Ocr() {
             <button
               onClick={runOcr}
               className="btn-primary"
-              disabled={!file}
             >
               Make Searchable
             </button>

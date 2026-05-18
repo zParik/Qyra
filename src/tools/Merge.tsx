@@ -6,8 +6,7 @@ import { useAppStore } from "../store/useAppStore";
 import { usePdfCommand } from "../hooks/usePdfCommand";
 import { mergePdfs, showSaveDialog } from "../lib/tauri";
 
-const MONO = "'JetBrains Mono', ui-monospace, monospace";
-const UI   = "'Inter', system-ui, sans-serif";
+import { UI, MONO } from "../lib/tokens";
 
 export default function Merge() {
   const { files, removeFile, reorderFiles, clearFiles, isProcessing, reset } = useAppStore();

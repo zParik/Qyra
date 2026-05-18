@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { Comment, useCommentsStore } from "../store/useCommentsStore";
 
-const UI = "'Inter', system-ui, sans-serif";
-const MONO = "'JetBrains Mono', ui-monospace, monospace";
+import { UI, MONO } from "../lib/tokens";
 
 interface CommentPanelProps {
   docPath: string;

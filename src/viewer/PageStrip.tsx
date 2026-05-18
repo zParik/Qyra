@@ -40,14 +40,14 @@ export function PageStrip({
   });
 
   const virtualItems = virtualizer.getVirtualItems();
+  const firstVisible = virtualItems.length > 0 ? virtualItems[0].index + 1 : 0;
+  const lastVisible = virtualItems.length > 0 ? virtualItems[virtualItems.length - 1].index + 1 : 0;
 
   // Notify parent of visible range so thumbnail hook can prioritize renders
   useEffect(() => {
-    if (virtualItems.length === 0) return;
-    const first = virtualItems[0].index + 1;
-    const last = virtualItems[virtualItems.length - 1].index + 1;
-    onVisibleRangeChange?.([first, last]);
-  }, [virtualItems, onVisibleRangeChange]);
+    if (firstVisible === 0 || lastVisible === 0) return;
+    onVisibleRangeChange?.([firstVisible, lastVisible]);
+  }, [firstVisible, lastVisible, onVisibleRangeChange]);
 
   // Auto-scroll active page into view
   useEffect(() => {

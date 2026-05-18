@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { loadDocument } from "../hooks/usePageThumbnails";
+
 import { LoadedFile } from "../store/useAppStore";
 import { RotatePanel } from "./tools/RotatePanel";
 import { RemovePanel } from "./tools/RemovePanel";
@@ -13,12 +13,18 @@ import { MetadataPanel } from "./tools/MetadataPanel";
 import { ExportImagesPanel } from "./tools/ExportImagesPanel";
 import { triggerPrint } from "./tools/PrintPanel";
 import { DrawPanel } from "./tools/DrawPanel";
+import { WatermarkPanel } from "./tools/WatermarkPanel";
 import { CommentPanel } from "./CommentPanel";
+import { CropPanel } from "./tools/CropPanel";
+import { FlattenPanel } from "./tools/FlattenPanel";
+import { ExportTextPanel } from "./tools/ExportTextPanel";
+import { invoke } from "@tauri-apps/api/core";
 
 export type ViewerTool =
   | "rotate" | "remove" | "reorder" | "split"
   | "compress" | "page-numbers" | "protect" | "unlock"
-  | "metadata" | "export-images" | "draw" | "comment";
+  | "metadata" | "export-images" | "draw" | "comment" | "watermark"
+  | "annotate" | "forms" | "signature" | "crop" | "flatten" | "export-text" | "redact";
 
 interface ToolSidebarProps {
   file: LoadedFile;
@@ -105,6 +111,51 @@ const PAGE_TOOLS: ToolDef[] = [
       </svg>
     ),
   },
+  {
+    id: "annotate",
+    label: "Annotate",
+    icon: (
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+      </svg>
+    ),
+  },
+  {
+    id: "forms",
+    label: "Fill Forms",
+    icon: (
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+      </svg>
+    ),
+  },
+  {
+    id: "signature",
+    label: "Sign",
+    icon: (
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+      </svg>
+    ),
+  },
+  {
+    id: "crop",
+    label: "Crop Pages",
+    icon: (
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+      </svg>
+    ),
+  },
+  {
+    id: "redact",
+    label: "Redact",
+    icon: (
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+      </svg>
+    ),
+  },
 ];
 
 const FILE_TOOLS: ToolDef[] = [
@@ -157,12 +208,39 @@ const FILE_TOOLS: ToolDef[] = [
       </svg>
     ),
   },
+  {
+    id: "watermark",
+    label: "Watermark",
+    icon: (
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+          d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
+      </svg>
+    ),
+  },
+  {
+    id: "flatten",
+    label: "Flatten PDF",
+    icon: (
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 13l-7 7-7-7m14-8l-7 7-7-7" />
+      </svg>
+    ),
+  },
+  {
+    id: "export-text",
+    label: "Export Text",
+    icon: (
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+      </svg>
+    ),
+  },
 ];
 
 const ALL_TOOLS = [...PAGE_TOOLS, ...FILE_TOOLS];
 
-const UI = "'Inter', system-ui, sans-serif";
-const MONO = "'JetBrains Mono', ui-monospace, monospace";
+import { UI, MONO } from "../lib/tokens";
 
 type SidebarTab = "tools" | "outline" | "comments";
 
@@ -194,14 +272,18 @@ export function ToolSidebar({ file, onApplied, activeTool, onToolChange, selecte
     unlock: <UnlockPanel file={file} onApplied={onApplied} />,
     metadata: <MetadataPanel file={file} onApplied={onApplied} />,
     "export-images": <ExportImagesPanel file={file} />,
+    watermark: <WatermarkPanel file={file} onApplied={onApplied} />,
+    crop: <CropPanel file={file} onApplied={onApplied} />,
+    flatten: <FlattenPanel file={file} onApplied={onApplied} />,
+    "export-text": <ExportTextPanel file={file} />,
     draw: <DrawPanel />,
-    // comment has no panel — it switches to the comments tab in Viewer
+    // comment, annotate, forms, signature, redact have no sidebar panel — handled directly in Viewer
   };
 
   return (
     <div
       style={{
-        width: 280, flexShrink: 0, height: "100%", display: "flex", flexDirection: "column",
+        width: "100%", flexShrink: 0, height: "100%", display: "flex", flexDirection: "column",
         background: "var(--viewer-surface)", borderLeft: "1px solid var(--viewer-border)",
         overflow: "hidden",
       }}
@@ -251,12 +333,12 @@ export function ToolSidebar({ file, onApplied, activeTool, onToolChange, selecte
                 {ALL_TOOLS.find((t) => t.id === activeTool)?.label}
               </span>
             </div>
-            <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
+            <div style={{ flex: 1, overflowY: "auto", padding: 12, paddingBottom: "max(12px, env(safe-area-inset-bottom, 0px))" }}>
               {panels[activeTool]}
             </div>
           </>
         ) : (
-          <div style={{ flex: 1, overflowY: "auto" }}>
+          <div style={{ flex: 1, overflowY: "auto", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
             <ToolGroup label="Pages" tools={PAGE_TOOLS} onSelect={setActiveTool} />
             <ToolGroup label="File" tools={FILE_TOOLS} onSelect={setActiveTool} />
             <div style={{ borderTop: "1px solid var(--viewer-border-sub)" }}>
@@ -311,37 +393,8 @@ interface OutlineNode {
   items: OutlineNode[];
 }
 
-async function resolveDestPage(doc: Awaited<ReturnType<typeof loadDocument>>, dest: unknown): Promise<number | null> {
-  try {
-    let arr = dest;
-    if (typeof dest === "string") arr = await doc.getDestination(dest);
-    if (!Array.isArray(arr) || arr.length === 0) return null;
-    const ref = arr[0];
-    if (ref && typeof ref === "object" && "num" in ref) {
-      return (await doc.getPageIndex(ref as any)) + 1;
-    }
-    if (typeof ref === "number") return ref + 1;
-    return null;
-  } catch {
-    return null;
-  }
-}
-
 async function buildOutline(filePath: string): Promise<OutlineNode[]> {
-  const doc = await loadDocument(filePath);
-  const raw = await doc.getOutline();
-  if (!raw?.length) return [];
-
-  async function process(items: any[]): Promise<OutlineNode[]> {
-    const result: OutlineNode[] = [];
-    for (const item of items) {
-      const page = item.dest != null ? await resolveDestPage(doc, item.dest) : null;
-      const children = item.items?.length ? await process(item.items) : [];
-      result.push({ title: item.title ?? "", page, items: children });
-    }
-    return result;
-  }
-  return process(raw);
+  return invoke<OutlineNode[]>("get_outline", { path: filePath });
 }
 
 function OutlineContent({ filePath, onPageSelect }: { filePath: string; onPageSelect: (page: number) => void }) {

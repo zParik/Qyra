@@ -1,219 +1,328 @@
-import { useEffect, useRef } from "react";
-import { TextLayer as PdfjsTextLayer } from "pdfjs-dist";
-import { loadDocument } from "../hooks/usePageThumbnails";
+import { useEffect, useRef, useState, useMemo } from "react";
+import { invoke } from "@tauri-apps/api/core";
+
+interface CharRect {
+  c: string;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+interface TextLine {
+  chars: CharRect[];
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+interface Highlight {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  isActive: boolean;
+}
 
 interface TextLayerProps {
   pdfPath: string;
   pageNum: number;
-  /** Current zoom level — used as a dep to re-measure parent width on zoom change */
+  /** Kept for API compatibility — not used in positioning since coords are normalised. */
   zoom: number;
   findQuery?: string;
-  /**
-   * 0-based index of the current find match among matches on this page (same order
-   * as document-wide find). Use -1 when no match on this page is current.
-   */
   findActiveMatchOrdinal?: number;
   isDrawingMode?: boolean;
   enabled?: boolean;
 }
 
+function computeHighlights(
+  chars: CharRect[],
+  findQuery: string | undefined,
+  activeOrdinal: number,
+): Highlight[] {
+  if (!findQuery?.trim() || !chars.length) return [];
+  const q = findQuery.trim().toLowerCase();
+  const fullText = chars.map((c) => c.c).join("");
+  const lowerText = fullText.toLowerCase();
+  const results: Highlight[] = [];
+
+  let searchIdx = 0;
+  let matchCount = 0;
+  while (true) {
+    const pos = lowerText.indexOf(q, searchIdx);
+    if (pos === -1) break;
+    const isActive = matchCount === activeOrdinal;
+    const matchChars = chars.slice(pos, pos + q.length);
+
+    const buckets = new Map<number, CharRect[]>();
+    for (const ch of matchChars) {
+      const key = Math.round(((ch.y0 + ch.y1) / 2) * 500);
+      const bucket = buckets.get(key) ?? [];
+      bucket.push(ch);
+      buckets.set(key, bucket);
+    }
+    for (const group of buckets.values()) {
+      results.push({
+        x0: group.reduce((m, c) => Math.min(m, c.x0), Infinity),
+        y0: group.reduce((m, c) => Math.min(m, c.y0), Infinity),
+        x1: group.reduce((m, c) => Math.max(m, c.x1), -Infinity),
+        y1: group.reduce((m, c) => Math.max(m, c.y1), -Infinity),
+        isActive,
+      });
+    }
+
+    matchCount++;
+    searchIdx = pos + 1;
+  }
+  return results;
+}
+
+class SimpleSemaphore {
+  private activeCount = 0;
+  private queue: (() => void)[] = [];
+
+  constructor(private maxConcurrency: number) {}
+
+  async acquire(): Promise<void> {
+    if (this.activeCount < this.maxConcurrency) {
+      this.activeCount++;
+      return;
+    }
+    return new Promise<void>((resolve) => {
+      this.queue.push(resolve);
+    });
+  }
+
+  release(): void {
+    this.activeCount--;
+    if (this.queue.length > 0) {
+      this.activeCount++;
+      const next = this.queue.shift();
+      next?.();
+    }
+  }
+}
+
+const textSemaphore = new SimpleSemaphore(1);
+
+// Shared offscreen canvas for fast text-width measurement
+const measureCtx: CanvasRenderingContext2D | null =
+  typeof document !== "undefined"
+    ? document.createElement("canvas").getContext("2d")
+    : null;
+
+interface LineMeta {
+  text: string;
+  fontPx: number;
+  letterSpacingPx: number;
+}
+
 /**
- * Renders a PDF.js text layer over a page image, enabling text selection and
- * find-in-document highlighting.
+ * Transparent overlay placing one DOM span per *line* of text. Each span has
+ * an explicit width equal to the PDF line bbox, and `letter-spacing` is
+ * computed so the rendered text exactly fills that width. This keeps the
+ * span's hit-test rect aligned with the visible glyphs, so dragging a
+ * selection inside a line's vertical band always stays "inside" the span and
+ * never escapes into a dead zone that the browser would resolve to a
+ * neighbouring line (the cause of the wrap-around bug).
  *
- * Must be placed inside a `position: relative` container that is sized to match
- * the displayed page image.
+ * An `.endOfContent` sentinel at the bottom of the layer expands during an
+ * active selection — same trick PDF.js uses — so cursor positions outside
+ * the text rects fall back to a deterministic anchor instead of jumping to
+ * a random nearby line.
+ *
+ * Must live inside a `position: relative` element sized to the page image.
  */
 export function TextLayer({
   pdfPath,
   pageNum,
-  zoom,
+  zoom: _zoom,
   findQuery,
   findActiveMatchOrdinal = -1,
   isDrawingMode,
   enabled = true,
 }: TextLayerProps) {
-  const ref = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const eocRef = useRef<HTMLSpanElement>(null);
+  const [lines, setLines] = useState<TextLine[]>([]);
+  const [parent, setParent] = useState({ w: 0, h: 0 });
+
+  // PDF.js-style dynamic sentinel positioning. On mousedown we plant the
+  // .endOfContent at the cursor's Y; it then covers from that Y down to the
+  // bottom of the layer. Cursor positions BELOW the anchor land on the
+  // sentinel (browser snaps focus geometrically to nearest text); positions
+  // ABOVE the anchor are uncovered and use default browser snap. This makes
+  // both upward and downward drags resolve to the natural neighbour line
+  // instead of always snapping to the end of the document.
+  useEffect(() => {
+    const stop = () => {
+      const eoc = eocRef.current;
+      if (eoc) eoc.style.top = "";
+    };
+    window.addEventListener("mouseup", stop);
+    window.addEventListener("touchend", stop);
+    window.addEventListener("blur", stop);
+    return () => {
+      window.removeEventListener("mouseup", stop);
+      window.removeEventListener("touchend", stop);
+      window.removeEventListener("blur", stop);
+    };
+  }, []);
+
+  const anchorEoc = (clientY: number) => {
+    const layer = containerRef.current;
+    const eoc = eocRef.current;
+    if (!layer || !eoc) return;
+    const r = layer.getBoundingClientRect();
+    if (r.height <= 0) return;
+    const y = Math.max(0, Math.min(1, (clientY - r.top) / r.height));
+    eoc.style.top = `${(y * 100).toFixed(2)}%`;
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => anchorEoc(e.clientY);
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 1) anchorEoc(e.touches[0].clientY);
+  };
+
+  // Track parent (page wrapper) dimensions
+  useEffect(() => {
+    const el = containerRef.current?.parentElement;
+    if (!el) return;
+    const update = (w: number, h: number) => {
+      if (w > 0 && h > 0) setParent({ w, h });
+    };
+    const obs = new ResizeObserver((entries) => {
+      const r = entries[0]?.contentRect;
+      if (r) update(r.width, r.height);
+    });
+    obs.observe(el);
+    update(el.clientWidth, el.clientHeight);
+    return () => obs.disconnect();
+  }, []);
 
   useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
     if (!enabled) {
-      el.innerHTML = "";
+      setLines([]);
       return;
     }
-
     let cancelled = false;
-    let renderTask: PdfjsTextLayer | null = null;
-
-    async function go() {
-      if (!el) return;
+    async function fetchText() {
+      await textSemaphore.acquire();
       try {
-        const doc = await loadDocument(pdfPath);
         if (cancelled) return;
-
-        const page = await doc.getPage(pageNum);
-        if (cancelled) return;
-
-        // Measure the actual displayed width of the page container.
-        // useEffect runs after paint so the DOM already reflects the current zoom.
-        const parentWidth = el.parentElement?.clientWidth ?? el.clientWidth;
-        if (!parentWidth) return;
-
-        const naturalViewport = page.getViewport({ scale: 1 });
-        const scale = parentWidth / naturalViewport.width;
-        const viewport = page.getViewport({ scale });
-
-        el.innerHTML = "";
-
-        // pdfjs-dist v5 TextLayer uses CSS custom property --total-scale-factor
-        // in setLayerDimensions() to compute width/height via calc().
-        // We set it to the actual viewport scale so the DOM font sizes perfectly
-        // match the zoomed canvas text, aligning selection boxes and highlights.
-        el.style.setProperty("--total-scale-factor", scale.toString());
-        // Also set rounding vars that pdfjs may reference
-        el.style.setProperty("--scale-round-x", "1px");
-        el.style.setProperty("--scale-round-y", "1px");
-
-        const textContent = await page.getTextContent({ includeMarkedContent: true });
-        if (cancelled) return;
-
-        // PDF text items are often out of visual order in the DOM, which causes
-        // native text selection to warp and select unrelated paragraphs.
-        // Sorting them by visual position (Y descending, X ascending) fixes this.
-        textContent.items.sort((a: any, b: any) => {
-          if (!a.transform || !b.transform) return 0;
-          const yA = a.transform[5];
-          const yB = b.transform[5];
-          // If items are on different lines (difference > 5 units), sort top-to-bottom
-          if (Math.abs(yA - yB) > 5) {
-            return yB - yA; // Higher Y means visually higher on the page
-          }
-          // If on the same line, sort left-to-right
-          return a.transform[4] - b.transform[4];
+        const data = await invoke<TextLine[]>("get_text_page", {
+          path: pdfPath,
+          page: pageNum,
         });
-
-        const task = new PdfjsTextLayer({
-          textContentSource: textContent,
-          container: el,
-          viewport,
-        });
-        renderTask = task;
-        await task.render();
-
-        // pdfjs setLayerDimensions sets explicit width/height using calc(),
-        // but we want the layer to fill its parent (already correctly sized
-        // by the page image). Override to 100% so percentage-based span
-        // positions align with the displayed page.
-        el.style.width = "100%";
-        el.style.height = "100%";
-
-        // Highlight text, supporting cross-span matches and split words
-        if (findQuery?.trim() && !cancelled) {
-          const q = findQuery.trim().toLowerCase();
-          
-          // Get all leaf spans in visual order
-          const spans = Array.from(el.querySelectorAll<HTMLElement>("span")).filter(s => s.children.length === 0);
-          
-          let fullText = "";
-          const spanStarts: number[] = [];
-          
-          spans.forEach(span => {
-            spanStarts.push(fullText.length);
-            fullText += span.textContent ?? "";
-          });
-          
-          const lowerFull = fullText.toLowerCase();
-          const matches: {start: number, end: number}[] = [];
-          let idx = 0;
-          while ((idx = lowerFull.indexOf(q, idx)) !== -1) {
-            matches.push({ start: idx, end: idx + q.length });
-            idx += q.length; // Move past the matched string
-          }
-          
-          const layerRect = el.getBoundingClientRect();
-          if (layerRect.width === 0 || layerRect.height === 0) return;
-
-          const highlightContainer = document.createElement("div");
-          highlightContainer.className = "find-highlight-container";
-          highlightContainer.style.position = "absolute";
-          highlightContainer.style.inset = "0";
-          highlightContainer.style.pointerEvents = "none";
-          highlightContainer.style.zIndex = "0";
-          el.appendChild(highlightContainer);
-
-          const activeOrdinal =
-            findActiveMatchOrdinal >= 0 && findActiveMatchOrdinal < matches.length
-              ? findActiveMatchOrdinal
-              : -1;
-
-          const appendHighlightRects = (
-            span: HTMLElement,
-            hl: { start: number; end: number },
-            matchIdx: number
-          ) => {
-            const textNode = Array.from(span.childNodes).find((n) => n.nodeType === Node.TEXT_NODE);
-            if (!textNode) return;
-            const range = document.createRange();
-            try {
-              range.setStart(textNode, hl.start);
-              range.setEnd(textNode, hl.end);
-              const rects = range.getClientRects();
-              const isActive = matchIdx === activeOrdinal;
-              for (let r = 0; r < rects.length; r++) {
-                const rect = rects[r];
-                const div = document.createElement("div");
-                div.className = isActive ? "find-highlight-active" : "find-highlight";
-                div.style.position = "absolute";
-                div.style.left = `${((rect.left - layerRect.left) / layerRect.width) * 100}%`;
-                div.style.top = `${((rect.top - layerRect.top) / layerRect.height) * 100}%`;
-                div.style.width = `${(rect.width / layerRect.width) * 100}%`;
-                div.style.height = `${(rect.height / layerRect.height) * 100}%`;
-                div.style.padding = "1px 0";
-                div.style.marginTop = "-1px";
-                if (isActive) div.style.zIndex = "1";
-                highlightContainer.appendChild(div);
-              }
-            } catch {
-              /* offsets out of bounds */
-            }
-          };
-
-          matches.forEach((match, matchIdx) => {
-            for (let i = 0; i < spans.length; i++) {
-              const spanStart = spanStarts[i];
-              const spanLen = (spans[i].textContent ?? "").length;
-              const spanEnd = spanStart + spanLen;
-
-              if (match.end <= spanStart) break;
-              if (match.start >= spanEnd) continue;
-
-              const overlapStart = Math.max(0, match.start - spanStart);
-              const overlapEnd = Math.min(spanLen, match.end - spanStart);
-              appendHighlightRects(spans[i], { start: overlapStart, end: overlapEnd }, matchIdx);
-            }
-          });
-        }
+        if (!cancelled) setLines(data);
       } catch {
-        // Render errors are non-fatal; the page image is still visible
+        if (!cancelled) setLines([]);
+      } finally {
+        textSemaphore.release();
       }
     }
-
-    go();
-
+    fetchText();
     return () => {
       cancelled = true;
-      if (renderTask) {
-        try { renderTask.cancel(); } catch { /* cancelled render throws, ignore */ }
-      }
     };
-  }, [pdfPath, pageNum, zoom, findQuery, findActiveMatchOrdinal, enabled]);
+  }, [pdfPath, pageNum, enabled]);
+
+  // Compute font-size + letter-spacing per line so the rendered text fills
+  // the original PDF line bbox without overflow.
+  const lineMeta: LineMeta[] = useMemo(() => {
+    if (!measureCtx || parent.w === 0 || parent.h === 0) {
+      return lines.map(() => ({ text: "", fontPx: 0, letterSpacingPx: 0 }));
+    }
+    return lines.map((line) => {
+      const text = line.chars.map((c) => c.c).join("");
+      const fontPx = Math.max(1, (line.y1 - line.y0) * parent.h);
+      measureCtx.font = `${fontPx}px sans-serif`;
+      const naturalW = measureCtx.measureText(text).width;
+      const targetW = (line.x1 - line.x0) * parent.w;
+      // letter-spacing is added to every glyph including the last, so
+      // (targetW - naturalW) / length spreads the slack uniformly.
+      const letterSpacingPx =
+        text.length > 0 ? (targetW - naturalW) / text.length : 0;
+      return { text, fontPx, letterSpacingPx };
+    });
+  }, [lines, parent.w, parent.h]);
+
+  const allChars = useMemo(() => lines.flatMap((l) => l.chars), [lines]);
+  const highlights = useMemo(
+    () => computeHighlights(allChars, findQuery, findActiveMatchOrdinal),
+    [allChars, findQuery, findActiveMatchOrdinal],
+  );
 
   return (
     <div
-      ref={ref}
+      ref={containerRef}
       className="textLayer"
-      style={{ pointerEvents: isDrawingMode ? "none" : "auto" }}
-    />
+      onMouseDown={handleMouseDown}
+      onTouchStart={handleTouchStart}
+      style={{
+        position: "absolute",
+        inset: 0,
+        overflow: "hidden",
+        pointerEvents: isDrawingMode ? "none" : "auto",
+        cursor: isDrawingMode ? "default" : "text",
+      }}
+    >
+      {lines.map((line, li) => {
+        const meta = lineMeta[li];
+        if (!meta || !meta.text) return null;
+        const w = line.x1 - line.x0;
+        const h = line.y1 - line.y0;
+        if (w <= 0 || h <= 0) return null;
+        return (
+          <span
+            key={li}
+            style={{
+              position: "absolute",
+              left: `${line.x0 * 100}%`,
+              top: `${line.y0 * 100}%`,
+              width: `${w * 100}%`,
+              height: `${h * 100}%`,
+              fontSize: `${meta.fontPx}px`,
+              letterSpacing: `${meta.letterSpacingPx}px`,
+              fontFamily: "sans-serif",
+              lineHeight: 1,
+              color: "transparent",
+              whiteSpace: "pre",
+              cursor: "text",
+              userSelect: "text",
+              WebkitUserSelect: "text",
+              padding: 0,
+              margin: 0,
+              overflow: "hidden",
+              transformOrigin: "0 0",
+            }}
+          >
+            {meta.text}
+          </span>
+        );
+      })}
+
+      {highlights.map((hl, i) => (
+        <div
+          key={`hl-${i}`}
+          className={hl.isActive ? "find-highlight-active" : "find-highlight"}
+          style={{
+            position: "absolute",
+            left: `${hl.x0 * 100}%`,
+            top: `${hl.y0 * 100}%`,
+            width: `${(hl.x1 - hl.x0) * 100}%`,
+            height: `${(hl.y1 - hl.y0) * 100}%`,
+            pointerEvents: "none",
+            zIndex: 2,
+          }}
+        />
+      ))}
+
+      {/* PDF.js-style sentinel. Default position (top: 100%) is off-screen.
+          On mousedown we set inline top to the cursor Y so it covers the
+          area below the anchor — see handleMouseDown above. */}
+      <span ref={eocRef} className="endOfContent" aria-hidden="true" />
+    </div>
   );
 }

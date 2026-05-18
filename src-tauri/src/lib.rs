@@ -31,12 +31,17 @@ fn cleanup_stale_sessions(current_pid: u32) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .manage(commands::cache::SessionCacheState::new())
+        .manage(commands::render::ActiveDocument::new())
         .setup(|app| {
             cleanup_stale_sessions(std::process::id());
             let conn = commands::library::open_db(app.handle())
-                .expect("failed to open library db");
+                .unwrap_or_else(|e| {
+                    eprintln!("[qyra] library db failed ({e}), using in-memory fallback");
+                    commands::library::open_db_in_memory()
+                        .expect("in-memory sqlite always works")
+                });
             app.manage(commands::library::LibraryDb(Mutex::new(conn)));
             app.manage(commands::thumb_store::ThumbStore::new(app.handle()));
             // When opened via "Open with" or double-click, the file path is passed as a CLI arg.
@@ -52,8 +57,13 @@ pub fn run() {
                 });
             }
             Ok(())
-        })
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        });
+
+    // Updater not applicable on Android (Play Store handles updates)
+    #[cfg(not(target_os = "android"))]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+
+    builder
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
@@ -62,13 +72,20 @@ pub fn run() {
             merge::merge_pdfs,
             split::split_pdf,
             split::split_pdf_per_page,
+            split::split_pdf_by_bookmarks,
             compress::compress_pdf,
             rotate::rotate_pages,
             remove::remove_pages,
             reorder::reorder_pages,
             render::read_pdf_bytes,
+            render::render_page,
+            render::set_active_document,
+            render::get_page_aspect_ratio,
+            render::get_text_page,
+            render::search_pdf,
             render::render_thumbnail,
             render::pdf_to_images,
+            render::get_page_links,
             create::images_to_pdf,
             page_numbers::add_page_numbers,
             page_numbers::remove_page_numbers,
@@ -91,6 +108,8 @@ pub fn run() {
             library::get_starred,
             library::get_archived,
             library::get_entry,
+            library::get_setting,
+            library::set_setting,
             thumb_store::thumb_get,
             thumb_store::thumb_put,
             thumb_store::thumb_evict,
@@ -105,6 +124,16 @@ pub fn run() {
             cache::cache_clear,
             disk::get_disk_space,
             ocr::make_searchable,
+            watermark::add_watermark,
+            outline::get_outline,
+            forms::get_form_fields,
+            forms::fill_form,
+            pdf_annotations::get_page_annotations,
+            pdf_annotations::add_pdf_annotation,
+            redact::redact_pdf,
+            crop::crop_pages,
+            flatten::flatten_pdf,
+            export_text::export_pdf_to_text,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

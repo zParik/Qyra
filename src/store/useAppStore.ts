@@ -22,6 +22,7 @@ interface AppState {
   isProcessing: boolean;
   progress: { current: number; total: number; message: string } | null;
   error: string | null;
+  cancelFn: (() => void) | null;
 
   // Viewer: single open file
   viewerFile: LoadedFile | null;
@@ -29,6 +30,7 @@ interface AppState {
   originalViewerPath: string | null;
   isViewerDirty: boolean;
 
+  setCancelFn: (fn: (() => void) | null) => void;
   setFiles: (files: LoadedFile[]) => void;
   addFile: (file: LoadedFile) => void;
   removeFile: (path: string) => void;
@@ -55,11 +57,13 @@ export const useAppStore = create<AppState>((set) => ({
   isProcessing: false,
   progress: null,
   error: null,
+  cancelFn: null,
   viewerFile: null,
   undoViewerFile: null,
   originalViewerPath: null,
   isViewerDirty: false,
 
+  setCancelFn: (cancelFn) => set({ cancelFn }),
   setFiles: (files) => set({ files }),
   addFile: (file) => set((s) => ({ files: [...s.files, file] })),
   removeFile: (path) => set((s) => ({ files: s.files.filter((f) => f.path !== path) })),
@@ -77,7 +81,7 @@ export const useAppStore = create<AppState>((set) => ({
   setIsProcessing: (isProcessing) => set({ isProcessing }),
   setProgress: (progress) => set({ progress }),
   setError: (error) => set({ error }),
-  reset: () => set({ result: null, resultFiles: [], error: null, isProcessing: false, progress: null }),
+  reset: () => set({ result: null, resultFiles: [], error: null, isProcessing: false, progress: null, cancelFn: null }),
   setViewerFile: (viewerFile) => set({ viewerFile }),
   setUndoViewerFile: (undoViewerFile) => set({ undoViewerFile }),
   setOriginalViewerPath: (originalViewerPath) => set({ originalViewerPath }),

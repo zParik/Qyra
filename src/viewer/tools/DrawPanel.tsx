@@ -91,7 +91,7 @@ export function DrawPanel() {
       </div>
 
       <p className="text-xs" style={{ color: "var(--viewer-text-muted)" }}>
-        Annotations are local only. PDF export planned for a future update.
+        Use <strong>Save</strong> in the toolbar to bake annotations and note pages into the PDF.
       </p>
     </div>
   );

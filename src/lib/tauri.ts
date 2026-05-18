@@ -3,13 +3,13 @@ import { save, open } from "@tauri-apps/plugin-dialog";
 import { isAndroid, androidSavePath, androidOutputDir } from "./androidFileUtils";
 import type {
   PageRange, PageNumberOptions, PdfMetadata, PdfInfo,
-  CompressResult, StrokeAnnotation, PageAnnotation,
+  CompressResult, StrokeAnnotation, PageAnnotation, VirtualPageAnnotation,
   DiskSpace, LibraryEntry,
 } from "./schemas";
 
 export type {
   PageRange, PageNumberOptions, PdfMetadata, PdfInfo,
-  CompressResult, StrokeAnnotation, PageAnnotation,
+  CompressResult, StrokeAnnotation, PageAnnotation, VirtualPageAnnotation,
   DiskSpace, LibraryEntry,
 };
 
@@ -23,6 +23,9 @@ export const splitPdf = (path: string, ranges: PageRange[], outputDir?: string) 
 
 export const splitPdfPerPage = (path: string, outputDir?: string) =>
   invoke<string[]>("split_pdf_per_page", { path, outputDir });
+
+export const splitPdfByBookmarks = (path: string, outputDir?: string) =>
+  invoke<string[]>("split_pdf_by_bookmarks", { path, outputDir });
 
 export const compressPdf = (path: string, output?: string, level?: number) =>
   invoke<CompressResult>("compress_pdf", { path, output, level });
@@ -100,8 +103,13 @@ export const getContentUriDisplayName = (uri: string) =>
 export const shareFile = (path: string) =>
   invoke<void>("share_file", { path });
 
-export const bakeAnnotations = (path: string, annotations: PageAnnotation[], output?: string) =>
-  invoke<string>("bake_annotations", { path, annotations, output });
+export const bakeAnnotations = (
+  path: string,
+  annotations: PageAnnotation[],
+  virtualPages: VirtualPageAnnotation[],
+  output?: string,
+) =>
+  invoke<string>("bake_annotations", { path, annotations, virtualPages, output });
 
 export const loadComments = (path: string) =>
   invoke<string>("load_comments", { path });
@@ -121,6 +129,9 @@ export const getStarred = () => invoke<LibraryEntry[]>("get_starred");
 export const getArchived = () => invoke<LibraryEntry[]>("get_archived");
 export const getEntry = (path: string) => invoke<LibraryEntry | null>("get_entry", { path });
 
+export const getSetting = (key: string) => invoke<string | null>("get_setting", { key });
+export const setSetting = (key: string, value: string) => invoke<void>("set_setting", { key, value });
+
 // --- OCR ---
 
 export interface OcrWord {
@@ -137,3 +148,107 @@ export interface OcrPage {
 
 export const makeSearchable = (path: string, pages: OcrPage[], output?: string) =>
   invoke<string>("make_searchable", { path, pages, output });
+
+// --- Watermark ---
+
+export interface WatermarkOptions {
+  text: string;
+  font_size?: number;  // default 48
+  opacity?: number;    // 0–1, default 0.25
+  angle?: number;      // degrees CCW, default 45
+  color?: string;      // hex "#rrggbb", default "#888888"
+  mode?: "diagonal" | "center" | "tile";
+  pages?: number[];    // 1-indexed; omit = all pages
+}
+
+export const addWatermark = (path: string, options: WatermarkOptions, output?: string) =>
+  invoke<string>("add_watermark", { path, options, output });
+
+// --- Outline / Bookmarks ---
+
+export interface OutlineNode {
+  title: string;
+  page: number | null;
+  items: OutlineNode[];
+}
+
+export const getOutline = (path: string) =>
+  invoke<OutlineNode[]>("get_outline", { path });
+
+// --- Form filling ---
+
+export interface FormField {
+  name: string;
+  field_type: string;
+  value: string;
+  page: number;
+  rect: [number, number, number, number];
+  options: string[];
+  flags: number;
+}
+
+export interface FieldValue {
+  name: string;
+  value: string;
+}
+
+export const getFormFields = (path: string) =>
+  invoke<FormField[]>("get_form_fields", { path });
+
+export const fillForm = (path: string, fields: FieldValue[], flatten: boolean, output?: string) =>
+  invoke<string>("fill_form", { path, fields, flatten, output });
+
+// --- Standard PDF annotations ---
+
+export interface PdfAnnotation {
+  id: string;
+  subtype: string;
+  rect: [number, number, number, number];
+  color: string | null;
+  contents: string | null;
+  quad_points: number[] | null;
+}
+
+export interface NewAnnotation {
+  subtype: string;
+  page: number;
+  rect: [number, number, number, number];
+  color: string;
+  contents?: string;
+  quad_points?: number[];
+  author?: string;
+}
+
+export const getPageAnnotations = (path: string, page: number) =>
+  invoke<PdfAnnotation[]>("get_page_annotations", { path, page });
+
+export const addPdfAnnotation = (path: string, annotation: NewAnnotation, output?: string) =>
+  invoke<string>("add_pdf_annotation", { path, annotation, output });
+
+// --- Redaction ---
+
+export interface RedactRegion {
+  page: number;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+export const redactPdf = (path: string, regions: RedactRegion[], output?: string) =>
+  invoke<string>("redact_pdf", { path, regions, output });
+
+// --- Crop ---
+
+export const cropPages = (path: string, pages: number[], cropRect: [number, number, number, number], output?: string) =>
+  invoke<string>("crop_pages", { path, pages, cropRect, output });
+
+// --- Flatten ---
+
+export const flattenPdf = (path: string, output?: string) =>
+  invoke<string>("flatten_pdf", { path, output });
+
+// --- Export text ---
+
+export const exportPdfToText = (path: string, output?: string) =>
+  invoke<string>("export_pdf_to_text", { path, output });

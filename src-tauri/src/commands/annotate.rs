@@ -15,6 +15,15 @@ pub struct PageAnnotationData {
     pub strokes: Vec<StrokeData>,
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VirtualPageData {
+    pub id: String,
+    pub template: String,       // "blank" | "ruled" | "grid" | "dotted"
+    pub after_real_page: u32,   // 0 = before all, N = after page N, 9999 = after all
+    pub strokes: Vec<StrokeData>,
+}
+
 fn hex_to_rgb(hex: &str) -> (f32, f32, f32) {
     let hex = hex.trim_start_matches('#');
     let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0) as f32 / 255.0;
@@ -135,6 +144,206 @@ fn build_stroke_ops(s: &StrokeData, pw: f64, ph: f64, hl_gs_name: Option<&[u8]>)
     ops.push(Operation::new("Q", vec![]));
 
     ops
+}
+
+fn build_template_ops(template: &str, pw: f64, ph: f64) -> Vec<Operation> {
+    let mut ops: Vec<Operation> = Vec::new();
+
+    // White background
+    ops.push(Operation::new("q", vec![]));
+    ops.push(Operation::new("g", vec![Object::Real(1.0_f32)]));
+    ops.push(Operation::new("re", vec![
+        Object::Real(0.0_f32), Object::Real(0.0_f32),
+        Object::Real(pw as f32), Object::Real(ph as f32),
+    ]));
+    ops.push(Operation::new("f", vec![]));
+    ops.push(Operation::new("Q", vec![]));
+
+    match template {
+        "ruled" => {
+            ops.push(Operation::new("q", vec![]));
+            ops.push(Operation::new("G", vec![Object::Real(0.78_f32)]));
+            ops.push(Operation::new("w", vec![Object::Real(0.5_f32)]));
+            let spacing = 20.0_f64;
+            let margin_top = 30.0_f64;
+            let margin_bottom = 20.0_f64;
+            let margin_left = 25.0_f64;
+            let margin_right = 25.0_f64;
+            let mut y = ph - margin_top;
+            while y > margin_bottom {
+                ops.push(Operation::new("m", vec![Object::Real(margin_left as f32), Object::Real(y as f32)]));
+                ops.push(Operation::new("l", vec![Object::Real((pw - margin_right) as f32), Object::Real(y as f32)]));
+                y -= spacing;
+            }
+            ops.push(Operation::new("S", vec![]));
+            ops.push(Operation::new("Q", vec![]));
+        }
+        "grid" => {
+            ops.push(Operation::new("q", vec![]));
+            ops.push(Operation::new("G", vec![Object::Real(0.78_f32)]));
+            ops.push(Operation::new("w", vec![Object::Real(0.5_f32)]));
+            let spacing = 20.0_f64;
+            let mut y = ph - spacing;
+            while y > 0.0 {
+                ops.push(Operation::new("m", vec![Object::Real(0.0_f32), Object::Real(y as f32)]));
+                ops.push(Operation::new("l", vec![Object::Real(pw as f32), Object::Real(y as f32)]));
+                y -= spacing;
+            }
+            let mut x = spacing;
+            while x < pw {
+                ops.push(Operation::new("m", vec![Object::Real(x as f32), Object::Real(0.0_f32)]));
+                ops.push(Operation::new("l", vec![Object::Real(x as f32), Object::Real(ph as f32)]));
+                x += spacing;
+            }
+            ops.push(Operation::new("S", vec![]));
+            ops.push(Operation::new("Q", vec![]));
+        }
+        "dotted" => {
+            ops.push(Operation::new("q", vec![]));
+            ops.push(Operation::new("g", vec![Object::Real(0.7_f32)]));
+            let spacing = 20.0_f64;
+            let dot_r = 0.8_f64;
+            let mut y = ph - spacing;
+            while y > spacing / 2.0 {
+                let mut x = spacing;
+                while x < pw - spacing / 2.0 {
+                    ops.push(Operation::new("re", vec![
+                        Object::Real((x - dot_r) as f32),
+                        Object::Real((y - dot_r) as f32),
+                        Object::Real((2.0 * dot_r) as f32),
+                        Object::Real((2.0 * dot_r) as f32),
+                    ]));
+                    ops.push(Operation::new("f", vec![]));
+                    x += spacing;
+                }
+                y -= spacing;
+            }
+            ops.push(Operation::new("Q", vec![]));
+        }
+        _ => {} // blank — white background only
+    }
+
+    ops
+}
+
+/// Insert virtual (note) pages into the document at the positions specified.
+/// Assumes a flat page tree (single-level Kids array), which covers 99%+ of PDFs.
+fn insert_virtual_pages(doc: &mut Document, virtual_pages: &[VirtualPageData]) -> Result<(), String> {
+    // Resolve pages root ref
+    let pages_ref: ObjectId = {
+        let catalog_ref = doc.trailer.get(b"Root")
+            .and_then(|r| r.as_reference())
+            .map_err(|e| e.to_string())?;
+        let catalog = doc.get_object(catalog_ref)
+            .and_then(|o| o.as_dict())
+            .map_err(|e| e.to_string())?;
+        catalog.get(b"Pages")
+            .and_then(|o| o.as_reference())
+            .map_err(|e| e.to_string())?
+    };
+
+    // Snapshot current Kids list
+    let kids: Vec<ObjectId> = {
+        let pages = doc.get_object(pages_ref)
+            .and_then(|o| o.as_dict())
+            .map_err(|e| e.to_string())?;
+        pages.get(b"Kids")
+            .and_then(|o| o.as_array())
+            .map_err(|e| e.to_string())?
+            .iter()
+            .filter_map(|o| o.as_reference().ok())
+            .collect()
+    };
+
+    let total_real = kids.len() as u32;
+    let pw = 595.0_f64;
+    let ph = 842.0_f64;
+
+    // Create each virtual page object
+    let mut new_pages: Vec<(u32, ObjectId)> = Vec::new();
+
+    for vp in virtual_pages {
+        let mut all_ops = build_template_ops(&vp.template, pw, ph);
+
+        let has_hl = vp.strokes.iter().any(|s| s.tool == "highlighter");
+        let hl_gs_id: Option<ObjectId> = if has_hl {
+            let gs = dictionary! {
+                "Type" => "ExtGState",
+                "ca" => Object::Real(0.35_f32),
+                "CA" => Object::Real(0.35_f32),
+                "BM" => Object::Name(b"Multiply".to_vec()),
+            };
+            Some(doc.add_object(gs))
+        } else {
+            None
+        };
+
+        for s in &vp.strokes {
+            if s.tool == "eraser" { continue; }
+            let gs_name = if s.tool == "highlighter" { Some(b"HLAlpha".as_slice()) } else { None };
+            all_ops.extend(build_stroke_ops(s, pw, ph, gs_name));
+        }
+
+        let content = Content { operations: all_ops };
+        let content_bytes = content.encode().map_err(|e| e.to_string())?;
+        let stream_id = doc.add_object(Stream::new(Dictionary::new(), content_bytes));
+
+        let mut resources = Dictionary::new();
+        if let Some(gs_id) = hl_gs_id {
+            let mut ext_gs = Dictionary::new();
+            ext_gs.set("HLAlpha", Object::Reference(gs_id));
+            resources.set("ExtGState", Object::Dictionary(ext_gs));
+        }
+
+        let mut page_dict = Dictionary::new();
+        page_dict.set("Type", Object::Name(b"Page".to_vec()));
+        page_dict.set("Parent", Object::Reference(pages_ref));
+        page_dict.set("MediaBox", Object::Array(vec![
+            Object::Integer(0), Object::Integer(0),
+            Object::Integer(pw as i64), Object::Integer(ph as i64),
+        ]));
+        page_dict.set("Resources", Object::Dictionary(resources));
+        page_dict.set("Contents", Object::Reference(stream_id));
+        let page_id = doc.add_object(page_dict);
+
+        // Clamp: 9999 → after all real pages
+        let after = vp.after_real_page.min(total_real);
+        new_pages.push((after, page_id));
+    }
+
+    // Group insertions by their insertion point
+    let mut insertions: std::collections::HashMap<u32, Vec<ObjectId>> = std::collections::HashMap::new();
+    for (after, id) in new_pages {
+        insertions.entry(after).or_default().push(id);
+    }
+
+    // Build the new Kids list, interleaving virtual pages at their positions
+    let mut new_kids: Vec<Object> = Vec::new();
+
+    if let Some(before_all) = insertions.get(&0) {
+        for id in before_all {
+            new_kids.push(Object::Reference(*id));
+        }
+    }
+    for (i, &real_kid) in kids.iter().enumerate() {
+        new_kids.push(Object::Reference(real_kid));
+        let page_num = (i + 1) as u32;
+        if let Some(after_this) = insertions.get(&page_num) {
+            for id in after_this {
+                new_kids.push(Object::Reference(*id));
+            }
+        }
+    }
+
+    let new_count = new_kids.len() as i64;
+
+    let pages_obj = doc.get_object_mut(pages_ref).map_err(|e| e.to_string())?;
+    if let Object::Dictionary(dict) = pages_obj {
+        dict.set("Kids", Object::Array(new_kids));
+        dict.set("Count", Object::Integer(new_count));
+    }
+
+    Ok(())
 }
 
 fn get_page_dims(doc: &Document, page_id: ObjectId) -> (f64, f64) {
@@ -268,11 +477,12 @@ fn append_stream_to_page(doc: &mut Document, page_id: ObjectId, stream_id: Objec
 pub fn bake_annotations(
     path: String,
     annotations: Vec<PageAnnotationData>,
+    virtual_pages: Vec<VirtualPageData>,
     output: Option<String>,
 ) -> Result<String, String> {
     let out = output.unwrap_or_else(|| temp_output_path(&path, "annotated"));
 
-    if annotations.is_empty() {
+    if annotations.is_empty() && virtual_pages.is_empty() {
         std::fs::copy(&path, &out).map_err(|e| e.to_string())?;
         return Ok(out);
     }
@@ -343,6 +553,11 @@ pub fn bake_annotations(
 
         // Phase 5: Append content stream to page Contents
         append_stream_to_page(&mut doc, page_id, stream_id)?;
+    }
+
+    // Insert virtual (note) pages at their specified positions
+    if !virtual_pages.is_empty() {
+        insert_virtual_pages(&mut doc, &virtual_pages)?;
     }
 
     doc.save(&out).map_err(|e| e.to_string())?;

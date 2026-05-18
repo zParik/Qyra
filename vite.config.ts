@@ -17,7 +17,6 @@ export default defineConfig(async () => ({
       output: {
         manualChunks: {
           "vendor-react": ["react", "react-dom", "react-router-dom"],
-          "vendor-pdfjs": ["pdfjs-dist"],
           "vendor-dnd": ["@dnd-kit/core", "@dnd-kit/sortable", "@dnd-kit/utilities"],
           "vendor-tesseract": ["tesseract.js"],
         },

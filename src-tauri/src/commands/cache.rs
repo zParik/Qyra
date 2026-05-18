@@ -51,13 +51,21 @@ impl Drop for SessionCacheState {
 /// Store a value in the session cache.
 /// `value` is an arbitrary string (base64 data URL, JSON blob, etc.).
 #[tauri::command]
-pub fn cache_put(
+pub async fn cache_put(
     key: String,
     value: String,
     state: tauri::State<'_, SessionCacheState>,
 ) -> Result<(), String> {
     let path = state.file_for_key(&key);
-    fs::write(&path, value.as_bytes()).map_err(|e| e.to_string())?;
+    let path_clone = path.clone();
+    
+    // Heavy file I/O off the main thread
+    tokio::task::spawn_blocking(move || {
+        fs::write(&path_clone, value.as_bytes()).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
     state
         .index
         .lock()
@@ -69,57 +77,95 @@ pub fn cache_put(
 /// Retrieve a value from the session cache.
 /// Returns `null` (JSON) if the key doesn't exist.
 #[tauri::command]
-pub fn cache_get(
+pub async fn cache_get(
     key: String,
     state: tauri::State<'_, SessionCacheState>,
 ) -> Result<Option<String>, String> {
-    // Fast path: check in-memory index
-    let idx = state.index.lock().map_err(|e| e.to_string())?;
-    if let Some(path) = idx.get(&key) {
-        if path.exists() {
-            let data = fs::read_to_string(path).map_err(|e| e.to_string())?;
-            return Ok(Some(data));
+    // Fast path: check in-memory index. Scoped block guarantees MutexGuard is dropped before await!
+    let path_opt = {
+        let idx = state.index.lock().map_err(|e| e.to_string())?;
+        idx.get(&key).cloned()
+    };
+
+    if let Some(path) = path_opt {
+        let path_clone = path.clone();
+        let data = tokio::task::spawn_blocking(move || {
+            if path_clone.exists() {
+                fs::read_to_string(path_clone).map_err(|e| e.to_string()).map(Some)
+            } else {
+                Ok(None)
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        
+        if data.is_some() {
+            return Ok(data);
         }
     }
-    drop(idx);
 
     // Slow path: probe the filesystem directly
     let path = state.file_for_key(&key);
-    if path.exists() {
-        let data = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let path_clone = path.clone();
+    let data = tokio::task::spawn_blocking(move || {
+        if path_clone.exists() {
+            fs::read_to_string(path_clone).map_err(|e| e.to_string()).map(Some)
+        } else {
+            Ok(None)
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    if data.is_some() {
         state
             .index
             .lock()
             .map_err(|e| e.to_string())?
             .insert(key, path);
-        return Ok(Some(data));
     }
 
-    Ok(None)
+    Ok(data)
 }
 
 /// Check if a key exists in the session cache.
 #[tauri::command]
-pub fn cache_has(
+pub async fn cache_has(
     key: String,
     state: tauri::State<'_, SessionCacheState>,
 ) -> Result<bool, String> {
-    let idx = state.index.lock().map_err(|e| e.to_string())?;
-    if let Some(path) = idx.get(&key) {
-        return Ok(path.exists());
+    let path_opt = {
+        let idx = state.index.lock().map_err(|e| e.to_string())?;
+        idx.get(&key).cloned()
+    };
+
+    if let Some(path) = path_opt {
+        let path_clone = path.clone();
+        return tokio::task::spawn_blocking(move || Ok(path_clone.exists()))
+            .await
+            .map_err(|e| e.to_string())?;
     }
-    drop(idx);
-    Ok(state.file_for_key(&key).exists())
+    
+    let path = state.file_for_key(&key);
+    tokio::task::spawn_blocking(move || Ok(path.exists()))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// Remove a single key from the session cache.
 #[tauri::command]
-pub fn cache_remove(
+pub async fn cache_remove(
     key: String,
     state: tauri::State<'_, SessionCacheState>,
 ) -> Result<(), String> {
     let path = state.file_for_key(&key);
-    let _ = fs::remove_file(&path);
+    let path_clone = path.clone();
+    tokio::task::spawn_blocking(move || {
+        let _ = fs::remove_file(&path_clone);
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
     state.index.lock().map_err(|e| e.to_string())?.remove(&key);
     Ok(())
 }
@@ -127,22 +173,36 @@ pub fn cache_remove(
 /// Remove all entries whose key starts with `prefix`.
 /// This is used to evict all thumbnails for a given PDF path when the file is modified.
 #[tauri::command]
-pub fn cache_evict_prefix(
+pub async fn cache_evict_prefix(
     prefix: String,
     state: tauri::State<'_, SessionCacheState>,
 ) -> Result<u32, String> {
-    let mut idx = state.index.lock().map_err(|e| e.to_string())?;
-    let matching: Vec<String> = idx
-        .keys()
-        .filter(|k| k.starts_with(&prefix))
-        .cloned()
-        .collect();
-    let count = matching.len() as u32;
-    for key in &matching {
-        if let Some(path) = idx.remove(key) {
+    let (paths, count) = {
+        let mut idx = state.index.lock().map_err(|e| e.to_string())?;
+        let matching: Vec<String> = idx
+            .keys()
+            .filter(|k| k.starts_with(&prefix))
+            .cloned()
+            .collect();
+        let count = matching.len() as u32;
+        
+        let mut paths = Vec::new();
+        for key in &matching {
+            if let Some(path) = idx.remove(key) {
+                paths.push(path);
+            }
+        }
+        (paths, count)
+    };
+
+    tokio::task::spawn_blocking(move || {
+        for path in paths {
             let _ = fs::remove_file(&path);
         }
-    }
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
     Ok(count)
 }
 
@@ -155,27 +215,35 @@ pub struct CacheStats {
 }
 
 #[tauri::command]
-pub fn cache_stats(
+pub async fn cache_stats(
     state: tauri::State<'_, SessionCacheState>,
 ) -> Result<CacheStats, String> {
-    let idx = state.index.lock().map_err(|e| e.to_string())?;
-    let mut total_bytes: u64 = 0;
-
-    // Also scan directory for entries not in the index
-    let entry_count = if state.root.exists() {
-        let mut count = 0;
-        if let Ok(entries) = fs::read_dir(&state.root) {
-            for entry in entries.flatten() {
-                count += 1;
-                if let Ok(meta) = entry.metadata() {
-                    total_bytes += meta.len();
-                }
-            }
-        }
-        count
-    } else {
+    let idx_len = {
+        let idx = state.index.lock().map_err(|e| e.to_string())?;
         idx.len()
     };
+
+    let root_clone = state.root.clone();
+    let (entry_count, total_bytes) = tokio::task::spawn_blocking(move || {
+        let mut total_bytes: u64 = 0;
+        let entry_count = if root_clone.exists() {
+            let mut count = 0;
+            if let Ok(entries) = fs::read_dir(&root_clone) {
+                for entry in entries.flatten() {
+                    count += 1;
+                    if let Ok(meta) = entry.metadata() {
+                        total_bytes += meta.len();
+                    }
+                }
+            }
+            count
+        } else {
+            idx_len
+        };
+        (entry_count, total_bytes)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
 
     Ok(CacheStats {
         root: state.root.to_string_lossy().to_string(),
@@ -186,14 +254,23 @@ pub fn cache_stats(
 
 /// Wipe the entire session cache.
 #[tauri::command]
-pub fn cache_clear(
+pub async fn cache_clear(
     state: tauri::State<'_, SessionCacheState>,
 ) -> Result<(), String> {
-    let mut idx = state.index.lock().map_err(|e| e.to_string())?;
-    idx.clear();
-    if state.root.exists() {
-        let _ = fs::remove_dir_all(&state.root);
-        let _ = fs::create_dir_all(&state.root);
+    {
+        let mut idx = state.index.lock().map_err(|e| e.to_string())?;
+        idx.clear();
     }
+
+    let root_clone = state.root.clone();
+    tokio::task::spawn_blocking(move || {
+        if root_clone.exists() {
+            let _ = fs::remove_dir_all(&root_clone);
+            let _ = fs::create_dir_all(&root_clone);
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
     Ok(())
 }

@@ -10,8 +10,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { LoadedFile } from "../store/useAppStore";
 import { useThumbnails } from "../hooks/useThumbnails";
 
-const MONO = "'JetBrains Mono', ui-monospace, monospace";
-const UI   = "'Inter', system-ui, sans-serif";
+import { UI, MONO } from "../lib/tokens";
 
 interface PageGridProps {
   files: LoadedFile[];

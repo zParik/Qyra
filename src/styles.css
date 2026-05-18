@@ -401,7 +401,189 @@
     border-radius: 4px;
     padding: 0.75rem;
   }
+
+  /* ── Viewer header utility button (zoom/page nav) ── */
+  .v-header-btn {
+    width: 22px; height: 22px;
+    border-radius: 3px;
+    border: 1px solid var(--viewer-border);
+    background: var(--viewer-elevated);
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer; color: var(--viewer-text-muted);
+    flex-shrink: 0;
+  }
+  .v-header-btn:disabled { cursor: not-allowed; opacity: 0.4; }
+
+  /* ── Home left rail ── */
+  .home-rail {
+    width: 220px; flex-shrink: 0;
+    background: var(--bg1);
+    border-right: 1px solid var(--line);
+    display: flex; flex-direction: column;
+    height: 100%;
+  }
+  .home-rail-label {
+    font-size: 10px; font-weight: 600;
+    color: var(--fg2);
+    text-transform: uppercase; letter-spacing: 0.8px;
+    padding: 4px 8px 6px;
+  }
+  .home-rail-item {
+    background: transparent; border: none;
+    border-radius: 4px; padding: 0 8px; height: 32px;
+    display: flex; align-items: center; gap: 10px;
+    cursor: pointer; color: var(--fg1);
+    font-size: 12.5px; font-weight: 500;
+    position: relative; text-align: left; width: 100%;
+    transition: background 80ms, color 80ms;
+  }
+  .home-rail-item:hover { background: var(--bg2); color: var(--fg0); }
+  .home-rail-item[aria-current="page"] { background: var(--bg3); color: var(--fg0); }
+  .home-rail-item[aria-current="page"]::before {
+    content: "";
+    position: absolute; left: -12px; top: 6px; bottom: 6px; width: 2px;
+    background: var(--accent); border-radius: 1px;
+  }
+  .home-rail-item .rail-icon { color: var(--fg1); transition: color 80ms; }
+  .home-rail-item:hover .rail-icon { color: var(--fg0); }
+  .home-rail-item[aria-current="page"] .rail-icon { color: var(--accent); }
+  .home-rail-badge {
+    font-size: 10px; color: var(--fg2);
+    background: var(--bg2); padding: 1px 5px;
+    border-radius: 3px; border: 1px solid var(--line2);
+  }
+
+  /* ── Home bottom tab bar ── */
+  .home-tab-btn {
+    flex: 1; border: none; background: transparent;
+    cursor: pointer;
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 3px; padding: 10px 4px;
+    color: var(--fg2); font-size: 10px; font-weight: 500;
+    transition: color 80ms;
+  }
+  .home-tab-btn[aria-current="page"] { color: var(--accent); }
+
+  /* ── Home status strip ── */
+  .home-status-strip {
+    height: 32px; flex-shrink: 0;
+    border-bottom: 1px solid var(--line2);
+    display: flex; align-items: center;
+    padding: 0 16px; gap: 12px;
+    font-size: 10.5px; color: var(--fg2);
+  }
+
+  /* ── View toggle button ── */
+  .view-toggle-btn {
+    width: 22px; height: 22px;
+    border: none; border-radius: 3px;
+    cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: background 80ms;
+    background: transparent; color: var(--fg2);
+  }
+  .view-toggle-btn[aria-pressed="true"] { background: var(--bg3); color: var(--fg0); }
+
+  /* ── Empty state placeholder ── */
+  .empty-state {
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 10px; padding: 40px 24px;
+    border: 1px dashed var(--line);
+    border-radius: 6px; background: var(--bg1);
+  }
+
+  /* ── Section header ── */
+  .section-header {
+    display: flex; align-items: baseline;
+    gap: 12px; margin-bottom: 12px;
+  }
+  .section-header h2 {
+    margin: 0; font-size: 14px; font-weight: 600;
+    color: var(--fg0); letter-spacing: -0.1px;
+  }
+  .section-divider { flex: 1; height: 1px; background: var(--line2); }
+
+  /* ── Quick tool card ── */
+  .quick-tool-card {
+    text-align: left; cursor: pointer;
+    background: var(--bg1);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    transition: background 120ms, border-color 120ms;
+  }
+  .quick-tool-card:hover {
+    background: var(--bg2);
+    border-color: var(--accent-line);
+  }
+  .quick-tool-card .tool-icon {
+    border-radius: 4px;
+    background: var(--bg3);
+    color: var(--fg1);
+    display: flex; align-items: center; justify-content: center;
+    transition: background 120ms, color 120ms;
+  }
+  .quick-tool-card:hover .tool-icon {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .quick-tool-card .tool-chevron { color: var(--fg2); transition: color 120ms; }
+  .quick-tool-card:hover .tool-chevron { color: var(--accent); }
+
+  /* ── Recent list container ── */
+  .recent-list {
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--bg1);
+    overflow: hidden;
+  }
+  .recent-list-header {
+    display: grid; gridTemplateColumns: 24px 1fr 120px 52px;
+    padding: 7px 14px; gap: 12px;
+    font-size: 10px; text-transform: uppercase;
+    letter-spacing: 0.6px; color: var(--fg2);
+    border-bottom: 1px solid var(--line2);
+  }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Custom scrollbars
+───────────────────────────────────────────────────────────────────────── */
+
+/* App shell — adapts to light/dark */
+::-webkit-scrollbar { width: 10px; height: 20px; }
+::-webkit-scrollbar-track { background: var(--bg0); }
+::-webkit-scrollbar-thumb {
+  background: var(--accent-line);
+  border-radius: 4px;
+  border: 2px solid var(--bg0);
+  min-height: 48px;
+  transition: background 150ms;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent-soft);
+}
+::-webkit-scrollbar-corner { background: var(--bg0); }
+
+/* Firefox */
+* { scrollbar-width: thin; scrollbar-color: var(--accent-line) var(--bg0); }
+
+/* Viewer context — always dark */
+.viewer-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+.viewer-scrollbar::-webkit-scrollbar-track { background: var(--viewer-bg); }
+.viewer-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--brand-dim);
+  border-radius: 4px;
+  border: 2px solid var(--viewer-bg);
+  transition: background 150ms;
+}
+.viewer-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-soft);
+}
+.viewer-scrollbar::-webkit-scrollbar-corner { background: var(--viewer-bg); }
+.viewer-scrollbar { scrollbar-color: var(--brand-dim) var(--viewer-bg); }
 
 /* ─────────────────────────────────────────────────────────────────────────
    PDF.js text layer
@@ -419,9 +601,10 @@
   forced-color-adjust: none;
   transform-origin: 0 0;
   caret-color: CanvasText;
-  z-index: 20;
-  
-  /* Multiply blending allows us to use solid selection colors that don't compound 
+  /* Sits below LinkLayer (z-index 10) and above the page bitmap. */
+  z-index: 1;
+
+  /* Multiply blending allows us to use solid selection colors that don't compound
      into dark stripes when spans overlap. It blends nicely over the canvas text. */
   mix-blend-mode: multiply;
 
@@ -442,14 +625,8 @@
   transform-origin: 0% 0%;
 }
 
-.textLayer > span:not(.markedContent),
-.textLayer .markedContent span:not(.markedContent) {
+.textLayer > span {
   z-index: 1;
-  --font-height: 0;
-  font-size: calc(var(--text-scale-factor) * var(--font-height));
-  --scale-x: 1;
-  --rotate: 0deg;
-  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
 }
 
 .textLayer .markedContent {
@@ -499,6 +676,33 @@
           user-select: none;
 }
 
-.textLayer.selecting .endOfContent {
-  top: 0;
+/* .endOfContent default sits below the layer (top: 100%). TextLayer.tsx
+   moves it inline to the mousedown Y at the start of a selection drag. */
+
+/* Link hover affordance — subtle outline so users see the click targets */
+.pdf-link-target:hover {
+  background: rgba(56, 189, 248, 0.12) !important;
+  outline: 1px solid rgba(56, 189, 248, 0.6);
+  border-radius: 2px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Touch / coarse-pointer overrides (Android, iOS)
+───────────────────────────────────────────────────────────────────────── */
+@media (pointer: coarse) {
+  /* AddPageBar button: always visible on touch (hover doesn't exist) */
+  .add-page-btn {
+    opacity: 1 !important;
+  }
+
+  /* Increase tap target size for small viewer header buttons */
+  .v-icon-btn {
+    min-width: 36px;
+    min-height: 36px;
+  }
+
+  /* Outline tree rows need bigger tap areas */
+  .outline-row {
+    min-height: 36px;
+  }
 }

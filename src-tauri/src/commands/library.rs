@@ -15,20 +15,53 @@ pub struct LibraryEntry {
 
 pub struct LibraryDb(pub Mutex<Connection>);
 
+const DB_SCHEMA: &str = "
+    CREATE TABLE IF NOT EXISTS library (
+        path     TEXT    PRIMARY KEY,
+        name     TEXT    NOT NULL,
+        starred  INTEGER NOT NULL DEFAULT 0,
+        archived INTEGER NOT NULL DEFAULT 0,
+        added_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );";
+
 pub fn open_db(app: &AppHandle) -> rusqlite::Result<Connection> {
     let dir = app.path().app_data_dir().expect("no app data dir");
     std::fs::create_dir_all(&dir).ok();
     let conn = Connection::open(dir.join("library.db"))?;
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS library (
-            path     TEXT    PRIMARY KEY,
-            name     TEXT    NOT NULL,
-            starred  INTEGER NOT NULL DEFAULT 0,
-            archived INTEGER NOT NULL DEFAULT 0,
-            added_at INTEGER NOT NULL
-        );",
-    )?;
+    conn.execute_batch(DB_SCHEMA)?;
     Ok(conn)
+}
+
+pub fn open_db_in_memory() -> rusqlite::Result<Connection> {
+    let conn = Connection::open_in_memory()?;
+    conn.execute_batch(DB_SCHEMA)?;
+    Ok(conn)
+}
+
+#[tauri::command]
+pub fn get_setting(db: State<LibraryDb>, key: String) -> Result<Option<String>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let val = conn
+        .query_row("SELECT value FROM settings WHERE key = ?1", params![key], |r| r.get(0))
+        .optional()
+        .map_err(|e| e.to_string())?;
+    Ok(val)
+}
+
+#[tauri::command]
+pub fn set_setting(db: State<LibraryDb>, key: String, value: String) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = ?2",
+        params![key, value],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]

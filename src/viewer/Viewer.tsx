@@ -3,19 +3,28 @@ import { useNavigate } from "react-router-dom";
 import { useAppStore } from "../store/useAppStore";
 import { useNotesStore, PageTemplate, VirtualPage } from "../store/useNotesStore";
 
-import { usePageThumbnails, evictPathFromThumbnailCache, loadDocument } from "../hooks/usePageThumbnails";
+import { usePageThumbnails, evictPathFromThumbnailCache } from "../hooks/usePageThumbnails";
 import { PageStrip } from "./PageStrip";
 import { ToolSidebar, ViewerTool } from "./ToolSidebar";
-import { copyFile, showSaveDialog, bakeAnnotations, loadComments, saveComments } from "../lib/tauri";
+import { invoke } from "@tauri-apps/api/core";
+import { message } from "@tauri-apps/plugin-dialog";
+import { copyFile, showSaveDialog, bakeAnnotations, loadComments, saveComments, getSetting, setSetting } from "../lib/tauri";
 import { triggerPrint } from "./tools/PrintPanel";
 import { DrawingCanvas } from "./DrawingCanvas";
 import { VirtualPageBackground } from "./VirtualPageBackground";
 import { DrawToolbar } from "./tools/DrawToolbar";
 import { TextLayer } from "./TextLayer";
+import { LinkLayer } from "./LinkLayer";
 import { FindBar } from "./FindBar";
 import { CommentLayer, CommentEditor } from "./CommentLayer";
 import { useCommentsStore } from "../store/useCommentsStore";
-import { getPageOcrText } from "../lib/ocrEngine";
+import { FormLayer } from "./FormLayer";
+import { AnnotationLayer } from "./AnnotationLayer";
+import { SignatureLayer, Signature } from "./SignatureLayer";
+import { AnnotationToolbar, AnnotationTool } from "./AnnotationToolbar";
+import { SignaturePanel } from "./tools/SignaturePanel";
+import { useFormFilling } from "./useFormFilling";
+// import { getPageOcrText } from "../lib/ocrEngine";
 
 const EMPTY_VIRTUAL_PAGES: VirtualPage[] = [];
 
@@ -44,6 +53,8 @@ export default function Viewer() {
   } = useAppStore();
   const [currentPage, setCurrentPage] = useState(1);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [autoSave, setAutoSave] = useState(false);
   const [confirmingBack, setConfirmingBack] = useState(false);
   const [activeTool, setActiveTool] = useState<ViewerTool | null>(null);
   const [selectedPages, setSelectedPages] = useState<Set<number>>(new Set());
@@ -60,8 +71,8 @@ export default function Viewer() {
   const [docAspectRatio, setDocAspectRatio] = useState(1.4142);
 
   const [zoom, setZoom] = useState(1.0);
-  const [showStrip, setShowStrip] = useState(true);
-  const [showTools, setShowTools] = useState(true);
+  const [showStrip, setShowStrip] = useState(() => window.innerWidth >= 640);
+  const [showTools, setShowTools] = useState(() => window.innerWidth >= 640);
 
   // Find-in-document
   const [findOpen, setFindOpen] = useState(false);
@@ -78,11 +89,27 @@ export default function Viewer() {
   // Annotation tool pills (activate draw mode)
   const [activeAnnot, setActiveAnnot] = useState<string | null>(null);
 
+  // Standard PDF annotation mode
+  const [activeAnnotTool, setActiveAnnotTool] = useState<AnnotationTool | null>(null);
+  const [annotColor, setAnnotColor] = useState("#ffeb3b");
+  const [annotRefreshKey, setAnnotRefreshKey] = useState(0);
+
+  // E-signatures
+  const [signatures, setSignatures] = useState<Signature[]>([]);
+  const [pendingSignature, setPendingSignature] = useState<string | null>(null);
+  const [showSignaturePanel, setShowSignaturePanel] = useState(false);
+
+  // Form filling
+  const { fieldValues, setFieldValue, saveFormFields: _saveFormFields, isDirty: _isFormDirty } = useFormFilling();
+
   // Comments
   const commentsRef = useCommentsStore((s) => s.comments[viewerFile?.path ?? ""]);
   const comments = commentsRef ?? [];
   const loadCommentsIntoStore = useCommentsStore((s) => s.loadComments);
   const saveTimerRef = useRef<number | undefined>(undefined);
+  const autoSaveRef = useRef(autoSave);
+  const autoSaveTimerRef = useRef<number | undefined>(undefined);
+  const savedFeedbackTimerRef = useRef<number | undefined>(undefined);
   const isLoadingCommentsRef = useRef(false);
   // True while comment mode is active — opens the comments tab in the sidebar
   const isCommentMode = activeTool === "comment";
@@ -109,16 +136,23 @@ export default function Viewer() {
   // Load comments from embedded PDF attachment once on mount
   useEffect(() => {
     if (!viewerFile?.path) return;
+    let cancelled = false;
     isLoadingCommentsRef.current = true;
     loadComments(viewerFile.path)
       .then((json) => {
+        if (cancelled) return;
         try {
           const parsed = JSON.parse(json);
           if (Array.isArray(parsed)) loadCommentsIntoStore(viewerFile.path, parsed);
         } catch { /* ignore malformed JSON */ }
       })
       .catch(() => { /* file might not have comments yet */ })
-      .finally(() => { isLoadingCommentsRef.current = false; });
+      .finally(() => {
+        if (!cancelled) isLoadingCommentsRef.current = false;
+      });
+    return () => {
+      cancelled = true;
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // mount-only: original path == viewerFile.path at this point
 
@@ -133,21 +167,23 @@ export default function Viewer() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [comments, viewerFile?.path]);
 
-  // Handle text selection
+  // Handle text selection — uses pointerup so it fires on both mouse and touch
   useEffect(() => {
-    function handleMouseUp() {
+    function handlePointerUp(e: PointerEvent) {
+      // Ignore right-click and middle-click on desktop
+      if (e.button > 0) return;
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed || !sel.rangeCount) {
         setSelectionPopup(null);
         return;
       }
-      
+
       const range = sel.getRangeAt(0);
       const container = range.commonAncestorContainer;
       const el = container.nodeType === 3 ? container.parentElement : (container as HTMLElement);
       // We only care about selections within a TextLayer
       const pageEl = el?.closest('.textLayer')?.parentElement as HTMLElement | null;
-      
+
       if (!pageEl || !pageEl.dataset.pageIndex) {
         setSelectionPopup(null);
         return;
@@ -156,11 +192,11 @@ export default function Viewer() {
       const pageIndex = parseInt(pageEl.dataset.pageIndex, 10);
       const pageRect = pageEl.getBoundingClientRect();
       const selRect = range.getBoundingClientRect();
-      
+
       const normX = (selRect.left + selRect.width / 2 - pageRect.left) / pageRect.width;
       const normY = (selRect.top - pageRect.top) / pageRect.height;
       const text = sel.toString().trim();
-      
+
       if (!text) {
         setSelectionPopup(null);
         return;
@@ -175,8 +211,8 @@ export default function Viewer() {
       });
     }
 
-    document.addEventListener("mouseup", handleMouseUp);
-    return () => document.removeEventListener("mouseup", handleMouseUp);
+    document.addEventListener("pointerup", handlePointerUp as EventListener);
+    return () => document.removeEventListener("pointerup", handlePointerUp as EventListener);
   }, []);
 
   function adjustZoom(delta: number) {
@@ -193,6 +229,13 @@ export default function Viewer() {
       setActiveAnnot("Comment");
     } else if (tool === "draw") {
       setActiveAnnot((prev) => (prev === "Highlight" || prev === "Sign" ? prev : "Highlight"));
+    } else if (tool === "signature") {
+      setShowSignaturePanel(true);
+      setActiveAnnot("Sign");
+    } else if (tool === "annotate") {
+      setActiveAnnot(null);
+    } else if (tool === "forms") {
+      setActiveAnnot(null);
     } else {
       setActiveAnnot(null);
     }
@@ -252,7 +295,7 @@ export default function Viewer() {
   const BUFFER_SLOTS = 2;   // small buffer to avoid gaps when scrolling
 
   const basePageW = zoom * 768;
-  const actualPageW = containerWidth > 0 ? Math.min(basePageW, containerWidth - SIDE_PAD * 2) : basePageW;
+  const actualPageW = basePageW;
   const slotH = actualPageW * docAspectRatio + SLOT_MARGIN;
   const containerH = scrollContainerRef.current?.clientHeight ?? 600;
   const firstSlot  = Math.max(0, Math.floor((centerScrollTop - TOP_PAD) / slotH) - BUFFER_SLOTS);
@@ -276,7 +319,7 @@ export default function Viewer() {
     return m;
   }, [pageSlots]);
 
-  const [stripVisibleRange, setStripVisibleRange] = useState<[number, number]>([1, 20]);
+  const [stripVisibleRange, setStripVisibleRange] = useState<[number, number]>([1, 5]);
   const stripVisibleNums = useMemo(() => {
     const s = new Set<number>();
     if (pageCount > 0) s.add(1); // always render page 1 regardless of scroll position
@@ -285,8 +328,9 @@ export default function Viewer() {
   }, [stripVisibleRange, pageCount]);
 
   const stripThumbnails = usePageThumbnails(viewerFile?.path ?? null, pageCount, 0.3, stripVisibleNums);
-  // Match render scale to current zoom instead of always over-rendering at 1.5x.
-  const centerRenderScale = Math.min(2.0, Math.max(1.0, zoom * 1.15));
+  // Render at physical pixel density: multiply by dpr so HiDPI screens get crisp pages.
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const centerRenderScale = Math.min(3.0, Math.max(1.0, zoom * 1.5 * dpr));
   const centerThumbnails = usePageThumbnails(viewerFile?.path ?? null, pageCount, centerRenderScale, visiblePageNums);
 
   // Re-anchor scroll position when zoom changes so the current page stays in view
@@ -301,8 +345,7 @@ export default function Viewer() {
     const container = scrollContainerRef.current;
     if (!container) return;
     const idx = pageToSlotIndex.get(currentPage) ?? 0;
-    const baseW = zoom * 768;
-    const actW = containerWidth > 0 ? Math.min(baseW, containerWidth - SIDE_PAD * 2) : baseW;
+    const actW = zoom * 768;
     const newSlotH = actW * docAspectRatio + SLOT_MARGIN;
     const newSt = TOP_PAD + idx * newSlotH;
     container.scrollTop = newSt;
@@ -314,20 +357,14 @@ export default function Viewer() {
     if (!viewerFile) navigate("/");
   }, [viewerFile]);
 
-  // Fetch aspect ratio of the first page to correctly size the virtual scroll slots
+  // Fetch aspect ratio of the first page via MuPDF (Rust) — no WebView parse spike.
   useEffect(() => {
     if (!viewerFile?.path) return;
     let cancelled = false;
     async function fetchAspectRatio() {
       try {
-        const doc = await loadDocument(viewerFile!.path);
-        if (cancelled) return;
-        const page = await doc.getPage(1);
-        if (cancelled) return;
-        const vp = page.getViewport({ scale: 1 });
-        if (vp.width > 0 && vp.height > 0) {
-          setDocAspectRatio(vp.height / vp.width);
-        }
+        const ratio = await invoke<number>("get_page_aspect_ratio", { path: viewerFile!.path });
+        if (!cancelled && ratio > 0) setDocAspectRatio(ratio);
       } catch {}
     }
     fetchAspectRatio();
@@ -346,17 +383,16 @@ export default function Viewer() {
     const path = viewerFile.path;
 
     async function loadPageCount() {
-      const { invoke } = await import("@tauri-apps/api/core");
       let count = 0;
       let fileSize = 0;
       try {
         count = await invoke<number>("get_page_count", { path });
       } catch {
-        // Fast path failed (XRef stream PDF) — fall back to PDF.js
-        try {
-          const doc = await loadDocument(path);
-          count = doc.numPages;
-        } catch { return; }
+        message(
+          "Failed to open PDF. The file may be corrupt or inaccessible.",
+          { title: "Qyra - Error", kind: "error" }
+        ).catch(() => {});
+        return;
       }
       try {
         fileSize = await invoke<number>("get_file_size", { path });
@@ -374,6 +410,16 @@ export default function Viewer() {
     loadPageCount();
     return () => { cancelled = true; };
   }, [viewerFile?.path]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Synchronise currently active document path with the Rust backend for instant thread cancellation
+  useEffect(() => {
+    if (!viewerFile?.path) return;
+    const path = viewerFile.path;
+    invoke("set_active_document", { path }).catch(() => {});
+    return () => {
+      invoke("set_active_document", { path: null }).catch(() => {});
+    };
+  }, [viewerFile?.path]);
 
   useEffect(() => {
     if (viewerFile && !isViewerDirty) {
@@ -393,14 +439,54 @@ export default function Viewer() {
         setZoom((prev) => {
           const factor = Math.pow(0.999, e.deltaY);
           const next = Math.min(3.0, Math.max(0.25, prev * factor));
-          // Magnet: snap to fit-width when within 4% of it
-          if (Math.abs(next - fitZoom) < fitZoom * 0.04) return fitZoom;
+          // Magnet: snap to fit-width only when crossing into the zone (not when already there)
+          const inZone = (z: number) => Math.abs(z - fitZoom) < fitZoom * 0.04;
+          if (!inZone(prev) && inZone(next)) return fitZoom;
           return next;
         });
       }
     }
     window.addEventListener("wheel", onWheel, { passive: false });
     return () => window.removeEventListener("wheel", onWheel);
+  }, []);
+
+  // Pinch-to-zoom via touch (two-finger gesture on Android / iOS)
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+
+    let lastDist = 0;
+
+    function pinchDist(e: TouchEvent) {
+      const [a, b] = [e.touches[0], e.touches[1]];
+      return Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
+    }
+
+    function onTouchStart(e: TouchEvent) {
+      if (e.touches.length === 2) lastDist = pinchDist(e);
+    }
+
+    function onTouchMove(e: TouchEvent) {
+      if (e.touches.length !== 2 || lastDist === 0) return;
+      e.preventDefault();
+      const dist = pinchDist(e);
+      const factor = dist / lastDist;
+      lastDist = dist;
+      setZoom((prev) => Math.min(3.0, Math.max(0.25, prev * factor)));
+    }
+
+    function onTouchEnd() { lastDist = 0; }
+
+    el.addEventListener("touchstart", onTouchStart, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
+    el.addEventListener("touchend", onTouchEnd, { passive: true });
+    return () => {
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("touchend", onTouchEnd);
+    };
+  // scrollContainerRef.current is stable after mount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Auto-fit zoom on small screens so the PDF isn't wider than the viewport
@@ -420,56 +506,31 @@ export default function Viewer() {
       return;
     }
     let cancelled = false;
-    const q = findQuery.trim().toLowerCase();
     setOcrSearching(false);
     setOcrProgress(undefined);
 
     async function search() {
       try {
-        const doc = await loadDocument(viewerFile!.path);
-
-        // Phase 1: PDF text layer
-        const textMatches: { page: number }[] = [];
-        for (let p = 1; p <= pageCount; p++) {
-          if (cancelled) return;
-          const page = await doc.getPage(p);
-          const tc = await page.getTextContent();
-          const text = (tc.items as { str?: string }[]).map((i) => i.str ?? "").join("").toLowerCase();
-          let idx = 0;
-          while (true) {
-            const pos = text.indexOf(q, idx);
-            if (pos === -1) break;
-            textMatches.push({ page: p });
-            idx = pos + 1;
-          }
-        }
+        // Phase 1: MuPDF text search in Rust — single IPC call, no WebView parse
+        type SearchHit = { page: number; count: number };
+        const hits = await invoke<SearchHit[]>("search_pdf", {
+          path: viewerFile!.path,
+          query: findQuery.trim(),
+        });
         if (cancelled) return;
-        if (textMatches.length > 0) {
+
+        if (hits.length > 0) {
+          const textMatches = hits.flatMap((h) =>
+            Array.from({ length: h.count }, () => ({ page: h.page })),
+          );
           setFindMatches(textMatches);
           setFindCurrentIdx(0);
           return;
         }
 
-        // Phase 2: OCR fallback (automatic)
-        if (!cancelled) setOcrSearching(true);
-        const ocrMatches: { page: number }[] = [];
-        for (let p = 1; p <= pageCount; p++) {
-          if (cancelled) break;
-          setOcrProgress({ page: p, total: pageCount });
-          const text = await getPageOcrText(viewerFile!.path, p, doc);
-          const lower = text.toLowerCase();
-          let idx = 0;
-          while (true) {
-            const pos = lower.indexOf(q, idx);
-            if (pos === -1) break;
-            ocrMatches.push({ page: p });
-            idx = pos + 1;
-          }
-        }
-        if (!cancelled) {
-          setFindMatches(ocrMatches);
-          setFindCurrentIdx(0);
-        }
+        // Phase 2: OCR fallback (disabled for now)
+        setFindMatches([]);
+        setFindCurrentIdx(0);
       } catch { /* ignore */ } finally {
         if (!cancelled) {
           setOcrSearching(false);
@@ -489,6 +550,19 @@ export default function Viewer() {
     if (match) scrollToPage(match.page);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [findCurrentIdx, findMatches]);
+
+  // Load auto-save preference from SQLite on mount
+  useEffect(() => {
+    getSetting("auto_save").then((val) => {
+      if (val !== null) setAutoSave(val === "1");
+    }).catch(() => {});
+  }, []);
+
+  // Keep ref in sync and persist to SQLite on change
+  useEffect(() => {
+    autoSaveRef.current = autoSave;
+    setSetting("auto_save", autoSave ? "1" : "0").catch(() => {});
+  }, [autoSave]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -554,7 +628,9 @@ export default function Viewer() {
         return;
       }
       if (mod && !e.shiftKey && e.key === "s") {
-        if (isViewerDirty) { e.preventDefault(); handleSave(); }
+        e.preventDefault();
+        if (activeTool === "draw") handleSaveAnnotations();
+        else handleSave();
         return;
       }
       if (mod && e.shiftKey && (e.key === "s" || e.key === "S")) {
@@ -589,6 +665,7 @@ export default function Viewer() {
   }
 
   function doBack() {
+    invoke("set_active_document", { path: null }).catch(() => {});
     setViewerFile(null);
     setUndoViewerFile(null);
     setOriginalViewerPath(null);
@@ -626,10 +703,52 @@ export default function Viewer() {
     setCurrentPage(1);
   }
 
+  function markSaved() {
+    clearTimeout(savedFeedbackTimerRef.current);
+    setSaveStatus("saved");
+    savedFeedbackTimerRef.current = window.setTimeout(
+      () => setSaveStatus((s) => (s === "saved" ? "idle" : s)),
+      2500
+    );
+  }
+
+  async function triggerAutoSave() {
+    const store = useAppStore.getState();
+    const vf = store.viewerFile;
+    const origPath = store.originalViewerPath;
+    if (!vf) return;
+    setSaveStatus("saving");
+    setSaveError(null);
+    try {
+      if (!origPath) {
+        const chosenPath = await showSaveDialog(vf.path);
+        if (!chosenPath) { setSaveStatus("idle"); return; }
+        await copyFile(vf.path, chosenPath);
+        evictPathFromThumbnailCache(chosenPath);
+        store.setViewerFile({ ...vf, path: chosenPath, name: chosenPath.split(/[\\/]/).pop() ?? chosenPath });
+        store.setOriginalViewerPath(chosenPath);
+        store.setIsViewerDirty(false);
+      } else if (store.isViewerDirty) {
+        await copyFile(vf.path, origPath);
+        evictPathFromThumbnailCache(origPath);
+        store.setViewerFile({ ...vf, path: origPath, name: origPath.split(/[\\/]/).pop() ?? origPath });
+        store.setIsViewerDirty(false);
+      }
+      markSaved();
+    } catch (e) {
+      setSaveStatus("error");
+      setSaveError(friendlySaveError(e));
+    }
+  }
+
   async function handleApplied(path: string) {
     setUndoViewerFile(viewerFile); // snapshot for Ctrl+Z
     handleOpenFile(path);
     setIsViewerDirty(true);
+    if (autoSaveRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = window.setTimeout(triggerAutoSave, 1500);
+    }
   }
 
   function friendlySaveError(e: unknown): string {
@@ -646,14 +765,19 @@ export default function Viewer() {
   }
 
   async function handleSave() {
-    if (!viewerFile || !originalViewerPath) return;
+    if (!viewerFile) return;
+    if (!originalViewerPath) return handleSaveAs();
+    if (!isViewerDirty) { markSaved(); return; }
     setSaveError(null);
+    setSaveStatus("saving");
     try {
       await copyFile(viewerFile.path, originalViewerPath);
       evictPathFromThumbnailCache(originalViewerPath);
-      handleOpenFile(originalViewerPath);
+      setViewerFile({ ...viewerFile, path: originalViewerPath, name: originalViewerPath.split(/[\\/]/).pop() ?? originalViewerPath });
       setIsViewerDirty(false);
+      markSaved();
     } catch (e) {
+      setSaveStatus("error");
       setSaveError(friendlySaveError(e));
     }
   }
@@ -663,51 +787,73 @@ export default function Viewer() {
     setSaveError(null);
     const chosenPath = await showSaveDialog(viewerFile.path);
     if (!chosenPath) return;
+    setSaveStatus("saving");
     try {
       await copyFile(viewerFile.path, chosenPath);
       evictPathFromThumbnailCache(chosenPath);
-      handleOpenFile(chosenPath);
+      setViewerFile({ ...viewerFile, path: chosenPath, name: chosenPath.split(/[\\/]/).pop() ?? chosenPath });
       setOriginalViewerPath(chosenPath);
       setIsViewerDirty(false);
+      markSaved();
     } catch (e) {
+      setSaveStatus("error");
       setSaveError(friendlySaveError(e));
     }
   }
 
   async function handleSaveAnnotations() {
-    if (!viewerFile || !originalViewerPath) return;
+    if (!viewerFile) return;
+    if (!originalViewerPath) return handleSaveAsAnnotations();
     setSaveError(null);
+    setSaveStatus("saving");
 
     const allStrokes = useNotesStore.getState().strokes[viewerFile.path] ?? [];
+    const docVirtualPages = useNotesStore.getState().virtualPages[viewerFile.path] ?? [];
+
     const byPage = new Map<number, typeof allStrokes>();
+    const byVirtualId = new Map<string, typeof allStrokes>();
     for (const s of allStrokes) {
-      if (!s.pageSlotId.startsWith('pdf-')) continue;
-      const page = parseInt(s.pageSlotId.slice(4), 10);
-      if (isNaN(page)) continue;
-      if (!byPage.has(page)) byPage.set(page, []);
-      byPage.get(page)!.push(s);
+      if (s.pageSlotId.startsWith('pdf-')) {
+        const page = parseInt(s.pageSlotId.slice(4), 10);
+        if (isNaN(page)) continue;
+        if (!byPage.has(page)) byPage.set(page, []);
+        byPage.get(page)!.push(s);
+      } else {
+        if (!byVirtualId.has(s.pageSlotId)) byVirtualId.set(s.pageSlotId, []);
+        byVirtualId.get(s.pageSlotId)!.push(s);
+      }
     }
+
+    const toStroke = (s: typeof allStrokes[0]) => ({
+      tool: s.tool,
+      color: s.color,
+      thickness: s.baseThickness,
+      points: s.points.map(([x, y]) => [x, y] as [number, number]),
+    });
 
     try {
       let savePath = viewerFile.path;
-      if (byPage.size > 0) {
+      if (byPage.size > 0 || docVirtualPages.length > 0) {
         const annotations = Array.from(byPage.entries()).map(([page, strokes]) => ({
           page,
-          strokes: strokes.map(s => ({
-            tool: s.tool,
-            color: s.color,
-            thickness: s.baseThickness,
-            points: s.points.map(([x, y]) => [x, y] as [number, number]),
-          })),
+          strokes: strokes.map(toStroke),
         }));
-        savePath = await bakeAnnotations(viewerFile.path, annotations);
+        const virtualPageData = docVirtualPages.map(vp => ({
+          id: vp.id,
+          template: vp.template,
+          afterRealPage: vp.afterRealPage,
+          strokes: (byVirtualId.get(vp.id) ?? []).filter(s => s.tool !== 'eraser').map(toStroke),
+        }));
+        savePath = await bakeAnnotations(viewerFile.path, annotations, virtualPageData);
       }
       await copyFile(savePath, originalViewerPath);
       evictPathFromThumbnailCache(originalViewerPath);
       // Don't clear strokes — they stay as overlay while thumbnails reload in the background
       setViewerFile({ ...viewerFile, path: originalViewerPath });
       setIsViewerDirty(false);
+      markSaved();
     } catch (e) {
+      setSaveStatus("error");
       setSaveError(friendlySaveError(e));
     }
   }
@@ -717,37 +863,55 @@ export default function Viewer() {
     setSaveError(null);
     const chosenPath = await showSaveDialog(viewerFile.path);
     if (!chosenPath) return;
+    setSaveStatus("saving");
 
     const allStrokes = useNotesStore.getState().strokes[viewerFile.path] ?? [];
+    const docVirtualPages = useNotesStore.getState().virtualPages[viewerFile.path] ?? [];
+
     const byPage = new Map<number, typeof allStrokes>();
+    const byVirtualId = new Map<string, typeof allStrokes>();
     for (const s of allStrokes) {
-      if (!s.pageSlotId.startsWith('pdf-')) continue;
-      const page = parseInt(s.pageSlotId.slice(4), 10);
-      if (isNaN(page)) continue;
-      if (!byPage.has(page)) byPage.set(page, []);
-      byPage.get(page)!.push(s);
+      if (s.pageSlotId.startsWith('pdf-')) {
+        const page = parseInt(s.pageSlotId.slice(4), 10);
+        if (isNaN(page)) continue;
+        if (!byPage.has(page)) byPage.set(page, []);
+        byPage.get(page)!.push(s);
+      } else {
+        if (!byVirtualId.has(s.pageSlotId)) byVirtualId.set(s.pageSlotId, []);
+        byVirtualId.get(s.pageSlotId)!.push(s);
+      }
     }
+
+    const toStroke = (s: typeof allStrokes[0]) => ({
+      tool: s.tool,
+      color: s.color,
+      thickness: s.baseThickness,
+      points: s.points.map(([x, y]) => [x, y] as [number, number]),
+    });
 
     try {
       let savePath = viewerFile.path;
-      if (byPage.size > 0) {
+      if (byPage.size > 0 || docVirtualPages.length > 0) {
         const annotations = Array.from(byPage.entries()).map(([page, strokes]) => ({
           page,
-          strokes: strokes.map(s => ({
-            tool: s.tool,
-            color: s.color,
-            thickness: s.baseThickness,
-            points: s.points.map(([x, y]) => [x, y] as [number, number]),
-          })),
+          strokes: strokes.map(toStroke),
         }));
-        savePath = await bakeAnnotations(viewerFile.path, annotations);
+        const virtualPageData = docVirtualPages.map(vp => ({
+          id: vp.id,
+          template: vp.template,
+          afterRealPage: vp.afterRealPage,
+          strokes: (byVirtualId.get(vp.id) ?? []).filter(s => s.tool !== 'eraser').map(toStroke),
+        }));
+        savePath = await bakeAnnotations(viewerFile.path, annotations, virtualPageData);
       }
       await copyFile(savePath, chosenPath);
       evictPathFromThumbnailCache(chosenPath);
       setViewerFile({ ...viewerFile, path: chosenPath });
       setOriginalViewerPath(chosenPath);
       setIsViewerDirty(false);
+      markSaved();
     } catch (e) {
+      setSaveStatus("error");
       setSaveError(friendlySaveError(e));
     }
   }
@@ -760,12 +924,14 @@ export default function Viewer() {
       {/* Header — dense pro-tool toolbar */}
       <header
         style={{
-          height: 44, flexShrink: 0,
+          height: "calc(44px + env(safe-area-inset-top, 0px))",
+          flexShrink: 0,
           background: "var(--viewer-surface)",
           borderBottom: "1px solid var(--viewer-border)",
-          paddingTop: "env(safe-area-inset-top, 0px)",
           display: "flex", alignItems: "center",
-          gap: 8, padding: "0 12px",
+          gap: 8,
+          padding: "0 12px",
+          paddingTop: "env(safe-area-inset-top, 0px)",
         }}
       >
         {/* ← Library */}
@@ -813,8 +979,8 @@ export default function Viewer() {
           </div>
         </div>
 
-        {/* Annotation tool pills */}
-        <div style={{ display: "flex", gap: 1, padding: 2, border: "1px solid var(--viewer-border)", borderRadius: 4, flexShrink: 0 }}>
+        {/* Annotation tool pills — hidden on small screens, accessible via the sidebar */}
+        <div className="hidden sm:flex" style={{ gap: 1, padding: 2, border: "1px solid var(--viewer-border)", borderRadius: 4, flexShrink: 0 }}>
           {(["Highlight", "Comment", "Sign"] as const).map((t) => (
             <button
               key={t}
@@ -865,103 +1031,137 @@ export default function Viewer() {
           </>
         )}
 
-        {/* Save */}
-        {isViewerDirty && (
-          <>
-            <div style={{ width: 1, height: 18, background: "var(--viewer-border-sub)", flexShrink: 0 }} />
-            <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-              <button onClick={handleSave} className="v-btn-primary-sm"
-                title="Save (Ctrl+S)"
-                style={{ height: 26, padding: "0 10px", borderRadius: 4, fontSize: 11.5, fontWeight: 600 }}>
-                Save
-              </button>
-              <button onClick={handleSaveAs} className="v-btn-secondary-sm hidden sm:inline-flex"
-                title="Save As (Ctrl+Shift+S)"
-                style={{ height: 26, padding: "0 10px", borderRadius: 4, fontSize: 11.5 }}>
-                Save As
-              </button>
-            </div>
-          </>
-        )}
+        {/* Save cluster — always visible */}
+        <>
+          <div style={{ width: 1, height: 18, background: "var(--viewer-border-sub)", flexShrink: 0 }} />
+          <div style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
+            {saveStatus === "saving" && (
+              <span style={{ fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 10, color: "var(--viewer-text-muted)" }}>
+                saving…
+              </span>
+            )}
+            {saveStatus === "saved" && (
+              <span style={{ fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 10, color: "oklch(65% 0.16 145)" }}>
+                ✓ saved
+              </span>
+            )}
+            <button
+              onClick={() => setAutoSave((a) => !a)}
+              className="hidden sm:inline-flex items-center"
+              title={autoSave ? "Auto-save on — click to disable" : "Auto-save off — click to enable"}
+              style={{
+                height: 20, padding: "0 7px", borderRadius: 10,
+                border: `1px solid ${autoSave ? "var(--accent)" : "var(--viewer-border)"}`,
+                background: autoSave ? "var(--accent-soft)" : "transparent",
+                color: autoSave ? "var(--accent)" : "var(--viewer-text-muted)",
+                fontSize: 10, fontWeight: 600, cursor: "pointer",
+                fontFamily: "'Inter', system-ui, sans-serif",
+                letterSpacing: "0.3px",
+                transition: "background 120ms, color 120ms, border-color 120ms",
+              }}
+            >
+              Auto
+            </button>
+            <button
+              onClick={activeTool === "draw" ? handleSaveAnnotations : handleSave}
+              disabled={saveStatus === "saving"}
+              className={isViewerDirty ? "v-btn-primary-sm" : "v-btn-secondary-sm"}
+              title="Save (Ctrl+S)"
+              style={{ height: 26, padding: "0 10px", borderRadius: 4, fontSize: 11.5, fontWeight: isViewerDirty ? 600 : 400, display: "inline-flex", alignItems: "center" }}
+            >
+              Save
+            </button>
+            <button
+              onClick={activeTool === "draw" ? handleSaveAsAnnotations : handleSaveAs}
+              className="v-btn-secondary-sm hidden sm:inline-flex items-center"
+              title="Save As (Ctrl+Shift+S)"
+              style={{ height: 26, padding: "0 10px", borderRadius: 4, fontSize: 11.5 }}
+            >
+              Save As
+            </button>
+          </div>
+        </>
 
-        <div style={{ width: 1, height: 18, background: "var(--viewer-border-sub)", flexShrink: 0 }} />
-
-        {/* Zoom */}
-        <div style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
-          <VHeaderBtn onClick={() => adjustZoom(-0.25)} disabled={zoom <= 0.25} title="Zoom out (Ctrl+-)">
-            <svg width={12} height={12} fill="none" stroke="currentColor" strokeWidth={1.5}
-              strokeLinecap="round" viewBox="0 0 16 16"><path d="M3 8h10" /></svg>
-          </VHeaderBtn>
-          <button
-            onClick={() => setZoom(1.0)}
-            title="Reset zoom (Ctrl+0)"
-            style={{
-              background: "transparent", border: "none", cursor: "pointer",
-              fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 11,
-              color: "var(--viewer-text-muted)", minWidth: "3rem", textAlign: "center", padding: "0 2px",
-            }}
-          >
-            {Math.round(zoom * 100)}%
-          </button>
-          <VHeaderBtn onClick={() => adjustZoom(0.25)} disabled={zoom >= 3.0} title="Zoom in (Ctrl+=)">
-            <svg width={12} height={12} fill="none" stroke="currentColor" strokeWidth={1.5}
-              strokeLinecap="round" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10" /></svg>
-          </VHeaderBtn>
+        {/* Zoom — hidden on small screens (pinch-to-zoom replaces it) */}
+        <div className="hidden sm:contents">
+          <div style={{ width: 1, height: 18, background: "var(--viewer-border-sub)", flexShrink: 0 }} />
+          <div style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
+            <VHeaderBtn onClick={() => adjustZoom(-0.25)} disabled={zoom <= 0.25} title="Zoom out (Ctrl+-)">
+              <svg width={12} height={12} fill="none" stroke="currentColor" strokeWidth={1.5}
+                strokeLinecap="round" viewBox="0 0 16 16"><path d="M3 8h10" /></svg>
+            </VHeaderBtn>
+            <button
+              onClick={() => setZoom(1.0)}
+              title="Reset zoom (Ctrl+0)"
+              style={{
+                background: "transparent", border: "none", cursor: "pointer",
+                fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 11,
+                color: "var(--viewer-text-muted)", minWidth: "3rem", textAlign: "center", padding: "0 2px",
+              }}
+            >
+              {Math.round(zoom * 100)}%
+            </button>
+            <VHeaderBtn onClick={() => adjustZoom(0.25)} disabled={zoom >= 3.0} title="Zoom in (Ctrl+=)">
+              <svg width={12} height={12} fill="none" stroke="currentColor" strokeWidth={1.5}
+                strokeLinecap="round" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10" /></svg>
+            </VHeaderBtn>
+          </div>
         </div>
 
-        <div style={{ width: 1, height: 18, background: "var(--viewer-border-sub)", flexShrink: 0 }} />
-
-        {/* Page nav */}
+        {/* Page nav — hidden on small screens (scroll-to-navigate replaces it) */}
         {pageCount > 0 && (
-          <div style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
-            <VHeaderBtn onClick={() => currentPage > 1 && scrollToPage(currentPage - 1)} title="Previous page">
-              <svg width={12} height={12} fill="none" stroke="currentColor" strokeWidth={1.5}
-                strokeLinecap="round" viewBox="0 0 16 16"><path d="M10 4L6 8l4 4" /></svg>
-            </VHeaderBtn>
-            {editingPage ? (
-              <input
-                type="number" min={1} max={pageCount} value={pageInputValue} autoFocus
-                style={{
-                  width: "5rem", textAlign: "center",
-                  background: "var(--viewer-elevated)", border: "1px solid var(--viewer-border)",
-                  borderRadius: 4, color: "var(--viewer-text)", caretColor: "var(--viewer-text)",
-                  fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 11, padding: "2px 4px",
-                  outline: "none",
-                }}
-                onChange={(e) => setPageInputValue(e.target.value)}
-                onKeyDown={(e) => {
-                  e.stopPropagation();
-                  if (e.key === "Enter") {
+          <div className="hidden sm:contents">
+            <div style={{ width: 1, height: 18, background: "var(--viewer-border-sub)", flexShrink: 0 }} />
+            <div style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
+              <VHeaderBtn onClick={() => currentPage > 1 && scrollToPage(currentPage - 1)} title="Previous page">
+                <svg width={12} height={12} fill="none" stroke="currentColor" strokeWidth={1.5}
+                  strokeLinecap="round" viewBox="0 0 16 16"><path d="M10 4L6 8l4 4" /></svg>
+              </VHeaderBtn>
+              {editingPage ? (
+                <input
+                  type="number" min={1} max={pageCount} value={pageInputValue} autoFocus
+                  style={{
+                    width: "5rem", textAlign: "center",
+                    background: "var(--viewer-elevated)", border: "1px solid var(--viewer-border)",
+                    borderRadius: 4, color: "var(--viewer-text)", caretColor: "var(--viewer-text)",
+                    fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 11, padding: "2px 4px",
+                    outline: "none",
+                  }}
+                  onChange={(e) => setPageInputValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    e.stopPropagation();
+                    if (e.key === "Enter") {
+                      const p = parseInt(pageInputValue, 10);
+                      if (p >= 1 && p <= pageCount) scrollToPage(p);
+                      setEditingPage(false);
+                    } else if (e.key === "Escape") {
+                      setEditingPage(false);
+                    }
+                  }}
+                  onBlur={() => {
                     const p = parseInt(pageInputValue, 10);
                     if (p >= 1 && p <= pageCount) scrollToPage(p);
                     setEditingPage(false);
-                  } else if (e.key === "Escape") {
-                    setEditingPage(false);
-                  }
-                }}
-                onBlur={() => {
-                  const p = parseInt(pageInputValue, 10);
-                  if (p >= 1 && p <= pageCount) scrollToPage(p);
-                  setEditingPage(false);
-                }}
-              />
-            ) : (
-              <button
-                onClick={() => { setPageInputValue(String(currentPage)); setEditingPage(true); }}
-                title="Go to page"
-                style={{
-                  background: "transparent", border: "none", cursor: "pointer",
-                  fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 11,
-                  color: "var(--viewer-text-muted)", minWidth: "5rem", textAlign: "center", padding: "0 2px",
-                }}
-              >
-                {String(currentPage).padStart(3, "0")}<span style={{ color: "var(--viewer-border)" }}> / </span>{pageCount}
-              </button>
-            )}
-            <VHeaderBtn onClick={() => currentPage < pageCount && scrollToPage(currentPage + 1)} title="Next page">
-              <svg width={12} height={12} fill="none" stroke="currentColor" strokeWidth={1.5}
-                strokeLinecap="round" viewBox="0 0 16 16"><path d="M6 4l4 4-4 4" /></svg>
-            </VHeaderBtn>
+                  }}
+                />
+              ) : (
+                <button
+                  onClick={() => { setPageInputValue(String(currentPage)); setEditingPage(true); }}
+                  title="Go to page"
+                  style={{
+                    background: "transparent", border: "none", cursor: "pointer",
+                    fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 11,
+                    color: "var(--viewer-text-muted)", minWidth: "5rem", textAlign: "center", padding: "0 2px",
+                  }}
+                >
+                  {String(currentPage).padStart(3, "0")}<span style={{ color: "var(--viewer-border)" }}> / </span>{pageCount}
+                </button>
+              )}
+              <VHeaderBtn onClick={() => currentPage < pageCount && scrollToPage(currentPage + 1)} title="Next page">
+                <svg width={12} height={12} fill="none" stroke="currentColor" strokeWidth={1.5}
+                  strokeLinecap="round" viewBox="0 0 16 16"><path d="M6 4l4 4-4 4" /></svg>
+              </VHeaderBtn>
+            </div>
           </div>
         )}
 
@@ -1091,6 +1291,33 @@ export default function Viewer() {
         />
       )}
 
+      {/* Annotation toolbar — shown when annotation mode is active */}
+      {activeTool === "annotate" && (
+        <AnnotationToolbar
+          activeTool={activeAnnotTool}
+          onToolChange={setActiveAnnotTool}
+          onExit={() => handleToolChange(null)}
+          activeColor={annotColor}
+          onColorChange={setAnnotColor}
+          currentPage={currentPage}
+          pageCount={pageCount}
+        />
+      )}
+
+      {/* Signature creation modal */}
+      {showSignaturePanel && (
+        <SignaturePanel
+          onSignatureCreated={(dataUrl) => {
+            setPendingSignature(dataUrl);
+            setShowSignaturePanel(false);
+          }}
+          onClose={() => {
+            setShowSignaturePanel(false);
+            if (activeTool === "signature") handleToolChange(null);
+          }}
+        />
+      )}
+
       {/* Selection Popup Tooltip */}
       {selectionPopup && !selectionEditor && (
         <div
@@ -1161,7 +1388,16 @@ export default function Viewer() {
 
       {/* Three-panel body */}
       <div className="flex flex-1 overflow-hidden relative">
-        {/* Left: page strip — always visible on desktop, slide-in drawer on mobile */}
+        {/* Backdrop — dims content when a panel is open on mobile */}
+        {(showStrip || (showTools && activeTool !== "draw")) && (
+          <div
+            className="absolute inset-0 z-10 sm:hidden"
+            style={{ background: "rgba(0,0,0,0.45)" }}
+            onClick={() => { setShowStrip(false); setShowTools(false); }}
+          />
+        )}
+
+        {/* Left: page strip — side-in drawer (mobile) or fixed column (desktop) */}
         <div
           className={`h-full shrink-0 flex-col ${
             showStrip
@@ -1190,7 +1426,7 @@ export default function Viewer() {
         <div
           ref={scrollContainerRef}
           className="flex-1 overflow-auto"
-          style={{ background: "var(--viewer-canvas)" }}
+          style={{ background: "var(--viewer-canvas)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
           onScroll={handleScroll}
         >
           {/* "Add page" template picker — fixed overlay, unaffected by virtual scroll */}
@@ -1304,8 +1540,6 @@ export default function Viewer() {
                         top: topPos + SLOT_MARGIN / 2,
                         left: 0,
                         right: 0,
-                        display: "flex",
-                        justifyContent: "center",
                         paddingLeft: SIDE_PAD,
                         paddingRight: SIDE_PAD,
                       }}
@@ -1314,7 +1548,8 @@ export default function Viewer() {
                         className="relative"
                         data-page-index={page}
                         style={{
-                          width: `min(${pageW}px, 100%)`,
+                          width: `${pageW}px`,
+                          margin: "0 auto",
                           cursor: activeTool === "remove" ? "pointer" : undefined,
                         }}
                         onClick={activeTool === "remove" ? () => handlePageToggle(page) : undefined}
@@ -1366,6 +1601,13 @@ export default function Viewer() {
                           isDrawingMode={activeTool === "draw"}
                           enabled={shouldRenderTextLayer}
                         />
+                        <LinkLayer
+                          pdfPath={viewerFile.path}
+                          pageNum={page}
+                          isDrawingMode={activeTool === "draw"}
+                          enabled={shouldRenderTextLayer}
+                          onPageJump={scrollToPage}
+                        />
                         <DrawingCanvas
                           pageSlotId={slot.slotId}
                           docPath={viewerFile.path}
@@ -1376,6 +1618,36 @@ export default function Viewer() {
                           pageIndex={page}
                           docPath={viewerFile.path}
                           isCommentMode={isCommentMode}
+                        />
+                        <FormLayer
+                          pdfPath={viewerFile.path}
+                          pageNum={page}
+                          zoom={zoom}
+                          isEnabled={activeTool === "forms"}
+                          onFieldChanged={setFieldValue}
+                          filledFields={fieldValues}
+                        />
+                        <AnnotationLayer
+                          pdfPath={viewerFile.path}
+                          pageNum={page}
+                          zoom={zoom}
+                          isEnabled={activeTool === "annotate"}
+                          activeAnnotTool={activeAnnotTool}
+                          onAnnotationAdded={() => setAnnotRefreshKey(k => k + 1)}
+                          key={`annot-${page}-${annotRefreshKey}`}
+                        />
+                        <SignatureLayer
+                          pdfPath={viewerFile.path}
+                          pageNum={page}
+                          zoom={zoom}
+                          isEnabled={activeTool === "signature"}
+                          pendingSignature={pendingSignature}
+                          onSignaturePlaced={(sig) => {
+                            setSignatures(prev => [...prev, sig]);
+                            setPendingSignature(null);
+                          }}
+                          onSignatureRemoved={(id) => setSignatures(prev => prev.filter(s => s.id !== id))}
+                          signatures={signatures.filter(s => s.pageNum === page)}
                         />
                       </div>
                     </div>
@@ -1400,15 +1672,13 @@ export default function Viewer() {
                       top: topPos + SLOT_MARGIN / 2,
                       left: 0,
                       right: 0,
-                      display: "flex",
-                      justifyContent: "center",
                       paddingLeft: SIDE_PAD,
                       paddingRight: SIDE_PAD,
                     }}
                   >
                     <div
                       className="relative rounded shadow-2xl overflow-hidden"
-                      style={{ width: `min(${pageW}px, 100%)`, aspectRatio: `${pageW}/${pageH}` }}
+                      style={{ width: `${pageW}px`, aspectRatio: `${pageW}/${pageH}`, margin: "0 auto" }}
                     >
                       <VirtualPageBackground template={vp.template} width={pageW} height={pageH} />
                       <DrawingCanvas
@@ -1431,12 +1701,12 @@ export default function Viewer() {
           </div>
         </div>
 
-        {/* Right: tool sidebar — hidden in draw mode (toolbar handles everything) */}
+        {/* Right: tool sidebar — full-screen overlay on mobile, fixed 280px column on desktop */}
         <div
           className={`h-full flex-col ${
             activeTool === "draw" || !showTools
               ? "hidden"
-              : "flex absolute inset-y-0 right-0 z-20 sm:relative sm:z-auto"
+              : "flex absolute inset-y-0 inset-x-0 z-20 sm:inset-x-auto sm:right-0 sm:relative sm:z-auto sm:w-70"
           }`}
         >
           <ToolSidebar
@@ -1461,21 +1731,7 @@ function VHeaderBtn({ onClick, disabled, title, children }: {
   onClick: () => void; disabled?: boolean; title?: string; children: React.ReactNode;
 }) {
   return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      style={{
-        width: 22, height: 22, borderRadius: 3,
-        border: "1px solid var(--viewer-border)",
-        background: "var(--viewer-elevated)",
-        display: "inline-flex", alignItems: "center", justifyContent: "center",
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.4 : 1,
-        color: "var(--viewer-text-muted)",
-        flexShrink: 0,
-      }}
-    >
+    <button onClick={onClick} disabled={disabled} title={title} className="v-header-btn">
       {children}
     </button>
   );
@@ -1486,7 +1742,7 @@ function AddPageBar({ onAdd }: { onAdd: () => void }) {
     <div className="group flex items-center justify-center w-full" style={{ height: "28px", position: "relative" }}>
       <button
         onClick={onAdd}
-        className="flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity"
+        className="add-page-btn flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity"
         style={{
           background: "var(--brand)",
           color: "#fff",

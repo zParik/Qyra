@@ -1,3 +1,4 @@
+pub mod android_pdf;
 pub mod merge;
 pub mod split;
 pub mod compress;
@@ -20,3 +21,11 @@ pub mod disk;
 pub mod library;
 pub mod thumb_store;
 pub mod ocr;
+pub mod watermark;
+pub mod outline;
+pub mod forms;
+pub mod pdf_annotations;
+pub mod redact;
+pub mod crop;
+pub mod flatten;
+pub mod export_text;

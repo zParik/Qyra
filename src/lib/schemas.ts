@@ -54,6 +54,13 @@ export const PageAnnotationSchema = z.object({
   strokes: z.array(StrokeAnnotationSchema),
 });
 
+export const VirtualPageAnnotationSchema = z.object({
+  id: z.string(),
+  template: z.enum(['blank', 'ruled', 'grid', 'dotted']),
+  afterRealPage: z.number().int().nonnegative(),
+  strokes: z.array(StrokeAnnotationSchema),
+});
+
 export const PageNumberOptionsSchema = z.object({
   start_at: z.number().int().optional(),
   position: z.enum([
@@ -90,6 +97,7 @@ export type DiskSpace = z.infer<typeof DiskSpaceSchema>;
 export type PageRange = z.infer<typeof PageRangeSchema>;
 export type StrokeAnnotation = z.infer<typeof StrokeAnnotationSchema>;
 export type PageAnnotation = z.infer<typeof PageAnnotationSchema>;
+export type VirtualPageAnnotation = z.infer<typeof VirtualPageAnnotationSchema>;
 export type PageNumberOptions = z.infer<typeof PageNumberOptionsSchema>;
 export type Comment = z.infer<typeof CommentSchema>;
 export type RecentFile = z.infer<typeof RecentFileSchema>;

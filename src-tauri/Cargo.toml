@@ -14,7 +14,6 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
-tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-opener = "2"
@@ -32,6 +31,12 @@ base64 = "0.22"
 thiserror = "1"
 sysinfo = { version = "0.33", default-features = false, features = ["disk"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
+
+# Updater and MuPDF only make sense on desktop (no app-store update flow on Android,
+# and mupdf-sys fails to cross-compile for Android from Windows).
+[target.'cfg(not(target_os = "android"))'.dependencies]
+tauri-plugin-updater = "2"
+mupdf = "0.6"
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = { version = "0.21", default-features = false }

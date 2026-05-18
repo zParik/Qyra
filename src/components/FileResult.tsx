@@ -2,8 +2,7 @@ import { useNavigate } from "react-router-dom";
 import { openFile as openFilePath, showInFolder, shareFile } from "../lib/tauri";
 import { isAndroid } from "../lib/androidFileUtils";
 
-const MONO = "'JetBrains Mono', ui-monospace, monospace";
-const UI   = "'Inter', system-ui, sans-serif";
+import { UI, MONO } from "../lib/tokens";
 
 interface FileResultProps {
   result?: string | null;

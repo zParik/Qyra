@@ -4,7 +4,7 @@ import { ProgressBar, Spinner } from "./ProgressBar";
 import { FileResult } from "./FileResult";
 import { ErrorBanner } from "./ErrorBanner";
 
-const MONO = "'JetBrains Mono', ui-monospace, monospace";
+import { MONO } from "../lib/tokens";
 
 interface ToolLayoutProps {
   title: string;
@@ -14,7 +14,7 @@ interface ToolLayoutProps {
 
 export function ToolLayout({ title, description, children }: ToolLayoutProps) {
   const navigate = useNavigate();
-  const { isProcessing, progress, result, resultFiles, error, setError } = useAppStore();
+  const { isProcessing, progress, result, resultFiles, error, setError, cancelFn } = useAppStore();
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg0)", color: "var(--fg0)" }}>
@@ -68,11 +68,26 @@ export function ToolLayout({ title, description, children }: ToolLayoutProps) {
           <div style={{
             padding: 16, background: "var(--bg1)",
             border: "1px solid var(--line)", borderRadius: 6,
+            display: "flex", flexDirection: "column", gap: 10,
           }}>
             {progress ? (
               <ProgressBar current={progress.current} total={progress.total} message={progress.message} />
             ) : (
               <Spinner />
+            )}
+            {cancelFn && (
+              <button
+                onClick={cancelFn}
+                style={{
+                  alignSelf: "flex-end",
+                  fontFamily: MONO, fontSize: 10.5,
+                  color: "var(--fg2)", background: "transparent",
+                  border: "1px solid var(--line)", borderRadius: 4,
+                  padding: "3px 10px", cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
             )}
           </div>
         )}

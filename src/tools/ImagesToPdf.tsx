@@ -6,8 +6,7 @@ import { imagesToPdf } from "../lib/tauri";
 import { open } from "@tauri-apps/plugin-dialog";
 import { isAndroid, pickFilesAndroid } from "../lib/androidFileUtils";
 
-const MONO = "'JetBrains Mono', ui-monospace, monospace";
-const UI   = "'Inter', system-ui, sans-serif";
+import { UI, MONO } from "../lib/tokens";
 
 const SWATCHES = ["#c87a52","#5e7a8a","#7a5e8a","#5e8a7a","#8a7a5e","#5e7a5e"];
 function imgSwatch(name: string): string {
