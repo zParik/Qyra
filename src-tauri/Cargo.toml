@@ -24,13 +24,15 @@ lopdf = "0.40"
 flate2 = "1"
 printpdf = "0.7"
 image = { version = "0.25", features = ["png", "jpeg", "webp"] }
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["sync", "rt", "macros"] }
 rayon = "1"
 tempfile = "3"
 base64 = "0.22"
 thiserror = "1"
 sysinfo = { version = "0.33", default-features = false, features = ["disk"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
+docx-rs = "0.4"
+quick-xml = "0.36"
 
 # Updater and MuPDF only make sense on desktop (no app-store update flow on Android,
 # and mupdf-sys fails to cross-compile for Android from Windows).

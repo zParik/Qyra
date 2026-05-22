@@ -170,6 +170,7 @@ impl PdfReader {
             ids
         };
 
+        #[cfg(debug_assertions)]
         eprintln!("[compress] unpacking {} ObjStm streams…", stm_ids.len());
 
         for stm_id in stm_ids {
