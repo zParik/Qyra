@@ -6,11 +6,11 @@ export function getSvgPathFromStroke(stroke: number[][]) {
   if (!stroke.length) return "";
   const d = stroke.reduce(
     (acc, [x0, y0], i, arr) => {
-      const [x1, y1] = arr[(i + 1) % arr.length];
-      acc.push(x0, y0, (x0 + x1) / 2, (y0 + y1) / 2);
+      const [x1, y1] = arr[(i + 1) % arr.length]!;
+      acc.push(x0!, y0!, (x0! + x1!) / 2, (y0! + y1!) / 2);
       return acc;
     },
-    ["M", ...stroke[0], "Q"]
+    ["M", ...stroke[0]!, "Q"]
   );
   d.push("Z");
   return d.join(" ");
@@ -19,18 +19,18 @@ export function getSvgPathFromStroke(stroke: number[][]) {
 /** Catmull-Rom spline through pixel-space points → SVG cubic bezier path */
 function catmullRomPath(pts: [number, number][]): string {
   if (pts.length === 0) return "";
-  if (pts.length === 1) return `M ${pts[0][0]} ${pts[0][1]}`;
+  if (pts.length === 1) return `M ${pts[0]![0]} ${pts[0]![1]}`;
   if (pts.length === 2)
-    return `M ${pts[0][0]} ${pts[0][1]} L ${pts[1][0]} ${pts[1][1]}`;
+    return `M ${pts[0]![0]} ${pts[0]![1]} L ${pts[1]![0]} ${pts[1]![1]}`;
   // Duplicate first and last for tension
-  const p = [pts[0], ...pts, pts[pts.length - 1]];
-  let d = `M ${p[1][0]} ${p[1][1]}`;
+  const p = [pts[0]!, ...pts, pts[pts.length - 1]!];
+  let d = `M ${p[1]![0]} ${p[1]![1]}`;
   for (let i = 1; i < p.length - 2; i++) {
-    const cp1x = p[i][0] + (p[i + 1][0] - p[i - 1][0]) / 6;
-    const cp1y = p[i][1] + (p[i + 1][1] - p[i - 1][1]) / 6;
-    const cp2x = p[i + 1][0] - (p[i + 2][0] - p[i][0]) / 6;
-    const cp2y = p[i + 1][1] - (p[i + 2][1] - p[i][1]) / 6;
-    d += ` C ${cp1x},${cp1y} ${cp2x},${cp2y} ${p[i + 1][0]},${p[i + 1][1]}`;
+    const cp1x = p[i]![0] + (p[i + 1]![0] - p[i - 1]![0]) / 6;
+    const cp1y = p[i]![1] + (p[i + 1]![1] - p[i - 1]![1]) / 6;
+    const cp2x = p[i + 1]![0] - (p[i + 2]![0] - p[i]![0]) / 6;
+    const cp2y = p[i + 1]![1] - (p[i + 2]![1] - p[i]![1]) / 6;
+    d += ` C ${cp1x},${cp1y} ${cp2x},${cp2y} ${p[i + 1]![0]},${p[i + 1]![1]}`;
   }
   return d;
 }
@@ -98,8 +98,8 @@ export function DrawingCanvas({
     if (!containerRef.current) return;
     const ob = new ResizeObserver((entries) => {
       setSize({
-        w: entries[0].contentRect.width,
-        h: entries[0].contentRect.height,
+        w: entries[0]!.contentRect.width,
+        h: entries[0]!.contentRect.height,
       });
     });
     ob.observe(containerRef.current);
@@ -254,7 +254,7 @@ export function DrawingCanvas({
     const rawPressure = e.pointerType === 'pen' ? e.pressure : 0.5;
 
     if (drawTool === 'calligraphy') {
-      const prev = currentStroke[currentStroke.length - 1];
+      const prev = currentStroke[currentStroke.length - 1]!;
       const nibRad = (drawNibAngle * Math.PI) / 180;
       const p = calPressure(
         [prev[0] * size.w, prev[1] * size.h],

@@ -64,7 +64,7 @@ export function PanelOutput({
   if (!result) return null;
 
   const paths = typeof result === "string" ? [result] : result;
-  const mainPath = paths[0];
+  const mainPath = paths[0]!;
 
   return (
     <div className="mt-3 v-panel-ok space-y-2">
