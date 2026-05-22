@@ -1,3 +1,4 @@
+use crate::error::{AppError, AppResult};
 use std::fs;
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -16,14 +17,14 @@ pub struct ThumbStore {
 }
 
 impl ThumbStore {
-    pub fn new(app: &AppHandle) -> Self {
+    pub fn new(app: &AppHandle) -> AppResult<Self> {
         let root = app
             .path()
             .app_cache_dir()
-            .expect("no app cache dir")
+            .map_err(|e| AppError::Other(format!("no app cache dir: {e}")))?
             .join("thumbs");
         fs::create_dir_all(&root).ok();
-        Self { root }
+        Ok(Self { root })
     }
 
     fn filename(&self, path: &str, page: u32, scale_int: u32, mtime: u64) -> PathBuf {
@@ -66,9 +67,9 @@ pub async fn thumb_get(
     path: String,
     page: u32,
     scale: f64,
-) -> Result<Option<String>, String> {
+) -> AppResult<Option<String>> {
     let store = store.inner().clone();
-    tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || -> AppResult<Option<String>> {
         let mtime = match mtime_secs(&path) {
             Some(m) => m,
             None => return Ok(None),
@@ -76,14 +77,14 @@ pub async fn thumb_get(
         let si = scale_int(scale);
         let file = store.filename(&path, page, si, mtime);
         if file.exists() {
-            return Ok(Some(fs::read_to_string(&file).map_err(|e| e.to_string())?));
+            return Ok(Some(fs::read_to_string(&file)?));
         }
         // Clean up stale entries for this (path, page, scale)
         store.delete_matching(&store.stale_prefix(&path, page, si));
         Ok(None)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| AppError::Other(e.to_string()))?
 }
 
 #[tauri::command]
@@ -93,29 +94,29 @@ pub async fn thumb_put(
     page: u32,
     scale: f64,
     data: String,
-) -> Result<(), String> {
+) -> AppResult<()> {
     let store = store.inner().clone();
-    tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || -> AppResult<()> {
         let mtime = match mtime_secs(&path) {
             Some(m) => m,
             None => return Ok(()),
         };
         let si = scale_int(scale);
         store.delete_matching(&store.stale_prefix(&path, page, si));
-        fs::write(store.filename(&path, page, si, mtime), data.as_bytes())
-            .map_err(|e| e.to_string())
+        fs::write(store.filename(&path, page, si, mtime), data.as_bytes())?;
+        Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| AppError::Other(e.to_string()))?
 }
 
 #[tauri::command]
-pub async fn thumb_evict(store: State<'_, ThumbStore>, path: String) -> Result<(), String> {
+pub async fn thumb_evict(store: State<'_, ThumbStore>, path: String) -> AppResult<()> {
     let store = store.inner().clone();
-    tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || -> AppResult<()> {
         store.delete_matching(&format!("{:016x}_", crate::utils::fnv1a(&path)));
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| AppError::Other(e.to_string()))?
 }

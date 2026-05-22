@@ -6,6 +6,7 @@ use tauri::Emitter;
 use crate::pdf::{PdfError, Rewriter};
 use crate::utils::paths::temp_output_path;
 use crate::utils::progress::Progress;
+use crate::error::{AppError, AppResult};
 
 #[derive(Serialize)]
 pub struct CompressResult {
@@ -24,9 +25,9 @@ pub async fn compress_pdf(
     output: Option<String>,
     level: Option<u8>,
     app_handle: tauri::AppHandle,
-) -> Result<CompressResult, String> {
-    tokio::task::spawn_blocking(move || {
-        let input_bytes = fs::read(&path).map_err(|e| e.to_string())?;
+) -> AppResult<CompressResult> {
+    tokio::task::spawn_blocking(move || -> AppResult<CompressResult> {
+        let input_bytes = fs::read(&path)?;
         let original_bytes = input_bytes.len() as u64;
 
         let rewriter = Rewriter::new(level.unwrap_or(0));
@@ -40,20 +41,20 @@ pub async fn compress_pdf(
             })
             .map_err(|e| match e {
                 PdfError::EncryptedDocument => {
-                    "Cannot compress encrypted PDF. Please unlock it first.".to_string()
+                    AppError::Invalid("Cannot compress encrypted PDF. Please unlock it first.".to_string())
                 }
-                other => other.to_string(),
+                other => AppError::Pdf(other.to_string()),
             })?;
 
         let out = output.unwrap_or_else(|| temp_output_path(&path, "compressed"));
 
         let compressed_bytes = if output_bytes.len() as u64 >= original_bytes {
             // Output is larger — copy the original unchanged
-            fs::copy(&path, &out).map_err(|e| e.to_string())?;
+            fs::copy(&path, &out)?;
             original_bytes
         } else {
             let len = output_bytes.len() as u64;
-            fs::write(&out, &output_bytes).map_err(|e| e.to_string())?;
+            fs::write(&out, &output_bytes)?;
             len
         };
 
@@ -64,5 +65,5 @@ pub async fn compress_pdf(
         })
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| AppError::Other(e.to_string()))?
 }

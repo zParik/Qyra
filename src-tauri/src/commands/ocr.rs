@@ -4,6 +4,7 @@ use tauri::Emitter;
 
 use crate::utils::paths::temp_output_path;
 use crate::utils::progress::Progress;
+use crate::error::{AppError, AppResult};
 
 #[derive(Deserialize)]
 pub struct OcrWord {
@@ -31,11 +32,11 @@ pub async fn make_searchable(
     pages: Vec<OcrPage>,
     output: Option<String>,
     app_handle: tauri::AppHandle,
-) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || {
+) -> AppResult<String> {
+    tokio::task::spawn_blocking(move || -> AppResult<String> {
         let out = output.unwrap_or_else(|| temp_output_path(&path, "searchable"));
 
-        let mut doc = Document::load(&path).map_err(|e| e.to_string())?;
+        let mut doc = Document::load(&path)?;
 
         // Collect page IDs in document order (BTreeMap is sorted by 1-based page number)
         let page_ids: Vec<lopdf::ObjectId> = doc.get_pages().into_values().collect();
@@ -91,14 +92,14 @@ pub async fn make_searchable(
 
         for patch in patches {
             patch_page(&mut doc, patch.page_id, patch.font_id, patch.content_id)
-                .map_err(|e| format!("Failed to patch page: {e}"))?;
+                .map_err(|e| AppError::Pdf(format!("Failed to patch page: {e}")))?;
         }
 
-        doc.save(&out).map_err(|e| e.to_string())?;
+        doc.save(&out)?;
         Ok(out)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| AppError::Other(e.to_string()))?
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────

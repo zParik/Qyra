@@ -1,13 +1,14 @@
 use lopdf::{Document, Object, ObjectId};
 use crate::utils::paths::temp_output_path;
+use crate::error::{AppError, AppResult};
 
 #[tauri::command]
 pub async fn flatten_pdf(
     path: String,
     output: Option<String>,
-) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || {
-        let mut doc = Document::load(&path).map_err(|e| e.to_string())?;
+) -> AppResult<String> {
+    tokio::task::spawn_blocking(move || -> AppResult<String> {
+        let mut doc = Document::load(&path)?;
         let out = output.unwrap_or_else(|| temp_output_path(&path, "flattened"));
 
         // Step 1: Collect all widget annotation object IDs from all pages
@@ -104,9 +105,9 @@ pub async fn flatten_pdf(
             }
         }
 
-        doc.save(&out).map_err(|e| e.to_string())?;
+        doc.save(&out)?;
         Ok(out)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| AppError::Other(e.to_string()))?
 }
