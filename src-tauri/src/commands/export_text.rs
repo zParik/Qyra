@@ -1,19 +1,19 @@
+use crate::error::{AppError, AppResult};
+
 #[tauri::command]
 #[cfg(not(target_os = "android"))]
 pub async fn export_pdf_to_text(
     path: String,
     output: Option<String>,
-) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || {
-        let doc = mupdf::Document::open(&path).map_err(|e| e.to_string())?;
-        let page_count = doc.page_count().map_err(|e| e.to_string())?;
+) -> AppResult<String> {
+    tokio::task::spawn_blocking(move || -> AppResult<String> {
+        let doc = mupdf::Document::open(&path)?;
+        let page_count = doc.page_count()?;
         let mut full_text = String::new();
 
         for i in 0..page_count {
-            let page = doc.load_page(i).map_err(|e| e.to_string())?;
-            let stext = page
-                .to_text_page(mupdf::TextPageFlags::empty())
-                .map_err(|e| e.to_string())?;
+            let page = doc.load_page(i)?;
+            let stext = page.to_text_page(mupdf::TextPageFlags::empty())?;
 
             full_text.push_str(&format!("--- Page {} ---\n", i + 1));
 
@@ -38,11 +38,11 @@ pub async fn export_pdf_to_text(
             p.with_extension("txt").to_string_lossy().to_string()
         });
 
-        std::fs::write(&out_path, full_text.as_bytes()).map_err(|e| e.to_string())?;
+        std::fs::write(&out_path, full_text.as_bytes())?;
         Ok(out_path)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| AppError::Other(e.to_string()))?
 }
 
 #[tauri::command]
@@ -50,6 +50,6 @@ pub async fn export_pdf_to_text(
 pub async fn export_pdf_to_text(
     _path: String,
     _output: Option<String>,
-) -> Result<String, String> {
-    Err("Not supported on Android".to_string())
+) -> AppResult<String> {
+    Err(AppError::Other("Not supported on Android".to_string()))
 }

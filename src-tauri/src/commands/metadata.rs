@@ -1,6 +1,7 @@
 use lopdf::{Document, Object};
 use serde::{Deserialize, Serialize};
 use crate::utils::paths::temp_output_path;
+use crate::error::{AppError, AppResult};
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct PdfMetadata {
@@ -36,9 +37,9 @@ fn get_info_string(doc: &Document, key: &[u8]) -> Option<String> {
 }
 
 #[tauri::command]
-pub async fn get_pdf_info(path: String) -> Result<PdfInfo, String> {
-    tokio::task::spawn_blocking(move || {
-        let doc = Document::load(&path).map_err(|e| e.to_string())?;
+pub async fn get_pdf_info(path: String) -> AppResult<PdfInfo> {
+    tokio::task::spawn_blocking(move || -> AppResult<PdfInfo> {
+        let doc = Document::load(&path)?;
         let page_count = doc.get_pages().len();
         let file_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
 
@@ -56,12 +57,12 @@ pub async fn get_pdf_info(path: String) -> Result<PdfInfo, String> {
         Ok(PdfInfo { page_count, file_size, metadata })
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| AppError::Other(e.to_string()))?
 }
 
 #[tauri::command]
-pub fn get_metadata(path: String) -> Result<PdfMetadata, String> {
-    let doc = Document::load(&path).map_err(|e| e.to_string())?;
+pub fn get_metadata(path: String) -> AppResult<PdfMetadata> {
+    let doc = Document::load(&path)?;
     Ok(PdfMetadata {
         title: get_info_string(&doc, b"Title"),
         author: get_info_string(&doc, b"Author"),
@@ -79,8 +80,8 @@ pub fn set_metadata(
     path: String,
     metadata: PdfMetadata,
     output: Option<String>,
-) -> Result<String, String> {
-    let mut doc = Document::load(&path).map_err(|e| e.to_string())?;
+) -> AppResult<String> {
+    let mut doc = Document::load(&path)?;
 
     // Get or create Info dictionary
     let info_id = doc
@@ -94,7 +95,7 @@ pub fn set_metadata(
             id
         });
 
-    let info = doc.get_object_mut(info_id).map_err(|e| e.to_string())?;
+    let info = doc.get_object_mut(info_id)?;
     if let Object::Dictionary(dict) = info {
         let set_str = |dict: &mut lopdf::Dictionary, key: &[u8], val: Option<&String>| {
             if let Some(v) = val {
@@ -109,6 +110,6 @@ pub fn set_metadata(
     }
 
     let out = output.unwrap_or_else(|| temp_output_path(&path, "meta"));
-    doc.save(&out).map_err(|e| e.to_string())?;
+    doc.save(&out)?;
     Ok(out)
 }

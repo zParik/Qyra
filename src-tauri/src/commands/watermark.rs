@@ -2,6 +2,7 @@ use lopdf::{Dictionary, Document, Object, Stream};
 use tauri::Emitter;
 use crate::utils::paths::temp_output_path;
 use crate::utils::progress::Progress;
+use crate::error::{AppError, AppResult};
 use std::f64::consts::PI;
 
 #[derive(serde::Deserialize)]
@@ -21,10 +22,10 @@ pub async fn add_watermark(
     options: WatermarkOptions,
     output: Option<String>,
     app_handle: tauri::AppHandle,
-) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || {
+) -> AppResult<String> {
+    tokio::task::spawn_blocking(move || -> AppResult<String> {
         let out = output.unwrap_or_else(|| temp_output_path(&path, "watermarked"));
-        let mut doc = Document::load(&path).map_err(|e| e.to_string())?;
+        let mut doc = Document::load(&path)?;
 
         let font_size = options.font_size.unwrap_or(48.0).max(4.0);
         let opacity = options.opacity.unwrap_or(0.25).clamp(0.0, 1.0);
@@ -85,19 +86,18 @@ pub async fn add_watermark(
         }
 
         for patch in patches {
-            patch_page(&mut doc, patch.page_id, patch.gs_id, patch.font_id, patch.content_id)
-                .map_err(|e| format!("Page patch failed: {e}"))?;
+            patch_page(&mut doc, patch.page_id, patch.gs_id, patch.font_id, patch.content_id)?;
         }
 
         let _ = app_handle.emit(
             "operation-progress",
             Progress::new(total_to_mark, total_to_mark + 1, "Saving PDF"),
         );
-        doc.save(&out).map_err(|e| e.to_string())?;
+        doc.save(&out)?;
         Ok(out)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| AppError::Other(e.to_string()))?
 }
 
 // ── content stream ────────────────────────────────────────────────────────────
@@ -179,10 +179,10 @@ fn patch_page(
     gs_id: lopdf::ObjectId,
     font_id: lopdf::ObjectId,
     content_id: lopdf::ObjectId,
-) -> Result<(), String> {
+) -> AppResult<()> {
     let (res_obj, contents_obj) = {
-        let obj = doc.get_object(page_id).map_err(|e| e.to_string())?;
-        let d = obj.as_dict().map_err(|e| e.to_string())?;
+        let obj = doc.get_object(page_id)?;
+        let d = obj.as_dict()?;
         (d.get(b"Resources").ok().cloned(), d.get(b"Contents").ok().cloned())
     };
 
@@ -199,7 +199,7 @@ fn patch_page(
     res_dict.set("ExtGState", Object::Dictionary(gs_dict));
 
     let inline_res: Option<Dictionary> = if let Some(ref_id) = res_ref_id {
-        let target = doc.get_object_mut(ref_id).map_err(|e| e.to_string())?;
+        let target = doc.get_object_mut(ref_id)?;
         *target = Object::Dictionary(res_dict);
         None
     } else {
@@ -217,7 +217,7 @@ fn patch_page(
         _ => Object::Reference(content_id),
     };
 
-    let page_obj = doc.get_object_mut(page_id).map_err(|e| e.to_string())?;
+    let page_obj = doc.get_object_mut(page_id)?;
     if let Object::Dictionary(d) = page_obj {
         if let Some(res) = inline_res {
             d.set("Resources", Object::Dictionary(res));
@@ -275,16 +275,11 @@ fn escape_pdf(s: &str) -> String {
 fn resolve_dict(
     doc: &Document,
     obj: Option<Object>,
-) -> Result<(Option<lopdf::ObjectId>, Dictionary), String> {
+) -> AppResult<(Option<lopdf::ObjectId>, Dictionary)> {
     match obj {
         Some(Object::Dictionary(d)) => Ok((None, d)),
         Some(Object::Reference(id)) => {
-            let d = doc
-                .get_object(id)
-                .map_err(|e| e.to_string())?
-                .as_dict()
-                .map_err(|e| e.to_string())?
-                .clone();
+            let d = doc.get_object(id)?.as_dict()?.clone();
             Ok((Some(id), d))
         }
         _ => Ok((None, Dictionary::new())),

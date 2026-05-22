@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use crate::error::{AppError, AppResult};
 
 /// Per-session disk cache for rendered thumbnails and other transient data.
 ///
@@ -55,21 +56,22 @@ pub async fn cache_put(
     key: String,
     value: String,
     state: tauri::State<'_, SessionCacheState>,
-) -> Result<(), String> {
+) -> AppResult<()> {
     let path = state.file_for_key(&key);
     let path_clone = path.clone();
-    
+
     // Heavy file I/O off the main thread
-    tokio::task::spawn_blocking(move || {
-        fs::write(&path_clone, value.as_bytes()).map_err(|e| e.to_string())
+    tokio::task::spawn_blocking(move || -> AppResult<()> {
+        fs::write(&path_clone, value.as_bytes())?;
+        Ok(())
     })
     .await
-    .map_err(|e| e.to_string())??;
+    .map_err(|e| AppError::Other(e.to_string()))??;
 
     state
         .index
         .lock()
-        .map_err(|e| e.to_string())?
+        .map_err(|e| AppError::Lock(e.to_string()))?
         .insert(key, path);
     Ok(())
 }
@@ -80,25 +82,25 @@ pub async fn cache_put(
 pub async fn cache_get(
     key: String,
     state: tauri::State<'_, SessionCacheState>,
-) -> Result<Option<String>, String> {
+) -> AppResult<Option<String>> {
     // Fast path: check in-memory index. Scoped block guarantees MutexGuard is dropped before await!
     let path_opt = {
-        let idx = state.index.lock().map_err(|e| e.to_string())?;
+        let idx = state.index.lock().map_err(|e| AppError::Lock(e.to_string()))?;
         idx.get(&key).cloned()
     };
 
     if let Some(path) = path_opt {
         let path_clone = path.clone();
-        let data = tokio::task::spawn_blocking(move || {
+        let data = tokio::task::spawn_blocking(move || -> AppResult<Option<String>> {
             if path_clone.exists() {
-                fs::read_to_string(path_clone).map_err(|e| e.to_string()).map(Some)
+                Ok(Some(fs::read_to_string(path_clone)?))
             } else {
                 Ok(None)
             }
         })
         .await
-        .map_err(|e| e.to_string())??;
-        
+        .map_err(|e| AppError::Other(e.to_string()))??;
+
         if data.is_some() {
             return Ok(data);
         }
@@ -107,21 +109,21 @@ pub async fn cache_get(
     // Slow path: probe the filesystem directly
     let path = state.file_for_key(&key);
     let path_clone = path.clone();
-    let data = tokio::task::spawn_blocking(move || {
+    let data = tokio::task::spawn_blocking(move || -> AppResult<Option<String>> {
         if path_clone.exists() {
-            fs::read_to_string(path_clone).map_err(|e| e.to_string()).map(Some)
+            Ok(Some(fs::read_to_string(path_clone)?))
         } else {
             Ok(None)
         }
     })
     .await
-    .map_err(|e| e.to_string())??;
+    .map_err(|e| AppError::Other(e.to_string()))??;
 
     if data.is_some() {
         state
             .index
             .lock()
-            .map_err(|e| e.to_string())?
+            .map_err(|e| AppError::Lock(e.to_string()))?
             .insert(key, path);
     }
 
@@ -133,23 +135,23 @@ pub async fn cache_get(
 pub async fn cache_has(
     key: String,
     state: tauri::State<'_, SessionCacheState>,
-) -> Result<bool, String> {
+) -> AppResult<bool> {
     let path_opt = {
-        let idx = state.index.lock().map_err(|e| e.to_string())?;
+        let idx = state.index.lock().map_err(|e| AppError::Lock(e.to_string()))?;
         idx.get(&key).cloned()
     };
 
     if let Some(path) = path_opt {
         let path_clone = path.clone();
-        return tokio::task::spawn_blocking(move || Ok(path_clone.exists()))
+        return tokio::task::spawn_blocking(move || -> AppResult<bool> { Ok(path_clone.exists()) })
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| AppError::Other(e.to_string()))?;
     }
-    
+
     let path = state.file_for_key(&key);
-    tokio::task::spawn_blocking(move || Ok(path.exists()))
+    tokio::task::spawn_blocking(move || -> AppResult<bool> { Ok(path.exists()) })
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| AppError::Other(e.to_string()))?
 }
 
 /// Remove a single key from the session cache.
@@ -157,16 +159,16 @@ pub async fn cache_has(
 pub async fn cache_remove(
     key: String,
     state: tauri::State<'_, SessionCacheState>,
-) -> Result<(), String> {
+) -> AppResult<()> {
     let path = state.file_for_key(&key);
     let path_clone = path.clone();
     tokio::task::spawn_blocking(move || {
         let _ = fs::remove_file(&path_clone);
     })
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| AppError::Other(e.to_string()))?;
 
-    state.index.lock().map_err(|e| e.to_string())?.remove(&key);
+    state.index.lock().map_err(|e| AppError::Lock(e.to_string()))?.remove(&key);
     Ok(())
 }
 
@@ -176,9 +178,9 @@ pub async fn cache_remove(
 pub async fn cache_evict_prefix(
     prefix: String,
     state: tauri::State<'_, SessionCacheState>,
-) -> Result<u32, String> {
+) -> AppResult<u32> {
     let (paths, count) = {
-        let mut idx = state.index.lock().map_err(|e| e.to_string())?;
+        let mut idx = state.index.lock().map_err(|e| AppError::Lock(e.to_string()))?;
         let matching: Vec<String> = idx
             .keys()
             .filter(|k| k.starts_with(&prefix))
@@ -201,7 +203,7 @@ pub async fn cache_evict_prefix(
         }
     })
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| AppError::Other(e.to_string()))?;
 
     Ok(count)
 }
@@ -217,9 +219,9 @@ pub struct CacheStats {
 #[tauri::command]
 pub async fn cache_stats(
     state: tauri::State<'_, SessionCacheState>,
-) -> Result<CacheStats, String> {
+) -> AppResult<CacheStats> {
     let idx_len = {
-        let idx = state.index.lock().map_err(|e| e.to_string())?;
+        let idx = state.index.lock().map_err(|e| AppError::Lock(e.to_string()))?;
         idx.len()
     };
 
@@ -243,7 +245,7 @@ pub async fn cache_stats(
         (entry_count, total_bytes)
     })
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| AppError::Other(e.to_string()))?;
 
     Ok(CacheStats {
         root: state.root.to_string_lossy().to_string(),
@@ -256,9 +258,9 @@ pub async fn cache_stats(
 #[tauri::command]
 pub async fn cache_clear(
     state: tauri::State<'_, SessionCacheState>,
-) -> Result<(), String> {
+) -> AppResult<()> {
     {
-        let mut idx = state.index.lock().map_err(|e| e.to_string())?;
+        let mut idx = state.index.lock().map_err(|e| AppError::Lock(e.to_string()))?;
         idx.clear();
     }
 
@@ -270,7 +272,7 @@ pub async fn cache_clear(
         }
     })
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| AppError::Other(e.to_string()))?;
 
     Ok(())
 }

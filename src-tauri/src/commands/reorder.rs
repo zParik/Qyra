@@ -1,5 +1,6 @@
 use lopdf::{Document, Object};
 use crate::utils::paths::temp_output_path;
+use crate::error::{AppError, AppResult};
 
 /// Reorder pages in a PDF. `order` is 1-indexed and maps new position → old page number.
 #[tauri::command]
@@ -7,21 +8,21 @@ pub fn reorder_pages(
     path: String,
     order: Vec<u32>,
     output: Option<String>,
-) -> Result<String, String> {
-    let mut doc = Document::load(&path).map_err(|e| e.to_string())?;
+) -> AppResult<String> {
+    let mut doc = Document::load(&path)?;
     let total = doc.get_pages().len() as u32;
 
     if order.len() as u32 != total {
-        return Err(format!(
+        return Err(AppError::Invalid(format!(
             "Order length {} doesn't match page count {}",
             order.len(),
             total
-        ));
+        )));
     }
 
     for &page in &order {
         if page < 1 || page > total {
-            return Err(format!("Page {} out of range (1-{})", page, total));
+            return Err(AppError::Invalid(format!("Page {} out of range (1-{})", page, total)));
         }
     }
 
@@ -37,11 +38,11 @@ pub fn reorder_pages(
 
     // Locate the Pages root from the catalog (block scope ends the immutable borrow).
     let pages_root_id = {
-        let catalog = doc.catalog().map_err(|e| format!("Catalog error: {}", e))?;
+        let catalog = doc.catalog().map_err(|e| AppError::Pdf(format!("Catalog error: {}", e)))?;
         catalog
             .get(b"Pages")
             .and_then(|obj| obj.as_reference())
-            .map_err(|e| format!("Pages entry error: {}", e))?
+            .map_err(|e| AppError::Pdf(format!("Pages entry error: {}", e)))?
     };
 
     // Update the Kids array directly — O(N) instead of O(N²) clone+delete+merge.
@@ -50,7 +51,7 @@ pub fn reorder_pages(
             dict.set("Kids", Object::Array(new_kids));
             // Count stays the same; we're reordering, not removing pages.
         }
-        _ => return Err("Could not find Pages root dictionary".into()),
+        _ => return Err(AppError::Pdf("Could not find Pages root dictionary".to_string())),
     }
 
     // Fix the Parent reference for every page so nested page trees are handled correctly.
@@ -61,6 +62,6 @@ pub fn reorder_pages(
     }
 
     let out = output.unwrap_or_else(|| temp_output_path(&path, "reordered"));
-    doc.save(&out).map_err(|e: std::io::Error| e.to_string())?;
+    doc.save(&out)?;
     Ok(out)
 }
