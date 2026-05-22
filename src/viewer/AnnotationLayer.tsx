@@ -121,10 +121,10 @@ function AnnotDiv({ annot, onClick }: AnnotDivProps) {
       // Group quad_points into strips (8 values per quad = one rectangle)
       const strips: React.ReactNode[] = [];
       for (let i = 0; i + 7 < annot.quad_points.length; i += 8) {
-        const qx0 = annot.quad_points[i];
-        const qy0 = annot.quad_points[i + 1];
-        const qx1 = annot.quad_points[i + 4];
-        const qy1 = annot.quad_points[i + 5];
+        const qx0 = annot.quad_points[i]!;
+        const qy0 = annot.quad_points[i + 1]!;
+        const qx1 = annot.quad_points[i + 4]!;
+        const qy1 = annot.quad_points[i + 5]!;
         const sw = qx1 - qx0;
         const sh = qy1 - qy0;
         if (sw > 0 && sh > 0) {
@@ -295,6 +295,47 @@ function AnnotDiv({ annot, onClick }: AnnotDivProps) {
         onClick={onClick}
       >
         {annot.contents}
+        {tooltip}
+      </div>
+    );
+  }
+
+  if (sub === "Stamp") {
+    const label = annot.contents ?? "STAMP";
+    return (
+      <div
+        style={{
+          ...posStyle,
+          border: `2px solid ${hexToRgba(annot.color, 0.8)}`,
+          borderRadius: 3,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: hexToRgba(annot.color, 0.06),
+          pointerEvents: "auto",
+          overflow: "hidden",
+        }}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        onClick={onClick}
+      >
+        <span
+          style={{
+            fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+            fontSize: "clamp(7px, 1.5vw, 12px)",
+            fontWeight: 700,
+            letterSpacing: "1px",
+            color: hexToRgba(annot.color, 0.85),
+            textTransform: "uppercase",
+            userSelect: "none",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            padding: "0 4px",
+          }}
+        >
+          {label}
+        </span>
         {tooltip}
       </div>
     );
