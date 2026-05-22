@@ -40,12 +40,14 @@ impl Rewriter {
         // ---------------------------------------------------------------
         // Pass 1: parse xref + eagerly unpack all ObjStm streams.
         // ---------------------------------------------------------------
+        #[cfg(debug_assertions)]
         eprintln!("[compress] Pass 1: parsing xref + unpacking ObjStm streams…");
         let mut reader = PdfReader::new(input_bytes)?;
         let trailer = reader.trailer().clone();
 
         let mut all_ids: Vec<ObjectId> = reader.all_object_ids();
         all_ids.sort_unstable();
+        #[cfg(debug_assertions)]
         eprintln!("[compress] ready — {} objects indexed", all_ids.len());
 
         // ---------------------------------------------------------------
@@ -100,6 +102,7 @@ impl Rewriter {
             .collect();
 
         let work_total = work.len();
+        #[cfg(debug_assertions)]
         eprintln!("[compress] Pass 2a: transforming {} objects in parallel…", work_total);
 
         // ---------------------------------------------------------------
@@ -165,6 +168,7 @@ impl Rewriter {
         // ---------------------------------------------------------------
         // Pass 2b: write results sequentially (PdfWriter is not Send).
         // ---------------------------------------------------------------
+        #[cfg(debug_assertions)]
         eprintln!("[compress] Pass 2b: writing {} objects…", work_total);
         let mut writer = PdfWriter::new();
         writer.write_header();
@@ -177,6 +181,7 @@ impl Rewriter {
             writer.write_object(id, &obj)?;
 
             if i % 500 == 0 || i + 1 == work_total {
+                #[cfg(debug_assertions)]
                 eprintln!("[compress] {}/{} objects written", i + 1, work_total);
             }
             progress_cb(i + 1, work_total, "Writing objects");
@@ -192,6 +197,7 @@ impl Rewriter {
 
         writer.write_xref_and_trailer(out_trailer)?;
         let result = writer.finish();
+        #[cfg(debug_assertions)]
         eprintln!("[compress] done — {} bytes out", result.len());
         Ok(result)
     }

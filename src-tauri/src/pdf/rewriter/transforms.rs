@@ -174,6 +174,7 @@ pub fn recompress_image(
         }
     }
 
+    #[cfg(debug_assertions)]
     eprintln!(
         "[compress] image {}x{} → reencoding at quality {}{}",
         img.width(),
