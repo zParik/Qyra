@@ -1,5 +1,6 @@
 use std::fs;
 use tauri_plugin_opener::OpenerExt;
+use crate::error::{AppError, AppResult};
 
 fn mime_from_path(path: &str) -> &'static str {
     match path.rsplit('.').next().map(|e| e.to_lowercase()).as_deref() {
@@ -16,9 +17,11 @@ fn mime_from_path(path: &str) -> &'static str {
 /// On Android API 24-28: falls back to a share chooser since external storage
 /// requires a permission we don't request.
 #[tauri::command]
-pub fn share_file(path: String, app_handle: tauri::AppHandle) -> Result<(), String> {
+pub fn share_file(path: String, app_handle: tauri::AppHandle) -> AppResult<()> {
     #[cfg(target_os = "android")]
     {
+        let _ = &app_handle;
+        return (|| -> Result<(), String> {
         use jni::objects::{JObject, JValue};
 
         let filename = std::path::Path::new(&path)
@@ -147,14 +150,15 @@ pub fn share_file(path: String, app_handle: tauri::AppHandle) -> Result<(), Stri
         env.call_method(&context, "startActivity", "(Landroid/content/Intent;)V",
             &[JValue::Object(&chooser)]).map_err(|e| e.to_string())?;
 
-        return Ok(());
+        Ok(())
+        })().map_err(AppError::Other);
     }
 
     #[cfg(not(target_os = "android"))]
     app_handle
         .opener()
         .open_path(&path, None::<String>)
-        .map_err(|e| e.to_string())
+        .map_err(|e| AppError::Other(e.to_string()))
 }
 
 /// Query Android ContentResolver for the display name of a content:// URI.
@@ -299,33 +303,33 @@ fn android_query_display_name(uri: &str) -> Option<String> {
 }
 
 #[tauri::command]
-pub fn copy_file(src: String, dst: String) -> Result<(), String> {
-    fs::copy(&src, &dst)
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+pub fn copy_file(src: String, dst: String) -> AppResult<()> {
+    fs::copy(&src, &dst).map(|_| ())?;
+    Ok(())
 }
 
 /// Open a file with the default OS application. Runs from Rust to bypass
 /// frontend path-scope restrictions imposed by the opener plugin.
 #[tauri::command]
-pub fn open_file(path: String, app_handle: tauri::AppHandle) -> Result<(), String> {
+pub fn open_file(path: String, app_handle: tauri::AppHandle) -> AppResult<()> {
     app_handle
         .opener()
         .open_path(&path, None::<String>)
-        .map_err(|e| e.to_string())
+        .map_err(|e| AppError::Other(e.to_string()))
 }
 
 /// Reveal a file in the system file manager (Explorer / Finder / Nautilus).
 #[tauri::command]
-pub fn show_in_folder(path: String, app_handle: tauri::AppHandle) -> Result<(), String> {
+pub fn show_in_folder(path: String, app_handle: tauri::AppHandle) -> AppResult<()> {
     app_handle
         .opener()
         .reveal_item_in_dir(&path)
-        .map_err(|e| e.to_string())
+        .map_err(|e| AppError::Other(e.to_string()))
 }
 
 /// Write raw bytes to a file path. Used by the frontend to save rendered images.
 #[tauri::command]
-pub fn write_bytes(path: String, data: Vec<u8>) -> Result<(), String> {
-    fs::write(&path, &data).map_err(|e| e.to_string())
+pub fn write_bytes(path: String, data: Vec<u8>) -> AppResult<()> {
+    fs::write(&path, &data)?;
+    Ok(())
 }

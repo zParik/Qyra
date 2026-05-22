@@ -1,5 +1,6 @@
 use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream, content::{Content, Operation}};
 use crate::utils::paths::temp_output_path;
+use crate::error::AppResult;
 
 #[derive(serde::Deserialize)]
 pub struct StrokeData {
@@ -228,28 +229,28 @@ fn build_template_ops(template: &str, pw: f64, ph: f64) -> Vec<Operation> {
 
 /// Insert virtual (note) pages into the document at the positions specified.
 /// Assumes a flat page tree (single-level Kids array), which covers 99%+ of PDFs.
-fn insert_virtual_pages(doc: &mut Document, virtual_pages: &[VirtualPageData]) -> Result<(), String> {
+fn insert_virtual_pages(doc: &mut Document, virtual_pages: &[VirtualPageData]) -> AppResult<()> {
     // Resolve pages root ref
     let pages_ref: ObjectId = {
         let catalog_ref = doc.trailer.get(b"Root")
             .and_then(|r| r.as_reference())
-            .map_err(|e| e.to_string())?;
+            ?;
         let catalog = doc.get_object(catalog_ref)
             .and_then(|o| o.as_dict())
-            .map_err(|e| e.to_string())?;
+            ?;
         catalog.get(b"Pages")
             .and_then(|o| o.as_reference())
-            .map_err(|e| e.to_string())?
+            ?
     };
 
     // Snapshot current Kids list
     let kids: Vec<ObjectId> = {
         let pages = doc.get_object(pages_ref)
             .and_then(|o| o.as_dict())
-            .map_err(|e| e.to_string())?;
+            ?;
         pages.get(b"Kids")
             .and_then(|o| o.as_array())
-            .map_err(|e| e.to_string())?
+            ?
             .iter()
             .filter_map(|o| o.as_reference().ok())
             .collect()
@@ -285,7 +286,7 @@ fn insert_virtual_pages(doc: &mut Document, virtual_pages: &[VirtualPageData]) -
         }
 
         let content = Content { operations: all_ops };
-        let content_bytes = content.encode().map_err(|e| e.to_string())?;
+        let content_bytes = content.encode()?;
         let stream_id = doc.add_object(Stream::new(Dictionary::new(), content_bytes));
 
         let mut resources = Dictionary::new();
@@ -337,7 +338,7 @@ fn insert_virtual_pages(doc: &mut Document, virtual_pages: &[VirtualPageData]) -
 
     let new_count = new_kids.len() as i64;
 
-    let pages_obj = doc.get_object_mut(pages_ref).map_err(|e| e.to_string())?;
+    let pages_obj = doc.get_object_mut(pages_ref)?;
     if let Object::Dictionary(dict) = pages_obj {
         dict.set("Kids", Object::Array(new_kids));
         dict.set("Count", Object::Integer(new_count));
@@ -376,10 +377,10 @@ fn resolve_ref(obj: &Object) -> Option<ObjectId> {
     }
 }
 
-fn add_ext_gstate_to_page(doc: &mut Document, page_id: ObjectId, name: &[u8], gs_ref: ObjectId) -> Result<(), String> {
+fn add_ext_gstate_to_page(doc: &mut Document, page_id: ObjectId, name: &[u8], gs_ref: ObjectId) -> AppResult<()> {
     // Determine indirection for Resources and ExtGState
     let (resources_id, ext_gs_id): (Option<ObjectId>, Option<ObjectId>) = {
-        let page = doc.get_object(page_id).map_err(|e| e.to_string())?;
+        let page = doc.get_object(page_id)?;
         if let Object::Dictionary(page_dict) = page {
             let res_ref = page_dict.get(b"Resources").ok().and_then(|o| resolve_ref(o));
 
@@ -401,13 +402,13 @@ fn add_ext_gstate_to_page(doc: &mut Document, page_id: ObjectId, name: &[u8], gs
 
     if let Some(eid) = ext_gs_id {
         // ExtGState is indirect — update it directly
-        let obj = doc.get_object_mut(eid).map_err(|e| e.to_string())?;
+        let obj = doc.get_object_mut(eid)?;
         if let Object::Dictionary(d) = obj {
             d.set(name, Object::Reference(gs_ref));
         }
     } else if let Some(rid) = resources_id {
         // Resources is indirect, ExtGState is inline or absent
-        let obj = doc.get_object_mut(rid).map_err(|e| e.to_string())?;
+        let obj = doc.get_object_mut(rid)?;
         if let Object::Dictionary(res_dict) = obj {
             match res_dict.get_mut(b"ExtGState") {
                 Ok(Object::Dictionary(d)) => {
@@ -422,7 +423,7 @@ fn add_ext_gstate_to_page(doc: &mut Document, page_id: ObjectId, name: &[u8], gs
         }
     } else {
         // Resources is inline on the page
-        let page = doc.get_object_mut(page_id).map_err(|e| e.to_string())?;
+        let page = doc.get_object_mut(page_id)?;
         if let Object::Dictionary(dict) = page {
             match dict.get_mut(b"Resources") {
                 Ok(Object::Dictionary(res_dict)) => {
@@ -451,8 +452,8 @@ fn add_ext_gstate_to_page(doc: &mut Document, page_id: ObjectId, name: &[u8], gs
     Ok(())
 }
 
-fn append_stream_to_page(doc: &mut Document, page_id: ObjectId, stream_id: ObjectId) -> Result<(), String> {
-    let page = doc.get_object_mut(page_id).map_err(|e| e.to_string())?;
+fn append_stream_to_page(doc: &mut Document, page_id: ObjectId, stream_id: ObjectId) -> AppResult<()> {
+    let page = doc.get_object_mut(page_id)?;
     if let Object::Dictionary(dict) = page {
         match dict.get_mut(b"Contents") {
             Ok(Object::Array(arr)) => {
@@ -479,15 +480,15 @@ pub fn bake_annotations(
     annotations: Vec<PageAnnotationData>,
     virtual_pages: Vec<VirtualPageData>,
     output: Option<String>,
-) -> Result<String, String> {
+) -> AppResult<String> {
     let out = output.unwrap_or_else(|| temp_output_path(&path, "annotated"));
 
     if annotations.is_empty() && virtual_pages.is_empty() {
-        std::fs::copy(&path, &out).map_err(|e| e.to_string())?;
+        std::fs::copy(&path, &out)?;
         return Ok(out);
     }
 
-    let mut doc = Document::load(&path).map_err(|e| e.to_string())?;
+    let mut doc = Document::load(&path)?;
 
     // Build page_map: page number (1-indexed) -> ObjectId
     let page_map: std::collections::HashMap<u32, ObjectId> =
@@ -543,7 +544,7 @@ pub fn bake_annotations(
 
         // Phase 3: Encode content stream and add to doc
         let content = Content { operations: all_ops };
-        let content_bytes = content.encode().map_err(|e| e.to_string())?;
+        let content_bytes = content.encode()?;
         let stream_id = doc.add_object(Stream::new(Dictionary::new(), content_bytes));
 
         // Phase 4: Mutate — add ExtGState to page Resources if needed
@@ -560,6 +561,6 @@ pub fn bake_annotations(
         insert_virtual_pages(&mut doc, &virtual_pages)?;
     }
 
-    doc.save(&out).map_err(|e| e.to_string())?;
+    doc.save(&out)?;
     Ok(out)
 }

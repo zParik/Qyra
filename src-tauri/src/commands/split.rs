@@ -1,15 +1,16 @@
 use lopdf::{Document, Object};
 use std::path::Path;
 use crate::utils::paths::temp_dir_str;
+use crate::error::{AppError, AppResult};
 
 /// Split a PDF at bookmark boundaries. Each top-level outline entry becomes one output file.
 /// Returns the list of output paths.
 #[tauri::command]
-pub fn split_pdf_by_bookmarks(path: String, output_dir: Option<String>) -> Result<Vec<String>, String> {
-    let doc = Document::load(&path).map_err(|e| e.to_string())?;
+pub fn split_pdf_by_bookmarks(path: String, output_dir: Option<String>) -> AppResult<Vec<String>> {
+    let doc = Document::load(&path)?;
     let total = doc.get_pages().len() as u32;
     if total == 0 {
-        return Err("PDF has no pages".to_string());
+        return Err(AppError::Invalid("PDF has no pages".to_string()));
     }
 
     let stem = Path::new(&path)
@@ -101,7 +102,7 @@ pub fn split_pdf_by_bookmarks(path: String, output_dir: Option<String>) -> Resul
     }
 
     if page_starts.is_empty() {
-        return Err("No bookmarks found in this PDF".to_string());
+        return Err(AppError::NotFound("No bookmarks found in this PDF".to_string()));
     }
 
     // Build page ranges from the start pages
@@ -134,7 +135,7 @@ pub fn split_pdf_by_bookmarks(path: String, output_dir: Option<String>) -> Resul
         let safe_title = if safe_title.is_empty() { format!("part{}", i + 1) } else { safe_title };
 
         let out = format!("{}/{}_{}.pdf", dir, stem, safe_title);
-        part.save(&out).map_err(|e| e.to_string())?;
+        part.save(&out)?;
         output_paths.push(out);
     }
 
@@ -154,8 +155,8 @@ pub fn split_pdf(
     path: String,
     ranges: Vec<PageRange>,
     output_dir: Option<String>,
-) -> Result<Vec<String>, String> {
-    let doc = Document::load(&path).map_err(|e| e.to_string())?;
+) -> AppResult<Vec<String>> {
+    let doc = Document::load(&path)?;
     let total = doc.get_pages().len() as u32;
 
     let stem = Path::new(&path)
@@ -170,7 +171,7 @@ pub fn split_pdf(
         let start = range.start.max(1);
         let end = range.end.min(total);
         if start > end {
-            return Err(format!("Invalid range {}-{}", start, end));
+            return Err(AppError::Invalid(format!("Invalid range {}-{}", start, end)));
         }
 
         let pages_to_delete: Vec<u32> = (1..=total)
@@ -181,7 +182,7 @@ pub fn split_pdf(
         part.delete_pages(&pages_to_delete);
 
         let out = format!("{}/{}_part{}.pdf", dir, stem, i + 1);
-        part.save(&out).map_err(|e| e.to_string())?;
+        part.save(&out)?;
         output_paths.push(out);
     }
 
@@ -193,8 +194,8 @@ pub fn split_pdf(
 /// avoiding O(N²) deletions. Each output file contains only the target page in its
 /// page tree (other page objects are technically unreferenced but PDF viewers ignore them).
 #[tauri::command]
-pub fn split_pdf_per_page(path: String, output_dir: Option<String>) -> Result<Vec<String>, String> {
-    let mut doc = Document::load(&path).map_err(|e| e.to_string())?;
+pub fn split_pdf_per_page(path: String, output_dir: Option<String>) -> AppResult<Vec<String>> {
+    let mut doc = Document::load(&path)?;
     let total = doc.get_pages().len() as u32;
 
     let stem = Path::new(&path)
@@ -208,11 +209,10 @@ pub fn split_pdf_per_page(path: String, output_dir: Option<String>) -> Result<Ve
 
     // Locate the Pages root from the catalog.
     let pages_root_id = {
-        let catalog = doc.catalog().map_err(|e| e.to_string())?;
+        let catalog = doc.catalog()?;
         catalog
             .get(b"Pages")
-            .and_then(|obj| obj.as_reference())
-            .map_err(|e| e.to_string())?
+            .and_then(|obj| obj.as_reference())?
     };
 
     // Ensure every page's Parent already points to the root (flatten any nested tree).
@@ -236,11 +236,11 @@ pub fn split_pdf_per_page(path: String, output_dir: Option<String>) -> Result<Ve
             dict.set("Count", Object::Integer(1));
             old
         } else {
-            return Err("Could not find Pages root dictionary".into());
+            return Err(AppError::Pdf("Could not find Pages root dictionary".to_string()));
         };
 
         let out = format!("{}/{}_page{:04}.pdf", dir, stem, page_num);
-        doc.save(&out).map_err(|e| e.to_string())?;
+        doc.save(&out)?;
         output_paths.push(out);
 
         // Restore the original Kids and Count for the next iteration.

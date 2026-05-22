@@ -2,6 +2,7 @@ use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream, content:
 use tauri::Emitter;
 use crate::utils::paths::temp_output_path;
 use crate::utils::progress::Progress;
+use crate::error::AppResult;
 
 #[derive(serde::Deserialize)]
 pub struct PageNumberOptions {
@@ -45,7 +46,7 @@ pub async fn add_page_numbers(
     options: Option<PageNumberOptions>,
     output: Option<String>,
     app_handle: tauri::AppHandle,
-) -> Result<String, String> {
+) -> AppResult<String> {
     let opts = options.unwrap_or(PageNumberOptions {
         start_at: Some(1),
         position: Some("bottom-center".into()),
@@ -58,7 +59,7 @@ pub async fn add_page_numbers(
     let margin = opts.margin.unwrap_or(20.0);
     let position = opts.position.unwrap_or_else(|| "bottom-center".into());
 
-    let mut doc = Document::load(&path).map_err(|e| e.to_string())?;
+    let mut doc = Document::load(&path)?;
 
     let font_id = doc.add_object(dictionary! {
         "Type" => "Font",
@@ -80,7 +81,7 @@ pub async fn add_page_numbers(
 
         // --- Read page geometry ---
         let (page_width, page_height) = {
-            let page = doc.get_object(*page_id).map_err(|e| e.to_string())?;
+            let page = doc.get_object(*page_id)?;
             if let Object::Dictionary(dict) = page {
                 if let Ok(Object::Array(arr)) = dict.get(b"MediaBox") {
                     let w = arr.get(2)
@@ -107,7 +108,7 @@ pub async fn add_page_numbers(
         // resources_id: Some(id) means Resources is stored as an indirect object
         // font_dict_id: Some(id) means the Font dict inside Resources is indirect
         let (resources_id, font_dict_id): (Option<ObjectId>, Option<ObjectId>) = {
-            let page = doc.get_object(*page_id).map_err(|e| e.to_string())?;
+            let page = doc.get_object(*page_id)?;
             if let Object::Dictionary(page_dict) = page {
                 let res_ref = page_dict.get(b"Resources").ok().and_then(|o| resolve_ref(&doc, o));
 
@@ -187,7 +188,7 @@ pub async fn add_page_numbers(
             Operation::new("Q", vec![]),
         ];
         let content = Content { operations: ops };
-        let content_bytes = content.encode().map_err(|e| e.to_string())?;
+        let content_bytes = content.encode()?;
         let mut stream_dict = Dictionary::new();
         // Tag so remove_page_numbers can identify streams we added.
         stream_dict.set("PageNumOverlay", Object::Boolean(true));
@@ -196,13 +197,13 @@ pub async fn add_page_numbers(
         // --- Add font to resources (follow indirect refs so we never clobber existing data) ---
         if let Some(fid) = font_dict_id {
             // Font dict is an indirect object — update it directly
-            let obj = doc.get_object_mut(fid).map_err(|e| e.to_string())?;
+            let obj = doc.get_object_mut(fid)?;
             if let Object::Dictionary(fd) = obj {
                 fd.set(font_name.clone(), Object::Reference(font_id));
             }
         } else if let Some(rid) = resources_id {
             // Resources is indirect, Font is inline or absent inside it
-            let obj = doc.get_object_mut(rid).map_err(|e| e.to_string())?;
+            let obj = doc.get_object_mut(rid)?;
             if let Object::Dictionary(res_dict) = obj {
                 match res_dict.get_mut(b"Font") {
                     Ok(Object::Dictionary(fd)) => {
@@ -217,7 +218,7 @@ pub async fn add_page_numbers(
             }
         } else {
             // Resources is inline (or absent) on the page — update the page dict directly
-            let page = doc.get_object_mut(*page_id).map_err(|e| e.to_string())?;
+            let page = doc.get_object_mut(*page_id)?;
             if let Object::Dictionary(dict) = page {
                 match dict.get_mut(b"Resources") {
                     Ok(Object::Dictionary(res_dict)) => {
@@ -248,7 +249,7 @@ pub async fn add_page_numbers(
         // (origin at bottom-left, Y increasing upward). Appending would inherit
         // any CTM mutations left by the existing streams (e.g. Y-flip transforms
         // common in word-processor-generated PDFs), inverting our coordinates.
-        let page = doc.get_object_mut(*page_id).map_err(|e| e.to_string())?;
+        let page = doc.get_object_mut(*page_id)?;
         if let Object::Dictionary(dict) = page {
             match dict.get_mut(b"Contents") {
                 Ok(Object::Array(arr)) => {
@@ -269,7 +270,7 @@ pub async fn add_page_numbers(
     }
 
     let out = output.unwrap_or_else(|| temp_output_path(&path, "numbered"));
-    doc.save(&out).map_err(|e| e.to_string())?;
+    doc.save(&out)?;
     Ok(out)
 }
 
@@ -279,8 +280,8 @@ pub async fn add_page_numbers(
 pub fn remove_page_numbers(
     path: String,
     output: Option<String>,
-) -> Result<String, String> {
-    let mut doc = Document::load(&path).map_err(|e| e.to_string())?;
+) -> AppResult<String> {
+    let mut doc = Document::load(&path)?;
 
     let page_ids: Vec<(u32, (u32, u16))> = doc.get_pages().into_iter().collect();
 
@@ -288,7 +289,7 @@ pub fn remove_page_numbers(
     let mut removals: Vec<((u32, u16), Vec<(u32, u16)>)> = Vec::new();
 
     for (_page_num, page_id) in &page_ids {
-        let page = doc.get_object(*page_id).map_err(|e| e.to_string())?;
+        let page = doc.get_object(*page_id)?;
         let stream_refs: Vec<(u32, u16)> = if let Object::Dictionary(dict) = page {
             match dict.get(b"Contents") {
                 Ok(Object::Array(arr)) => arr.iter()
@@ -316,7 +317,7 @@ pub fn remove_page_numbers(
 
     // Second pass: mutate Contents arrays to drop the tagged streams.
     for (page_id, remove_ids) in removals {
-        let page = doc.get_object_mut(page_id).map_err(|e| e.to_string())?;
+        let page = doc.get_object_mut(page_id)?;
         if let Object::Dictionary(dict) = page {
             match dict.get_mut(b"Contents") {
                 Ok(Object::Array(arr)) => {
@@ -337,6 +338,6 @@ pub fn remove_page_numbers(
     }
 
     let out = output.unwrap_or_else(|| temp_output_path(&path, "unnumbered"));
-    doc.save(&out).map_err(|e| e.to_string())?;
+    doc.save(&out)?;
     Ok(out)
 }

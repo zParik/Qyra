@@ -2,6 +2,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use base64::Engine;
 use serde::Serialize;
+use crate::error::{AppError, AppResult};
 
 #[derive(Serialize, Clone)]
 pub struct CharRect {
@@ -50,13 +51,13 @@ pub fn set_active_document(state: tauri::State<'_, ActiveDocument>, path: Option
 
 /// Reads a PDF file as base64 — kept for the OCR engine which needs a PDF.js document.
 #[tauri::command]
-pub async fn read_pdf_bytes(path: String) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || {
-        let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+pub async fn read_pdf_bytes(path: String) -> AppResult<String> {
+    tokio::task::spawn_blocking(move || -> AppResult<String> {
+        let bytes = std::fs::read(&path)?;
         Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| AppError::Other(e.to_string()))?
 }
 
 /// Render one PDF page via MuPDF. Returns base64 JPEG.
@@ -68,37 +69,37 @@ pub async fn render_page(
     path: String,
     page: u32,
     scale: f32,
-) -> Result<String, String> {
+) -> AppResult<String> {
     let state_clone = state.inner().clone();
     let path_clone = path.clone();
 
-    tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || -> AppResult<String> {
         // Check 1: before opening document
-        if state_clone.path.lock().unwrap().as_deref() != Some(&path_clone) {
-            return Err("Cancelled".to_string());
+        if state_clone.path.lock().map_err(|e| AppError::Lock(e.to_string()))?.as_deref() != Some(&path_clone) {
+            return Err(AppError::Other("Cancelled".to_string()));
         }
 
-        let doc = mupdf::Document::open(&path_clone).map_err(|e| e.to_string())?;
+        let doc = mupdf::Document::open(&path_clone)?;
 
         // Check 2: before loading page
-        if state_clone.path.lock().unwrap().as_deref() != Some(&path_clone) {
-            return Err("Cancelled".to_string());
+        if state_clone.path.lock().map_err(|e| AppError::Lock(e.to_string()))?.as_deref() != Some(&path_clone) {
+            return Err(AppError::Other("Cancelled".to_string()));
         }
 
-        let p = doc.load_page(page as i32 - 1).map_err(|e| e.to_string())?;
+        let p = doc.load_page(page as i32 - 1)?;
         let matrix = mupdf::Matrix::new_scale(scale, scale);
         let cs = mupdf::Colorspace::device_rgb();
 
         // Check 3: before heavy pixmap rendering
-        if state_clone.path.lock().unwrap().as_deref() != Some(&path_clone) {
-            return Err("Cancelled".to_string());
+        if state_clone.path.lock().map_err(|e| AppError::Lock(e.to_string()))?.as_deref() != Some(&path_clone) {
+            return Err(AppError::Other("Cancelled".to_string()));
         }
 
-        let pixmap = p.to_pixmap(&matrix, &cs, false, false).map_err(|e| e.to_string())?;
+        let pixmap = p.to_pixmap(&matrix, &cs, false, false)?;
 
         // Check 4: before raw RgbImage creation
-        if state_clone.path.lock().unwrap().as_deref() != Some(&path_clone) {
-            return Err("Cancelled".to_string());
+        if state_clone.path.lock().map_err(|e| AppError::Lock(e.to_string()))?.as_deref() != Some(&path_clone) {
+            return Err(AppError::Other("Cancelled".to_string()));
         }
 
         let width = pixmap.width();
@@ -106,26 +107,68 @@ pub async fn render_page(
         let samples = pixmap.samples();
 
         let img = image::RgbImage::from_raw(width, height, samples.to_vec())
-            .ok_or_else(|| "pixmap→RgbImage failed".to_string())?;
+            .ok_or_else(|| AppError::Pdf("pixmap→RgbImage failed".to_string()))?;
 
         // Check 5: before slow JPEG compression
-        if state_clone.path.lock().unwrap().as_deref() != Some(&path_clone) {
-            return Err("Cancelled".to_string());
+        if state_clone.path.lock().map_err(|e| AppError::Lock(e.to_string()))?.as_deref() != Some(&path_clone) {
+            return Err(AppError::Other("Cancelled".to_string()));
         }
 
         let buf = {
             let mut buf = Vec::new();
             let mut cursor = std::io::Cursor::new(&mut buf);
             image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, 90)
-                .encode_image(&image::DynamicImage::ImageRgb8(img))
-                .map_err(|e| e.to_string())?;
+                .encode_image(&image::DynamicImage::ImageRgb8(img))?;
             buf
         };
 
         Ok(base64::engine::general_purpose::STANDARD.encode(&buf))
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| AppError::Other(e.to_string()))?
+}
+
+/// Render a page from any PDF path, bypassing the ActiveDocument gate.
+/// Used by compare/preview features that need two PDFs open simultaneously.
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+pub async fn render_page_uncached(
+    path: String,
+    page: u32,
+    scale: f32,
+) -> AppResult<String> {
+    tokio::task::spawn_blocking(move || -> AppResult<String> {
+        let doc = mupdf::Document::open(&path)?;
+        let p = doc.load_page(page as i32 - 1)?;
+        let matrix = mupdf::Matrix::new_scale(scale, scale);
+        let cs = mupdf::Colorspace::device_rgb();
+        let pixmap = p.to_pixmap(&matrix, &cs, false, false)?;
+        let width = pixmap.width();
+        let height = pixmap.height();
+        let samples = pixmap.samples();
+        let img = image::RgbImage::from_raw(width, height, samples.to_vec())
+            .ok_or_else(|| AppError::Pdf("pixmap→RgbImage failed".to_string()))?;
+        let buf = {
+            let mut buf = Vec::new();
+            let mut cursor = std::io::Cursor::new(&mut buf);
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, 90)
+                .encode_image(&image::DynamicImage::ImageRgb8(img))?;
+            buf
+        };
+        Ok(base64::engine::general_purpose::STANDARD.encode(&buf))
+    })
+    .await
+    .map_err(|e| AppError::Other(e.to_string()))?
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+pub async fn render_page_uncached(
+    _path: String,
+    _page: u32,
+    _scale: f32,
+) -> AppResult<String> {
+    Err(AppError::Other("Not supported on Android".to_string()))
 }
 
 #[tauri::command]
@@ -135,8 +178,8 @@ pub async fn render_page(
     path: String,
     page: u32,
     scale: f32,
-) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || {
+) -> AppResult<String> {
+    tokio::task::spawn_blocking(move || -> Result<String, String> {
         use crate::commands::android_pdf::{app_cache_dir, open_pfd, pdf_render_lock};
         use jni::objects::{JObject, JValue};
 
@@ -287,32 +330,33 @@ pub async fn render_page(
         result
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| AppError::Other(e.to_string()))?
+    .map_err(AppError::Other)
 }
 
 /// Returns height/width aspect ratio of page 1.
 #[tauri::command]
 #[cfg(not(target_os = "android"))]
-pub async fn get_page_aspect_ratio(path: String) -> Result<f64, String> {
-    tokio::task::spawn_blocking(move || {
-        let doc = mupdf::Document::open(&path).map_err(|e| e.to_string())?;
-        let page = doc.load_page(0).map_err(|e| e.to_string())?;
-        let b = page.bounds().map_err(|e| e.to_string())?;
+pub async fn get_page_aspect_ratio(path: String) -> AppResult<f64> {
+    tokio::task::spawn_blocking(move || -> AppResult<f64> {
+        let doc = mupdf::Document::open(&path)?;
+        let page = doc.load_page(0)?;
+        let b = page.bounds()?;
         let w = (b.x1 - b.x0) as f64;
         let h = (b.y1 - b.y0) as f64;
         if w == 0.0 {
-            return Err("zero page width".to_string());
+            return Err(AppError::Invalid("zero page width".to_string()));
         }
         Ok(h / w)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| AppError::Other(e.to_string()))?
 }
 
 #[tauri::command]
 #[cfg(target_os = "android")]
-pub async fn get_page_aspect_ratio(path: String) -> Result<f64, String> {
-    tokio::task::spawn_blocking(move || {
+pub async fn get_page_aspect_ratio(path: String) -> AppResult<f64> {
+    tokio::task::spawn_blocking(move || -> Result<f64, String> {
         use crate::commands::android_pdf::{open_pfd, pdf_render_lock};
         use jni::objects::{JObject, JValue};
 
@@ -367,7 +411,8 @@ pub async fn get_page_aspect_ratio(path: String) -> Result<f64, String> {
         result
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| AppError::Other(e.to_string()))?
+    .map_err(AppError::Other)
 }
 
 /// Extract per-character bounding boxes from a PDF page via MuPDF.
@@ -379,25 +424,25 @@ pub async fn get_text_page(
     state: tauri::State<'_, ActiveDocument>,
     path: String,
     page: u32,
-) -> Result<Vec<TextLine>, String> {
+) -> AppResult<Vec<TextLine>> {
     let state_clone = state.inner().clone();
     let path_clone = path.clone();
 
-    tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || -> AppResult<Vec<TextLine>> {
         // Check 1: before opening document
-        if state_clone.path.lock().unwrap().as_deref() != Some(&path_clone) {
-            return Err("Cancelled".to_string());
+        if state_clone.path.lock().map_err(|e| AppError::Lock(e.to_string()))?.as_deref() != Some(&path_clone) {
+            return Err(AppError::Other("Cancelled".to_string()));
         }
 
-        let doc = mupdf::Document::open(&path_clone).map_err(|e| e.to_string())?;
+        let doc = mupdf::Document::open(&path_clone)?;
 
         // Check 2: before loading page
-        if state_clone.path.lock().unwrap().as_deref() != Some(&path_clone) {
-            return Err("Cancelled".to_string());
+        if state_clone.path.lock().map_err(|e| AppError::Lock(e.to_string()))?.as_deref() != Some(&path_clone) {
+            return Err(AppError::Other("Cancelled".to_string()));
         }
 
-        let p = doc.load_page(page as i32 - 1).map_err(|e| e.to_string())?;
-        let b = p.bounds().map_err(|e| e.to_string())?;
+        let p = doc.load_page(page as i32 - 1)?;
+        let b = p.bounds()?;
         let pw = (b.x1 - b.x0) as f64;
         let ph = (b.y1 - b.y0) as f64;
         if pw == 0.0 || ph == 0.0 {
@@ -405,11 +450,11 @@ pub async fn get_text_page(
         }
 
         // Check 3: before text extraction
-        if state_clone.path.lock().unwrap().as_deref() != Some(&path_clone) {
-            return Err("Cancelled".to_string());
+        if state_clone.path.lock().map_err(|e| AppError::Lock(e.to_string()))?.as_deref() != Some(&path_clone) {
+            return Err(AppError::Other("Cancelled".to_string()));
         }
 
-        let stext = p.to_text_page(mupdf::TextPageFlags::empty()).map_err(|e| e.to_string())?;
+        let stext = p.to_text_page(mupdf::TextPageFlags::empty())?;
         let mut lines: Vec<TextLine> = Vec::new();
 
         for block in stext.blocks() {
@@ -462,7 +507,7 @@ pub async fn get_text_page(
         Ok(lines)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| AppError::Other(e.to_string()))?
 }
 
 #[tauri::command]
@@ -471,7 +516,7 @@ pub async fn get_text_page(
     _state: tauri::State<'_, ActiveDocument>,
     _path: String,
     _page: u32,
-) -> Result<Vec<TextLine>, String> {
+) -> AppResult<Vec<TextLine>> {
     Ok(vec![])
 }
 
@@ -480,16 +525,16 @@ pub async fn get_text_page(
 /// Runs all pages in a single spawn_blocking — no repeated document opens.
 #[tauri::command]
 #[cfg(not(target_os = "android"))]
-pub async fn search_pdf(path: String, query: String) -> Result<Vec<SearchHit>, String> {
-    tokio::task::spawn_blocking(move || {
-        let doc = mupdf::Document::open(&path).map_err(|e| e.to_string())?;
-        let page_count = doc.page_count().map_err(|e| e.to_string())?;
+pub async fn search_pdf(path: String, query: String) -> AppResult<Vec<SearchHit>> {
+    tokio::task::spawn_blocking(move || -> AppResult<Vec<SearchHit>> {
+        let doc = mupdf::Document::open(&path)?;
+        let page_count = doc.page_count()?;
         let q = query.to_lowercase();
         let mut results: Vec<SearchHit> = Vec::new();
 
         for i in 0..page_count {
-            let page = doc.load_page(i).map_err(|e| e.to_string())?;
-            let stext = page.to_text_page(mupdf::TextPageFlags::empty()).map_err(|e| e.to_string())?;
+            let page = doc.load_page(i)?;
+            let stext = page.to_text_page(mupdf::TextPageFlags::empty())?;
 
             let mut text = String::new();
             for block in stext.blocks() {
@@ -514,12 +559,12 @@ pub async fn search_pdf(path: String, query: String) -> Result<Vec<SearchHit>, S
         Ok(results)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| AppError::Other(e.to_string()))?
 }
 
 #[tauri::command]
 #[cfg(target_os = "android")]
-pub async fn search_pdf(_path: String, _query: String) -> Result<Vec<SearchHit>, String> {
+pub async fn search_pdf(_path: String, _query: String) -> AppResult<Vec<SearchHit>> {
     Ok(vec![])
 }
 
@@ -528,18 +573,18 @@ pub async fn search_pdf(_path: String, _query: String) -> Result<Vec<SearchHit>,
 /// `page` is 1-indexed.
 #[tauri::command]
 #[cfg(not(target_os = "android"))]
-pub async fn get_page_links(path: String, page: u32) -> Result<Vec<PageLink>, String> {
-    tokio::task::spawn_blocking(move || {
-        let doc = mupdf::Document::open(&path).map_err(|e| e.to_string())?;
-        let p = doc.load_page(page as i32 - 1).map_err(|e| e.to_string())?;
-        let b = p.bounds().map_err(|e| e.to_string())?;
+pub async fn get_page_links(path: String, page: u32) -> AppResult<Vec<PageLink>> {
+    tokio::task::spawn_blocking(move || -> AppResult<Vec<PageLink>> {
+        let doc = mupdf::Document::open(&path)?;
+        let p = doc.load_page(page as i32 - 1)?;
+        let b = p.bounds()?;
         let pw = (b.x1 - b.x0) as f64;
         let ph = (b.y1 - b.y0) as f64;
         if pw == 0.0 || ph == 0.0 {
             return Ok(vec![]);
         }
         let mut result = Vec::new();
-        for link in p.links().map_err(|e| e.to_string())? {
+        for link in p.links()? {
             if link.uri.is_empty() && link.dest.is_none() {
                 continue;
             }
@@ -557,12 +602,12 @@ pub async fn get_page_links(path: String, page: u32) -> Result<Vec<PageLink>, St
         Ok(result)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| AppError::Other(e.to_string()))?
 }
 
 #[tauri::command]
 #[cfg(target_os = "android")]
-pub async fn get_page_links(_path: String, _page: u32) -> Result<Vec<PageLink>, String> {
+pub async fn get_page_links(_path: String, _page: u32) -> AppResult<Vec<PageLink>> {
     Ok(vec![])
 }
 
@@ -578,11 +623,11 @@ pub struct PageLink {
 
 /// Legacy stub — kept so old callers don't get unresolved command errors.
 #[tauri::command]
-pub fn render_thumbnail(path: String, _page: u32, _dpi: Option<u32>) -> Result<String, String> {
+pub fn render_thumbnail(path: String, _page: u32, _dpi: Option<u32>) -> AppResult<String> {
     if !Path::new(&path).exists() {
-        return Err(format!("File not found: {}", path));
+        return Err(AppError::NotFound(format!("File not found: {}", path)));
     }
-    Err("Use render_page".to_string())
+    Err(AppError::Other("Use render_page".to_string()))
 }
 
 /// Export every page of a PDF as an image file using MuPDF.
@@ -593,10 +638,10 @@ pub async fn pdf_to_images(
     format: Option<String>,
     dpi: Option<u32>,
     output_dir: Option<String>,
-) -> Result<Vec<String>, String> {
-    tokio::task::spawn_blocking(move || {
-        let doc = mupdf::Document::open(&path).map_err(|e| e.to_string())?;
-        let page_count = doc.page_count().map_err(|e| e.to_string())?;
+) -> AppResult<Vec<String>> {
+    tokio::task::spawn_blocking(move || -> AppResult<Vec<String>> {
+        let doc = mupdf::Document::open(&path)?;
+        let page_count = doc.page_count()?;
         let fmt = format.unwrap_or_else(|| "png".to_string()).to_lowercase();
         let scale = dpi.unwrap_or(150) as f32 / 72.0;
         let stem = Path::new(&path)
@@ -613,22 +658,22 @@ pub async fn pdf_to_images(
         };
         let mut paths = Vec::new();
         for i in 0..page_count {
-            let page = doc.load_page(i).map_err(|e| e.to_string())?;
-            let pixmap = page.to_pixmap(&matrix, &cs, false, false).map_err(|e| e.to_string())?;
+            let page = doc.load_page(i)?;
+            let pixmap = page.to_pixmap(&matrix, &cs, false, false)?;
             let img = image::RgbImage::from_raw(
                 pixmap.width(),
                 pixmap.height(),
                 pixmap.samples().to_vec(),
             )
-            .ok_or_else(|| "pixmap→image failed".to_string())?;
+            .ok_or_else(|| AppError::Pdf("pixmap→image failed".to_string()))?;
             let out = format!("{}/{}_page{:04}.{}", dir, stem, i + 1, fmt);
-            img.save_with_format(&out, img_fmt).map_err(|e| e.to_string())?;
+            img.save_with_format(&out, img_fmt)?;
             paths.push(out);
         }
         Ok(paths)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| AppError::Other(e.to_string()))?
 }
 
 #[tauri::command]
@@ -638,6 +683,6 @@ pub async fn pdf_to_images(
     _format: Option<String>,
     _dpi: Option<u32>,
     _output_dir: Option<String>,
-) -> Result<Vec<String>, String> {
-    Err("pdf_to_images not supported on Android".to_string())
+) -> AppResult<Vec<String>> {
+    Err(AppError::Other("pdf_to_images not supported on Android".to_string()))
 }
