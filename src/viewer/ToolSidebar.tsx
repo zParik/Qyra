@@ -18,13 +18,25 @@ import { CommentPanel } from "./CommentPanel";
 import { CropPanel } from "./tools/CropPanel";
 import { FlattenPanel } from "./tools/FlattenPanel";
 import { ExportTextPanel } from "./tools/ExportTextPanel";
+import { StampsPanel } from "./tools/StampsPanel";
+import { ExportWordPanel } from "./tools/ExportWordPanel";
+import { RedactPanel, type RedactRegion } from "./tools/RedactPanel";
+import { ExportAnnotationsPanel } from "./tools/ExportAnnotationsPanel";
+import { ComparePanel } from "./tools/ComparePanel";
 import { invoke } from "@tauri-apps/api/core";
+import {
+  IconComment, IconPencil, IconRotate, IconTrash, IconReorder, IconSplit,
+  IconPageNumbers, IconStar, IconForms, IconCrop, IconRedact, IconCheckBadge,
+  IconCompress, IconLock, IconUnlock, IconEdit, IconImage, IconWatermark,
+  IconFlatten, IconDocText, IconDocWord, IconList, IconCompare,
+  IconChevronLeft, IconChevronRight, IconPrint,
+} from "./icons";
 
 export type ViewerTool =
   | "rotate" | "remove" | "reorder" | "split"
   | "compress" | "page-numbers" | "protect" | "unlock"
   | "metadata" | "export-images" | "draw" | "comment" | "watermark"
-  | "annotate" | "forms" | "signature" | "crop" | "flatten" | "export-text" | "redact";
+  | "annotate" | "forms" | "signature" | "crop" | "flatten" | "export-text" | "export-word" | "redact" | "stamps" | "export-annotations" | "compare";
 
 interface ToolSidebarProps {
   file: LoadedFile;
@@ -36,206 +48,50 @@ interface ToolSidebarProps {
   splitAfter: number;
   onSplitAfterChange: (n: number) => void;
   onPageSelect: (page: number) => void;
+  currentPage: number;
   /** Switch sidebar to comments tab externally (e.g. when comment pill is clicked) */
   forceCommentsTab?: boolean;
+  /** Redact regions marked on pages (owned by Viewer) */
+  redactRegions?: RedactRegion[];
+  /** Clear all redact regions */
+  onClearRedactRegions?: () => void;
+  /** Redaction selection mode: free-form region drag, or driven by text selection */
+  redactMode?: "region" | "text";
+  onRedactModeChange?: (m: "region" | "text") => void;
 }
 
 interface ToolDef { id: ViewerTool; label: string; icon: React.ReactNode }
 
+const ICON_CLS = "w-4 h-4";
+
 const PAGE_TOOLS: ToolDef[] = [
-  {
-    id: "comment",
-    label: "Comments",
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-          d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
-      </svg>
-    ),
-  },
-  {
-    id: "draw",
-    label: "Draw & Annotate",
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-      </svg>
-    ),
-  },
-  {
-    id: "rotate",
-    label: "Rotate Pages",
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-      </svg>
-    ),
-  },
-  {
-    id: "remove",
-    label: "Remove Pages",
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-          d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-      </svg>
-    ),
-  },
-  {
-    id: "reorder",
-    label: "Reorder Pages",
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-      </svg>
-    ),
-  },
-  {
-    id: "split",
-    label: "Split PDF",
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-          d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
-      </svg>
-    ),
-  },
-  {
-    id: "page-numbers",
-    label: "Page Numbers",
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-          d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" />
-      </svg>
-    ),
-  },
-  {
-    id: "annotate",
-    label: "Annotate",
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
-      </svg>
-    ),
-  },
-  {
-    id: "forms",
-    label: "Fill Forms",
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-      </svg>
-    ),
-  },
-  {
-    id: "signature",
-    label: "Sign",
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-      </svg>
-    ),
-  },
-  {
-    id: "crop",
-    label: "Crop Pages",
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-      </svg>
-    ),
-  },
-  {
-    id: "redact",
-    label: "Redact",
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
-      </svg>
-    ),
-  },
+  { id: "comment",      label: "Comments",        icon: <IconComment className={ICON_CLS} /> },
+  { id: "draw",         label: "Draw & Annotate", icon: <IconPencil className={ICON_CLS} /> },
+  { id: "rotate",       label: "Rotate Pages",    icon: <IconRotate className={ICON_CLS} /> },
+  { id: "remove",       label: "Remove Pages",    icon: <IconTrash className={ICON_CLS} /> },
+  { id: "reorder",      label: "Reorder Pages",   icon: <IconReorder className={ICON_CLS} /> },
+  { id: "split",        label: "Split PDF",       icon: <IconSplit className={ICON_CLS} /> },
+  { id: "page-numbers", label: "Page Numbers",    icon: <IconPageNumbers className={ICON_CLS} /> },
+  { id: "annotate",     label: "Annotate",        icon: <IconStar className={ICON_CLS} /> },
+  { id: "forms",        label: "Fill Forms",      icon: <IconForms className={ICON_CLS} /> },
+  { id: "signature",    label: "Sign",            icon: <IconPencil className={ICON_CLS} /> },
+  { id: "crop",         label: "Crop Pages",      icon: <IconCrop className={ICON_CLS} /> },
+  { id: "redact",       label: "Redact",          icon: <IconRedact className={ICON_CLS} /> },
+  { id: "stamps",       label: "Stamps",          icon: <IconCheckBadge className={ICON_CLS} /> },
 ];
 
 const FILE_TOOLS: ToolDef[] = [
-  {
-    id: "compress",
-    label: "Compress",
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 13l-7 7-7-7m14-8l-7 7-7-7" />
-      </svg>
-    ),
-  },
-  {
-    id: "protect",
-    label: "Password Protect",
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-          d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-      </svg>
-    ),
-  },
-  {
-    id: "unlock",
-    label: "Unlock PDF",
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-          d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
-      </svg>
-    ),
-  },
-  {
-    id: "metadata",
-    label: "Edit Metadata",
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-          d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-      </svg>
-    ),
-  },
-  {
-    id: "export-images",
-    label: "Export to Images",
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-          d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-      </svg>
-    ),
-  },
-  {
-    id: "watermark",
-    label: "Watermark",
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-          d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
-      </svg>
-    ),
-  },
-  {
-    id: "flatten",
-    label: "Flatten PDF",
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 13l-7 7-7-7m14-8l-7 7-7-7" />
-      </svg>
-    ),
-  },
-  {
-    id: "export-text",
-    label: "Export Text",
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-      </svg>
-    ),
-  },
+  { id: "compress",            label: "Compress",           icon: <IconCompress className={ICON_CLS} /> },
+  { id: "protect",             label: "Password Protect",   icon: <IconLock className={ICON_CLS} /> },
+  { id: "unlock",              label: "Unlock PDF",         icon: <IconUnlock className={ICON_CLS} /> },
+  { id: "metadata",            label: "Edit Metadata",      icon: <IconEdit className={ICON_CLS} /> },
+  { id: "export-images",       label: "Export to Images",   icon: <IconImage className={ICON_CLS} /> },
+  { id: "watermark",           label: "Watermark",          icon: <IconWatermark className={ICON_CLS} /> },
+  { id: "flatten",             label: "Flatten PDF",        icon: <IconFlatten className={ICON_CLS} /> },
+  { id: "export-text",         label: "Export Text",        icon: <IconDocText className={ICON_CLS} /> },
+  { id: "export-word",         label: "Export to Word",     icon: <IconDocWord className={ICON_CLS} /> },
+  { id: "export-annotations",  label: "Export Annotations", icon: <IconList className={ICON_CLS} /> },
+  { id: "compare",             label: "Compare PDFs",       icon: <IconCompare className={ICON_CLS} /> },
 ];
 
 const ALL_TOOLS = [...PAGE_TOOLS, ...FILE_TOOLS];
@@ -244,7 +100,7 @@ import { UI, MONO } from "../lib/tokens";
 
 type SidebarTab = "tools" | "outline" | "comments";
 
-export function ToolSidebar({ file, onApplied, activeTool, onToolChange, selectedPages, onSelectedPagesChange, splitAfter, onSplitAfterChange, onPageSelect, forceCommentsTab }: ToolSidebarProps) {
+export function ToolSidebar({ file, onApplied, activeTool, onToolChange, selectedPages, onSelectedPagesChange, splitAfter, onSplitAfterChange, onPageSelect, currentPage, forceCommentsTab, redactRegions, onClearRedactRegions, redactMode, onRedactModeChange }: ToolSidebarProps) {
   const setActiveTool = onToolChange;
   const [tab, setTab] = useState<SidebarTab>("tools");
 
@@ -277,6 +133,21 @@ export function ToolSidebar({ file, onApplied, activeTool, onToolChange, selecte
     flatten: <FlattenPanel file={file} onApplied={onApplied} />,
     "export-text": <ExportTextPanel file={file} />,
     draw: <DrawPanel />,
+    stamps: <StampsPanel filePath={file.path} currentPage={currentPage} onApplied={onApplied} />,
+    "export-word": <ExportWordPanel file={file} />,
+    redact: (
+      <RedactPanel
+        file={file}
+        onApplied={onApplied}
+        markedRegions={redactRegions ?? []}
+        onClearRegions={onClearRedactRegions ?? (() => {})}
+        currentPage={currentPage}
+        mode={redactMode ?? "region"}
+        onModeChange={onRedactModeChange ?? (() => {})}
+      />
+    ),
+    "export-annotations": <ExportAnnotationsPanel file={file} />,
+    compare: <ComparePanel file={file} />,
     // comment, annotate, forms, signature, redact have no sidebar panel — handled directly in Viewer
   };
 
@@ -325,9 +196,7 @@ export function ToolSidebar({ file, onApplied, activeTool, onToolChange, selecte
                 style={{ padding: 4, borderRadius: 4 }}
                 title="Back to tools (Esc)"
               >
-                <svg width={14} height={14} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                </svg>
+                <IconChevronLeft width={14} height={14} />
               </button>
               <span style={{ fontFamily: UI, fontSize: 12, fontWeight: 600, color: "var(--accent)" }}>
                 {ALL_TOOLS.find((t) => t.id === activeTool)?.label}
@@ -351,10 +220,7 @@ export function ToolSidebar({ file, onApplied, activeTool, onToolChange, selecte
                 style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "8px 16px", textAlign: "left" }}
               >
                 <span className="v-row-icon" style={{ flexShrink: 0 }}>
-                  <svg width={16} height={16} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                      d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
-                  </svg>
+                  <IconPrint width={16} height={16} />
                 </span>
                 <span style={{ flex: 1, fontFamily: UI, fontSize: 12 }}>Print</span>
                 <span style={{ fontFamily: MONO, fontSize: 10.5, color: "var(--viewer-text-muted)" }}>Ctrl+P</span>
@@ -375,9 +241,9 @@ export function ToolSidebar({ file, onApplied, activeTool, onToolChange, selecte
       {/* Comments tab */}
       {tab === "comments" && (
         <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-          <CommentPanel 
-            docPath={file.path} 
-            onPageSelect={onPageSelect} 
+          <CommentPanel
+            docPath={file.path}
+            onPageSelect={onPageSelect}
             isCommentMode={activeTool === "comment"}
             onToggleMode={() => setActiveTool(activeTool === "comment" ? null : "comment")}
           />
@@ -527,9 +393,7 @@ function ToolGroup({
             {tool.icon}
           </span>
           <span style={{ flex: 1, fontFamily: UI, fontSize: 12 }}>{tool.label}</span>
-          <svg width={12} height={12} fill="none" stroke="currentColor" viewBox="0 0 24 24" className="v-row-chevron" style={{ flexShrink: 0 }}>
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
+          <IconChevronRight width={12} height={12} className="v-row-chevron" style={{ flexShrink: 0 }} />
         </button>
       ))}
       <div style={{ paddingBottom: 4 }} />

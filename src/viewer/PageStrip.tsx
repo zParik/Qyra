@@ -1,4 +1,4 @@
-import { Fragment, useRef, useEffect, useCallback } from "react";
+import { Fragment, useRef, useEffect, useCallback, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 interface PageStripProps {
@@ -12,6 +12,7 @@ interface PageStripProps {
   splitAfter?: number;
   onSplitAfterChange?: (page: number) => void;
   onVisibleRangeChange?: (range: [number, number]) => void;
+  onReorder?: (fromPage: number, dropBeforePage: number) => void;
 }
 
 const SLOT_HEIGHT = 120;
@@ -28,8 +29,12 @@ export function PageStrip({
   splitAfter,
   onSplitAfterChange,
   onVisibleRangeChange,
+  onReorder,
 }: PageStripProps) {
   const isSplitMode = onSplitAfterChange !== undefined;
+  const isDragEnabled = !!onReorder && !selectionMode && !isSplitMode;
+  const dragPageRef = useRef<number | null>(null);
+  const [dropTarget, setDropTarget] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const virtualizer = useVirtualizer({
@@ -40,8 +45,8 @@ export function PageStrip({
   });
 
   const virtualItems = virtualizer.getVirtualItems();
-  const firstVisible = virtualItems.length > 0 ? virtualItems[0].index + 1 : 0;
-  const lastVisible = virtualItems.length > 0 ? virtualItems[virtualItems.length - 1].index + 1 : 0;
+  const firstVisible = virtualItems.length > 0 ? virtualItems[0]!.index + 1 : 0;
+  const lastVisible = virtualItems.length > 0 ? virtualItems[virtualItems.length - 1]!.index + 1 : 0;
 
   // Notify parent of visible range so thumbnail hook can prioritize renders
   useEffect(() => {
@@ -95,12 +100,54 @@ export function PageStrip({
             const isActive = !selectionMode && !isSplitMode && page === currentPage;
             const isSplitPoint = isSplitMode && splitAfter === page;
 
+            const isDropTarget = dropTarget === page;
             return (
               <Fragment key={page}>
+                {/* Drop-before indicator line */}
+                {isDropTarget && isDragEnabled && (
+                  <div style={{
+                    position: "absolute",
+                    top: vItem.start - 2,
+                    left: 8, right: 8,
+                    height: 3, borderRadius: 2,
+                    background: "var(--accent)",
+                    pointerEvents: "none",
+                    zIndex: 10,
+                  }} />
+                )}
                 <button
                   onClick={() => handleClick(page)}
                   className="rounded-lg overflow-hidden border-2 transition-colors block relative"
                   title={isSplitMode ? `Split after page ${page}` : undefined}
+                  draggable={isDragEnabled}
+                  onDragStart={isDragEnabled ? (e) => {
+                    dragPageRef.current = page;
+                    e.dataTransfer.effectAllowed = "move";
+                    e.dataTransfer.setData("text/plain", String(page));
+                  } : undefined}
+                  onDragOver={isDragEnabled ? (e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                    if (dragPageRef.current !== null && dragPageRef.current !== page) {
+                      setDropTarget(page);
+                    }
+                  } : undefined}
+                  onDragLeave={isDragEnabled ? () => {
+                    setDropTarget(null);
+                  } : undefined}
+                  onDrop={isDragEnabled ? (e) => {
+                    e.preventDefault();
+                    const from = dragPageRef.current;
+                    if (from !== null && from !== page) {
+                      onReorder!(from, page);
+                    }
+                    dragPageRef.current = null;
+                    setDropTarget(null);
+                  } : undefined}
+                  onDragEnd={isDragEnabled ? () => {
+                    dragPageRef.current = null;
+                    setDropTarget(null);
+                  } : undefined}
                   style={{
                     position: "absolute",
                     top: vItem.start,
@@ -112,7 +159,8 @@ export function PageStrip({
                       : isActive || isSplitPoint
                       ? "var(--action)"
                       : "transparent",
-                    cursor: isSplitMode ? "pointer" : undefined,
+                    cursor: isDragEnabled ? "grab" : isSplitMode ? "pointer" : undefined,
+                    opacity: isDragEnabled && dragPageRef.current === page ? 0.4 : 1,
                   }}
                   onMouseEnter={(e) => {
                     if (!isSelected && !isActive && !isSplitPoint)

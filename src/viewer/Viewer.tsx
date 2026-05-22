@@ -7,8 +7,7 @@ import { usePageThumbnails, evictPathFromThumbnailCache } from "../hooks/usePage
 import { PageStrip } from "./PageStrip";
 import { ToolSidebar, ViewerTool } from "./ToolSidebar";
 import { invoke } from "@tauri-apps/api/core";
-import { message } from "@tauri-apps/plugin-dialog";
-import { copyFile, showSaveDialog, bakeAnnotations, loadComments, saveComments, getSetting, setSetting } from "../lib/tauri";
+import { copyFile, showSaveDialog, bakeAnnotations, setActiveDocument } from "../lib/tauri";
 import { triggerPrint } from "./tools/PrintPanel";
 import { DrawingCanvas } from "./DrawingCanvas";
 import { VirtualPageBackground } from "./VirtualPageBackground";
@@ -17,13 +16,23 @@ import { TextLayer } from "./TextLayer";
 import { LinkLayer } from "./LinkLayer";
 import { FindBar } from "./FindBar";
 import { CommentLayer, CommentEditor } from "./CommentLayer";
-import { useCommentsStore } from "../store/useCommentsStore";
 import { FormLayer } from "./FormLayer";
 import { AnnotationLayer } from "./AnnotationLayer";
-import { SignatureLayer, Signature } from "./SignatureLayer";
-import { AnnotationToolbar, AnnotationTool } from "./AnnotationToolbar";
+import { SignatureLayer } from "./SignatureLayer";
+import { RedactLayer } from "./RedactLayer";
+import { AnnotationToolbar } from "./AnnotationToolbar";
 import { SignaturePanel } from "./tools/SignaturePanel";
 import { useFormFilling } from "./useFormFilling";
+import { PresentationMode } from "./PresentationMode";
+import { useComments } from "./hooks/useComments";
+import { useViewerUI } from "./hooks/useViewerUI";
+import { useToolMode } from "./hooks/useToolMode";
+import { useFindInDocument } from "./hooks/useFindInDocument";
+import { useSignatures } from "./hooks/useSignatures";
+import { useTextSelection } from "./hooks/useTextSelection";
+import { useGoToPage } from "./hooks/useGoToPage";
+import { useRedactRegions } from "./hooks/useRedactRegions";
+import { useAutoSave } from "./hooks/useAutoSave";
 // import { getPageOcrText } from "../lib/ocrEngine";
 
 const EMPTY_VIRTUAL_PAGES: VirtualPage[] = [];
@@ -35,10 +44,10 @@ function findActiveMatchOrdinalOnPage(
   globalIdx: number
 ): number {
   if (findMatches.length === 0 || globalIdx < 0 || globalIdx >= findMatches.length) return -1;
-  if (findMatches[globalIdx].page !== page) return -1;
+  if (findMatches[globalIdx]!.page !== page) return -1;
   let ordinal = -1;
   for (let i = 0; i <= globalIdx; i++) {
-    if (findMatches[i].page === page) ordinal++;
+    if (findMatches[i]!.page === page) ordinal++;
   }
   return ordinal;
 }
@@ -53,14 +62,9 @@ export default function Viewer() {
   } = useAppStore();
   const [currentPage, setCurrentPage] = useState(1);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const [autoSave, setAutoSave] = useState(false);
-  const [confirmingBack, setConfirmingBack] = useState(false);
-  const [activeTool, setActiveTool] = useState<ViewerTool | null>(null);
-  const [selectedPages, setSelectedPages] = useState<Set<number>>(new Set());
-  const [splitAfter, setSplitAfter] = useState(() =>
-    Math.max(1, Math.floor((viewerFile?.info?.page_count ?? 2) / 2))
-  );
+
   const undoStroke = useNotesStore((s) => s.undoStroke);
   const virtualPages = useNotesStore((s) => s.virtualPages[viewerFile?.path ?? ""] ?? EMPTY_VIRTUAL_PAGES);
   const addVirtualPage = useNotesStore((s) => s.addVirtualPage);
@@ -69,151 +73,71 @@ export default function Viewer() {
   const [addPageAt, setAddPageAt] = useState<number | null>(null);
 
   const [docAspectRatio, setDocAspectRatio] = useState(1.4142);
-
   const [zoom, setZoom] = useState(1.0);
-  const [showStrip, setShowStrip] = useState(() => window.innerWidth >= 640);
-  const [showTools, setShowTools] = useState(() => window.innerWidth >= 640);
 
-  // Find-in-document
-  const [findOpen, setFindOpen] = useState(false);
-  const [findQuery, setFindQuery] = useState("");
-  const [findMatches, setFindMatches] = useState<{ page: number }[]>([]);
-  const [findCurrentIdx, setFindCurrentIdx] = useState(0);
-  const [ocrSearching, setOcrSearching] = useState(false);
-  const [ocrProgress, setOcrProgress] = useState<{ page: number; total: number } | undefined>();
+  // Viewer UI: chrome visibility, reading/presentation modes, back-confirm overlay
+  const {
+    showStrip, setShowStrip,
+    showTools, setShowTools,
+    readingMode, setReadingMode,
+    showPresentation, setShowPresentation,
+    confirmingBack, setConfirmingBack,
+  } = useViewerUI();
 
-  // Go-to-page input
-  const [editingPage, setEditingPage] = useState(false);
-  const [pageInputValue, setPageInputValue] = useState("");
+  // Tool-mode cluster (activeTool, selectedPages, splitAfter, annotation pills)
+  const initialSplitAfter = Math.max(1, Math.floor((viewerFile?.info?.page_count ?? 2) / 2));
+  const {
+    activeTool, setActiveTool,
+    selectedPages, setSelectedPages,
+    splitAfter, setSplitAfter,
+    activeAnnot, setActiveAnnot,
+    activeAnnotTool, setActiveAnnotTool,
+    annotColor, setAnnotColor,
+    annotRefreshKey, setAnnotRefreshKey,
+  } = useToolMode(initialSplitAfter);
 
-  // Annotation tool pills (activate draw mode)
-  const [activeAnnot, setActiveAnnot] = useState<string | null>(null);
+  // Redaction state (regions + mode)
+  const { redactRegions, setRedactRegions, redactMode, setRedactMode } = useRedactRegions(viewerFile?.path);
 
-  // Standard PDF annotation mode
-  const [activeAnnotTool, setActiveAnnotTool] = useState<AnnotationTool | null>(null);
-  const [annotColor, setAnnotColor] = useState("#ffeb3b");
-  const [annotRefreshKey, setAnnotRefreshKey] = useState(0);
+  // Auto-save preference + timers
+  const { autoSave, setAutoSave, autoSaveRef, autoSaveTimerRef, savedFeedbackTimerRef } = useAutoSave();
 
-  // E-signatures
-  const [signatures, setSignatures] = useState<Signature[]>([]);
-  const [pendingSignature, setPendingSignature] = useState<string | null>(null);
-  const [showSignaturePanel, setShowSignaturePanel] = useState(false);
+  // Go-to-page input state
+  const { editingPage, setEditingPage, pageInputValue, setPageInputValue } = useGoToPage();
+
+  // E-signature state
+  const {
+    signatures, setSignatures,
+    pendingSignature, setPendingSignature,
+    showSignaturePanel, setShowSignaturePanel,
+  } = useSignatures();
 
   // Form filling
   const { fieldValues, setFieldValue, saveFormFields: _saveFormFields, isDirty: _isFormDirty } = useFormFilling();
 
-  // Comments
-  const commentsRef = useCommentsStore((s) => s.comments[viewerFile?.path ?? ""]);
-  const comments = commentsRef ?? [];
-  const loadCommentsIntoStore = useCommentsStore((s) => s.loadComments);
-  const saveTimerRef = useRef<number | undefined>(undefined);
-  const autoSaveRef = useRef(autoSave);
-  const autoSaveTimerRef = useRef<number | undefined>(undefined);
-  const savedFeedbackTimerRef = useRef<number | undefined>(undefined);
-  const isLoadingCommentsRef = useRef(false);
+  // Comments (loads on mount, auto-saves on change). The comments themselves
+  // are read by CommentLayer/sidebar via useCommentsStore — Viewer only needs
+  // the hook to wire up the load and auto-save effects.
+  useComments(viewerFile?.path);
   // True while comment mode is active — opens the comments tab in the sidebar
   const isCommentMode = activeTool === "comment";
 
-  // Text selection popup
-  const [selectionPopup, setSelectionPopup] = useState<{
-    text: string;
-    rect: DOMRect;
-    pageIndex: number;
-    normX: number;
-    normY: number;
-  } | null>(null);
+  // Text selection popup + editor
+  const { selectionPopup, setSelectionPopup, selectionEditor, setSelectionEditor } = useTextSelection();
 
-  // Editor opened from text selection
-  const [selectionEditor, setSelectionEditor] = useState<{
-    text: string;
-    screenX: number;
-    screenY: number;
-    pageIndex: number;
-    normX: number;
-    normY: number;
-  } | null>(null);
+  // scrollToPage is defined later in the body but the find-in-document hook
+  // needs to call it; route the call through a ref so the hook can fire
+  // before the function literal exists.
+  const scrollToPageRef = useRef<(page: number) => void>(() => {});
 
-  // Load comments from embedded PDF attachment once on mount
-  useEffect(() => {
-    if (!viewerFile?.path) return;
-    let cancelled = false;
-    isLoadingCommentsRef.current = true;
-    loadComments(viewerFile.path)
-      .then((json) => {
-        if (cancelled) return;
-        try {
-          const parsed = JSON.parse(json);
-          if (Array.isArray(parsed)) loadCommentsIntoStore(viewerFile.path, parsed);
-        } catch { /* ignore malformed JSON */ }
-      })
-      .catch(() => { /* file might not have comments yet */ })
-      .finally(() => {
-        if (!cancelled) isLoadingCommentsRef.current = false;
-      });
-    return () => {
-      cancelled = true;
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // mount-only: original path == viewerFile.path at this point
-
-  // Auto-save comments to the current working PDF whenever they change
-  useEffect(() => {
-    if (!viewerFile?.path || isLoadingCommentsRef.current) return;
-    clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => {
-      saveComments(viewerFile.path, JSON.stringify(comments)).catch(() => {});
-    }, 400);
-    return () => clearTimeout(saveTimerRef.current);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [comments, viewerFile?.path]);
-
-  // Handle text selection — uses pointerup so it fires on both mouse and touch
-  useEffect(() => {
-    function handlePointerUp(e: PointerEvent) {
-      // Ignore right-click and middle-click on desktop
-      if (e.button > 0) return;
-      const sel = window.getSelection();
-      if (!sel || sel.isCollapsed || !sel.rangeCount) {
-        setSelectionPopup(null);
-        return;
-      }
-
-      const range = sel.getRangeAt(0);
-      const container = range.commonAncestorContainer;
-      const el = container.nodeType === 3 ? container.parentElement : (container as HTMLElement);
-      // We only care about selections within a TextLayer
-      const pageEl = el?.closest('.textLayer')?.parentElement as HTMLElement | null;
-
-      if (!pageEl || !pageEl.dataset.pageIndex) {
-        setSelectionPopup(null);
-        return;
-      }
-
-      const pageIndex = parseInt(pageEl.dataset.pageIndex, 10);
-      const pageRect = pageEl.getBoundingClientRect();
-      const selRect = range.getBoundingClientRect();
-
-      const normX = (selRect.left + selRect.width / 2 - pageRect.left) / pageRect.width;
-      const normY = (selRect.top - pageRect.top) / pageRect.height;
-      const text = sel.toString().trim();
-
-      if (!text) {
-        setSelectionPopup(null);
-        return;
-      }
-
-      setSelectionPopup({
-        text,
-        rect: selRect,
-        pageIndex,
-        normX,
-        normY,
-      });
-    }
-
-    document.addEventListener("pointerup", handlePointerUp as EventListener);
-    return () => document.removeEventListener("pointerup", handlePointerUp as EventListener);
-  }, []);
+  // Find-in-document state + search effects
+  const {
+    findOpen, setFindOpen,
+    findQuery, setFindQuery,
+    findMatches,
+    findCurrentIdx, setFindCurrentIdx,
+    ocrSearching, ocrProgress,
+  } = useFindInDocument(viewerFile?.path, viewerFile?.info?.page_count ?? 0, (page) => scrollToPageRef.current(page));
 
   function adjustZoom(delta: number) {
     setZoom((prev) => {
@@ -377,6 +301,7 @@ export default function Viewer() {
   // page actually needs rendering, which eliminates the XRef-parsing CPU spike on open.
   useEffect(() => {
     if (!viewerFile?.path) return;
+    setLoadError(null);
     if (viewerFile.info?.page_count) return;
 
     let cancelled = false;
@@ -387,11 +312,12 @@ export default function Viewer() {
       let fileSize = 0;
       try {
         count = await invoke<number>("get_page_count", { path });
-      } catch {
-        message(
-          "Failed to open PDF. The file may be corrupt or inaccessible.",
-          { title: "Qyra - Error", kind: "error" }
-        ).catch(() => {});
+      } catch (e) {
+        if (!cancelled) {
+          const msg = String(e).toLowerCase();
+          const isEncrypted = msg.includes("password") || msg.includes("encrypt") || msg.includes("no password");
+          setLoadError(isEncrypted ? "encrypted" : "corrupt");
+        }
         return;
       }
       try {
@@ -415,9 +341,9 @@ export default function Viewer() {
   useEffect(() => {
     if (!viewerFile?.path) return;
     const path = viewerFile.path;
-    invoke("set_active_document", { path }).catch(() => {});
+    setActiveDocument(path).catch(() => {});
     return () => {
-      invoke("set_active_document", { path: null }).catch(() => {});
+      setActiveDocument(null).catch(() => {});
     };
   }, [viewerFile?.path]);
 
@@ -458,7 +384,7 @@ export default function Viewer() {
     let lastDist = 0;
 
     function pinchDist(e: TouchEvent) {
-      const [a, b] = [e.touches[0], e.touches[1]];
+      const [a, b] = [e.touches[0]!, e.touches[1]!];
       return Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
     }
 
@@ -496,79 +422,23 @@ export default function Viewer() {
     setZoom(Math.max(0.25, Math.min(1.0, fitZoom)));
   }, []);
 
-  // Search pages — PDF text first, then OCR automatically if no text matches
-  useEffect(() => {
-    if (!findQuery.trim() || !viewerFile || pageCount === 0) {
-      setFindMatches([]);
-      setFindCurrentIdx(0);
-      setOcrSearching(false);
-      setOcrProgress(undefined);
-      return;
-    }
-    let cancelled = false;
-    setOcrSearching(false);
-    setOcrProgress(undefined);
-
-    async function search() {
-      try {
-        // Phase 1: MuPDF text search in Rust — single IPC call, no WebView parse
-        type SearchHit = { page: number; count: number };
-        const hits = await invoke<SearchHit[]>("search_pdf", {
-          path: viewerFile!.path,
-          query: findQuery.trim(),
-        });
-        if (cancelled) return;
-
-        if (hits.length > 0) {
-          const textMatches = hits.flatMap((h) =>
-            Array.from({ length: h.count }, () => ({ page: h.page })),
-          );
-          setFindMatches(textMatches);
-          setFindCurrentIdx(0);
-          return;
-        }
-
-        // Phase 2: OCR fallback (disabled for now)
-        setFindMatches([]);
-        setFindCurrentIdx(0);
-      } catch { /* ignore */ } finally {
-        if (!cancelled) {
-          setOcrSearching(false);
-          setOcrProgress(undefined);
-        }
-      }
-    }
-
-    search();
-    return () => { cancelled = true; };
-  }, [findQuery, viewerFile?.path, pageCount]);
-
-  // Navigate to current find match page
-  useEffect(() => {
-    if (findMatches.length === 0) return;
-    const match = findMatches[findCurrentIdx];
-    if (match) scrollToPage(match.page);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [findCurrentIdx, findMatches]);
-
-  // Load auto-save preference from SQLite on mount
-  useEffect(() => {
-    getSetting("auto_save").then((val) => {
-      if (val !== null) setAutoSave(val === "1");
-    }).catch(() => {});
-  }, []);
-
-  // Keep ref in sync and persist to SQLite on change
-  useEffect(() => {
-    autoSaveRef.current = autoSave;
-    setSetting("auto_save", autoSave ? "1" : "0").catch(() => {});
-  }, [autoSave]);
-
   // Keyboard shortcuts
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
+
+      if (e.key === "Escape" && readingMode) {
+        e.preventDefault();
+        setReadingMode(false);
+        return;
+      }
+
+      if (e.key === "Escape" && showPresentation) {
+        e.preventDefault();
+        setShowPresentation(false);
+        return;
+      }
 
       if (e.key === "Escape" && findOpen) {
         e.preventDefault();
@@ -648,7 +518,7 @@ export default function Viewer() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [isViewerDirty, confirmingBack, findOpen, currentPage, pageCount, viewerFile, undoViewerFile, originalViewerPath, zoom, activeTool, undoStroke]);
+  }, [isViewerDirty, confirmingBack, findOpen, currentPage, pageCount, viewerFile, undoViewerFile, originalViewerPath, zoom, activeTool, undoStroke, readingMode, showPresentation]);
 
   if (!viewerFile) return null;
 
@@ -665,7 +535,7 @@ export default function Viewer() {
   }
 
   function doBack() {
-    invoke("set_active_document", { path: null }).catch(() => {});
+    setActiveDocument(null).catch(() => {});
     setViewerFile(null);
     setUndoViewerFile(null);
     setOriginalViewerPath(null);
@@ -695,6 +565,8 @@ export default function Viewer() {
     container.scrollTop = newSt;
     setCenterScrollTop(newSt);
   }
+  // Keep the find-in-document hook's nav callback pointing at the latest closure.
+  scrollToPageRef.current = scrollToPage;
 
   function handleOpenFile(path: string) {
     const name = path.split(/[\\/]/).pop() ?? path;
@@ -921,6 +793,40 @@ export default function Viewer() {
       className="flex flex-col h-screen overflow-hidden"
       style={{ background: "var(--viewer-bg)", color: "var(--viewer-text)" }}
     >
+      {/* Presentation mode fullscreen overlay */}
+      {showPresentation && pageCount > 0 && (
+        <PresentationMode
+          path={viewerFile.path}
+          pageCount={pageCount}
+          startPage={currentPage}
+          onClose={() => setShowPresentation(false)}
+        />
+      )}
+
+      {/* Reading mode — floating exit button */}
+      {readingMode && (
+        <button
+          onClick={() => setReadingMode(false)}
+          title="Exit reading mode (Esc)"
+          style={{
+            position: "fixed", top: 12, right: 12, zIndex: 500,
+            background: "var(--viewer-elevated)",
+            border: "1px solid var(--viewer-border)",
+            borderRadius: 6, padding: "5px 10px",
+            color: "var(--viewer-text-muted)",
+            fontSize: 11, fontFamily: "'Inter', system-ui, sans-serif",
+            cursor: "pointer", display: "flex", alignItems: "center", gap: 5,
+            boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
+          }}
+        >
+          <svg width={10} height={10} fill="none" stroke="currentColor" strokeWidth={2}
+            strokeLinecap="round" viewBox="0 0 16 16">
+            <path d="M12 4L4 12M4 4l8 8" />
+          </svg>
+          Exit reading
+        </button>
+      )}
+
       {/* Header — dense pro-tool toolbar */}
       <header
         style={{
@@ -928,7 +834,7 @@ export default function Viewer() {
           flexShrink: 0,
           background: "var(--viewer-surface)",
           borderBottom: "1px solid var(--viewer-border)",
-          display: "flex", alignItems: "center",
+          display: readingMode ? "none" : "flex", alignItems: "center",
           gap: 8,
           padding: "0 12px",
           paddingTop: "env(safe-area-inset-top, 0px)",
@@ -1165,6 +1071,38 @@ export default function Viewer() {
           </div>
         )}
 
+        {/* Presentation mode */}
+        {pageCount > 0 && (
+          <button
+            onClick={() => setShowPresentation(true)}
+            className="v-icon-btn shrink-0"
+            title="Present (fullscreen slideshow)"
+            style={{ width: 28, height: 28, borderRadius: 4, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+          >
+            <svg width={15} height={15} fill="none" stroke="currentColor" strokeWidth={1.5}
+              strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+              <path d="M15 10l4.553-2.069A1 1 0 0121 8.847v6.306a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
+            </svg>
+          </button>
+        )}
+
+        {/* Reading mode */}
+        <button
+          onClick={() => setReadingMode(r => !r)}
+          className="v-icon-btn shrink-0"
+          title="Reading mode — hide UI (Esc to exit)"
+          style={{
+            width: 28, height: 28, borderRadius: 4, display: "inline-flex",
+            alignItems: "center", justifyContent: "center",
+            color: readingMode ? "var(--accent)" : undefined,
+          }}
+        >
+          <svg width={15} height={15} fill="none" stroke="currentColor" strokeWidth={1.5}
+            strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+            <path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+          </svg>
+        </button>
+
         {/* Mobile toggles */}
         <button
           onClick={() => setShowStrip(s => !s)}
@@ -1400,7 +1338,7 @@ export default function Viewer() {
         {/* Left: page strip — side-in drawer (mobile) or fixed column (desktop) */}
         <div
           className={`h-full shrink-0 flex-col ${
-            showStrip
+            showStrip && !readingMode
               ? "flex absolute inset-y-0 left-0 z-20 sm:relative sm:z-auto"
               : "hidden"
           }`}
@@ -1419,6 +1357,17 @@ export default function Viewer() {
             splitAfter={activeTool === "split" ? splitAfter : undefined}
             onSplitAfterChange={activeTool === "split" ? setSplitAfter : undefined}
             onVisibleRangeChange={setStripVisibleRange}
+            onReorder={async (fromPage, dropBeforePage) => {
+              if (!viewerFile) return;
+              const pages = Array.from({ length: pageCount }, (_, i) => i + 1);
+              const moved = pages.filter(p => p !== fromPage);
+              const insertIdx = moved.findIndex(p => p === dropBeforePage);
+              moved.splice(insertIdx === -1 ? moved.length : insertIdx, 0, fromPage);
+              try {
+                const out = await invoke<string>("reorder_pages", { path: viewerFile.path, order: moved });
+                handleApplied(out);
+              } catch { /* ignore */ }
+            }}
           />
         </div>
 
@@ -1489,7 +1438,57 @@ export default function Viewer() {
             </div>
           )}
 
-          {pageCount === 0 && (
+          {pageCount === 0 && loadError && (
+            <div style={{
+              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+              padding: "64px 32px", gap: 20, minHeight: 400,
+            }}>
+              <div style={{
+                width: 56, height: 56, borderRadius: "50%",
+                background: "color-mix(in oklch, var(--v-bad-bg) 60%, transparent)",
+                border: "1px solid var(--v-bad-border)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                <svg width={24} height={24} fill="none" stroke="var(--v-bad-text)" strokeWidth={1.5}
+                  strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+                  {loadError === "encrypted"
+                    ? <><path d="M12 2C9.238 2 7 4.238 7 7v2H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2v-9a2 2 0 00-2-2h-2V7c0-2.762-2.238-5-5-5z" /><circle cx="12" cy="16" r="1" fill="currentColor" /></>
+                    : <><path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /></>
+                  }
+                </svg>
+              </div>
+              <div style={{ textAlign: "center", maxWidth: 340 }}>
+                <p style={{ fontFamily: "'Inter', system-ui, sans-serif", fontSize: 15, fontWeight: 600, color: "var(--viewer-text)", marginBottom: 6 }}>
+                  {loadError === "encrypted" ? "Password protected" : "Cannot open this PDF"}
+                </p>
+                <p style={{ fontFamily: "'Inter', system-ui, sans-serif", fontSize: 13, color: "var(--viewer-text-sec)", lineHeight: 1.55 }}>
+                  {loadError === "encrypted"
+                    ? "This PDF is encrypted. Enter the password to unlock it, or use the Unlock tool."
+                    : "This file may be corrupt, truncated, or not a valid PDF. Try re-downloading or opening it in another app."}
+                </p>
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {loadError === "encrypted" && (
+                  <button
+                    onClick={() => handleToolChange("unlock")}
+                    className="v-btn-primary"
+                    style={{ fontSize: 13, padding: "7px 18px" }}
+                  >
+                    Unlock PDF…
+                  </button>
+                )}
+                <button
+                  onClick={doBack}
+                  className="v-btn-secondary"
+                  style={{ fontSize: 13, padding: "7px 18px" }}
+                >
+                  Back to library
+                </button>
+              </div>
+            </div>
+          )}
+
+          {pageCount === 0 && !loadError && (
             <div
               aria-label="Loading document"
               aria-busy="true"
@@ -1649,6 +1648,15 @@ export default function Viewer() {
                           onSignatureRemoved={(id) => setSignatures(prev => prev.filter(s => s.id !== id))}
                           signatures={signatures.filter(s => s.pageNum === page)}
                         />
+                        <RedactLayer
+                          pageNum={page}
+                          isEnabled={activeTool === "redact"}
+                          mode={redactMode}
+                          regions={redactRegions}
+                          onAddRegion={(r) => setRedactRegions(prev => [...prev, r])}
+                          onAddRegions={(rs) => setRedactRegions(prev => [...prev, ...rs])}
+                          onRemoveRegion={(idx) => setRedactRegions(prev => prev.filter((_, i) => i !== idx))}
+                        />
                       </div>
                     </div>
                     {/* Add-page bar after this page (draw mode) */}
@@ -1704,7 +1712,7 @@ export default function Viewer() {
         {/* Right: tool sidebar — full-screen overlay on mobile, fixed 280px column on desktop */}
         <div
           className={`h-full flex-col ${
-            activeTool === "draw" || !showTools
+            activeTool === "draw" || !showTools || readingMode
               ? "hidden"
               : "flex absolute inset-y-0 inset-x-0 z-20 sm:inset-x-auto sm:right-0 sm:relative sm:z-auto sm:w-70"
           }`}
@@ -1719,7 +1727,12 @@ export default function Viewer() {
             splitAfter={splitAfter}
             onSplitAfterChange={setSplitAfter}
             onPageSelect={scrollToPage}
+            currentPage={currentPage}
             forceCommentsTab={isCommentMode}
+            redactRegions={redactRegions}
+            onClearRedactRegions={() => setRedactRegions([])}
+            redactMode={redactMode}
+            onRedactModeChange={setRedactMode}
           />
         </div>
       </div>

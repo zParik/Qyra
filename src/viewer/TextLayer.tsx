@@ -182,7 +182,7 @@ export function TextLayer({
 
   const handleMouseDown = (e: React.MouseEvent) => anchorEoc(e.clientY);
   const handleTouchStart = (e: React.TouchEvent) => {
-    if (e.touches.length === 1) anchorEoc(e.touches[0].clientY);
+    if (e.touches.length === 1) anchorEoc(e.touches[0]!.clientY);
   };
 
   // Track parent (page wrapper) dimensions
@@ -264,7 +264,7 @@ export function TextLayer({
         position: "absolute",
         inset: 0,
         overflow: "hidden",
-        pointerEvents: isDrawingMode ? "none" : "auto",
+        pointerEvents: "none",
         cursor: isDrawingMode ? "default" : "text",
       }}
     >
@@ -289,9 +289,10 @@ export function TextLayer({
               lineHeight: 1,
               color: "transparent",
               whiteSpace: "pre",
-              cursor: "text",
+              cursor: isDrawingMode ? "default" : "text",
               userSelect: "text",
               WebkitUserSelect: "text",
+              pointerEvents: isDrawingMode ? "none" : "auto",
               padding: 0,
               margin: 0,
               overflow: "hidden",
