@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { LoadedFile } from "../../store/useAppStore";
 import { ProgressBar, Spinner } from "../../components/ProgressBar";
 import { sanitizeError, type ProgressData } from "../usePanelCommand";
+import { StatusBox } from "../components/StatusBox";
 
 export interface RedactRegion {
   page: number;
@@ -19,6 +20,8 @@ interface RedactPanelProps {
   markedRegions: RedactRegion[];
   onClearRegions: () => void;
   currentPage: number;
+  mode: "region" | "text";
+  onModeChange: (m: "region" | "text") => void;
 }
 
 function fmt(n: number) {
@@ -31,6 +34,8 @@ export function RedactPanel({
   markedRegions,
   onClearRegions,
   currentPage: _currentPage,
+  mode,
+  onModeChange,
 }: RedactPanelProps) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState<ProgressData | null>(null);
@@ -75,6 +80,15 @@ export function RedactPanel({
       }));
       const out = await invoke<string>("redact_pdf", { path: file.path, regions });
       setOutputPath(out);
+      // Regions are now baked into the output file as destroyed pixels. Clear
+      // the overlay state so the new file isn't covered by phantom rects that
+      // no longer reference real content, and so the panel doesn't suggest
+      // there's still work to apply. The viewer swaps to `out` via onApplied,
+      // which triggers TextLayer / render refetch from the new path — the
+      // destroyed glyphs are gone from text extraction, so selection won't
+      // pick them up either.
+      setRemovedIndexes(new Set());
+      onClearRegions();
       onApplied(out);
     } catch (e) {
       setError(sanitizeError(e));
@@ -87,10 +101,55 @@ export function RedactPanel({
 
   return (
     <div className="space-y-4">
+      {/* Mode toggle */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 0,
+          border: "1px solid var(--viewer-border)",
+          borderRadius: 8,
+          overflow: "hidden",
+        }}
+      >
+        {(["region", "text"] as const).map((m) => {
+          const active = mode === m;
+          return (
+            <button
+              key={m}
+              onClick={() => onModeChange(m)}
+              className="text-xs"
+              style={{
+                padding: "8px 6px",
+                border: "none",
+                cursor: "pointer",
+                background: active ? "var(--accent)" : "transparent",
+                color: active ? "#fff" : "var(--viewer-text-sec)",
+                fontWeight: active ? 600 : 500,
+                transition: "background 120ms",
+              }}
+            >
+              {m === "region" ? "Region drag" : "Text select"}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Instructions */}
       <p className="text-xs" style={{ color: "var(--viewer-text-muted)", lineHeight: 1.5 }}>
-        Draw selection boxes on pages to mark text for redaction. Marked regions appear as black
-        bars in the output.
+        {mode === "region" ? (
+          <>
+            Drag selection boxes on a page to mark regions. On export, every glyph, image, and
+            vector inside each region is permanently destroyed and replaced with a solid black
+            rectangle — the original content cannot be recovered from the output file.
+          </>
+        ) : (
+          <>
+            Highlight text on a page exactly like normal text selection. On mouse-up, every line
+            of the selection is captured as a tight redaction region. On export the underlying
+            text is permanently destroyed (not just covered).
+          </>
+        )}
       </p>
 
       {/* Region list */}
@@ -196,34 +255,22 @@ export function RedactPanel({
 
       {/* Error */}
       {error && !isProcessing && (
-        <div className="mt-2 v-panel-bad space-y-1.5">
-          <p className="text-xs font-semibold" style={{ color: "var(--v-bad-text)" }}>Error</p>
-          <p className="text-xs wrap-break-word" style={{ color: "var(--v-bad-text)", opacity: 0.9 }}>
-            {error}
-          </p>
-          <button
-            onClick={() => setError(null)}
-            className="text-xs underline"
-            style={{ color: "var(--v-bad-text)" }}
-          >
-            Dismiss
-          </button>
-        </div>
+        <StatusBox
+          status="error"
+          message={error}
+          onDismiss={() => setError(null)}
+          marginTopClass="mt-2"
+        />
       )}
 
       {/* Success */}
       {outputPath && !isProcessing && !error && (
-        <div className="mt-2 v-panel-ok space-y-1.5">
-          <div className="flex items-center gap-1.5" style={{ color: "var(--v-ok-text)" }}>
-            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-            </svg>
-            <span className="text-xs font-semibold">Redaction applied</span>
-          </div>
-          <p className="text-xs" style={{ color: "var(--v-ok-text)", opacity: 0.85 }}>
-            {visibleRegions.length} region{visibleRegions.length !== 1 ? "s" : ""} permanently redacted.
-          </p>
-        </div>
+        <StatusBox
+          status="success"
+          title="Redaction applied"
+          message={`${visibleRegions.length} region${visibleRegions.length !== 1 ? "s" : ""} permanently redacted.`}
+          marginTopClass="mt-2"
+        />
       )}
     </div>
   );
