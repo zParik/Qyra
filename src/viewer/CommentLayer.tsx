@@ -45,7 +45,7 @@ export function CommentEditor({ comment, x, y, docPath, pageIndex, normX, normY,
   const removeComment = useCommentsStore((s) => s.removeComment);
 
   const [text, setText] = useState(comment?.text ?? "");
-  const [color, setColor] = useState(comment?.color ?? COMMENT_COLORS[0]);
+  const [color, setColor] = useState<string>(comment?.color ?? COMMENT_COLORS[0]!);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
