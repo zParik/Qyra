@@ -252,3 +252,6 @@ export const flattenPdf = (path: string, output?: string) =>
 
 export const exportPdfToText = (path: string, output?: string) =>
   invoke<string>("export_pdf_to_text", { path, output });
+
+export const setActiveDocument = (path: string | null) =>
+  invoke<void>("set_active_document", { path });

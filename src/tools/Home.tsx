@@ -49,7 +49,7 @@ async function getDisplayName(rawPath: string): Promise<string> {
     catch {
       const decoded = decodeURIComponent(rawPath);
       const match = decoded.match(/([^/\\:]+\.pdf)(?:[?#]|$)/i);
-      return match ? match[1] : "document.pdf";
+      return match ? match[1]! : "document.pdf";
     }
   }
   return rawPath.split(/[\\/]/).pop() ?? rawPath;
@@ -130,7 +130,7 @@ export default function Home() {
       if (isAndroid()) {
         const picked = await pickFilesAndroid("application/pdf,.pdf", false);
         if (!picked.length) return;
-        const { path: rawPath, name } = picked[0];
+        const { path: rawPath, name } = picked[0]!;
         setLoading(name);
         const path = await resolveAndroidUri(rawPath).catch(() => rawPath);
         setViewerFile({ path, name });
@@ -140,7 +140,7 @@ export default function Home() {
       }
       const selected = await open({ multiple: false, filters: [{ name: "PDF Files", extensions: ["pdf"] }] });
       if (!selected) return;
-      const path = Array.isArray(selected) ? selected[0] : selected;
+      const path = Array.isArray(selected) ? selected[0]! : selected;
       await openPdf(path);
     } catch { /* dismissed */ }
   }, []);
@@ -165,7 +165,7 @@ export default function Home() {
           } else if (event.payload.type === "drop") {
             setDragging(false);
             const paths = event.payload.paths;
-            if (paths.length > 0) await openPdf(paths[0]);
+            if (paths.length > 0) await openPdf(paths[0]!);
           }
         });
       } catch {
@@ -270,7 +270,7 @@ export default function Home() {
             />
 
             <section>
-              <SectionHeader title="Quick actions" subtitle="02 tools" />
+              <SectionHeader title="Quick actions" subtitle="03 tools" />
               <div style={{
                 display: "grid",
                 gridTemplateColumns: isMobile ? "1fr" : "repeat(2, 1fr)",

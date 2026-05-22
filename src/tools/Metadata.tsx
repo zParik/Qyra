@@ -8,7 +8,7 @@ import { setMetadata, getMetadata, PdfMetadata } from "../lib/tauri";
 export default function Metadata() {
   const { files, clearFiles, isProcessing } = useAppStore();
   const { run } = usePdfCommand();
-  const file = files[0];
+  const file = files[0]!;
 
   const [meta, setMeta] = useState<PdfMetadata>({});
   const [loaded, setLoaded] = useState(false);

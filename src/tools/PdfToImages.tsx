@@ -10,7 +10,7 @@ export default function PdfToImages() {
   const { run } = usePdfCommand();
   const [format, setFormat] = useState<"png" | "jpg">("png");
   const [dpi, setDpi] = useState(150);
-  const file = files[0];
+  const file = files[0]!;
 
   async function handleConvert() {
     if (!file) return;

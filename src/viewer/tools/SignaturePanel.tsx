@@ -99,7 +99,7 @@ export function SignaturePanel({ onSignatureCreated, onClose }: SignaturePanelPr
   function startDrawTouch(e: React.TouchEvent<HTMLCanvasElement>) {
     e.preventDefault();
     isDrawingRef.current = true;
-    lastPosRef.current = getCanvasPos(e.touches[0]);
+    lastPosRef.current = getCanvasPos(e.touches[0]!);
     setHasDrawn(true);
   }
 
@@ -107,7 +107,7 @@ export function SignaturePanel({ onSignatureCreated, onClose }: SignaturePanelPr
     e.preventDefault();
     if (!isDrawingRef.current || !canvasRef.current) return;
     const ctx = canvasRef.current.getContext("2d")!;
-    const pos = getCanvasPos(e.touches[0]);
+    const pos = getCanvasPos(e.touches[0]!);
     ctx.beginPath();
     ctx.moveTo(lastPosRef.current!.x, lastPosRef.current!.y);
     ctx.lineTo(pos.x, pos.y);

@@ -1,5 +1,6 @@
 import { useNotesStore, PageTemplate, VirtualPage } from "../../store/useNotesStore";
 import { useAppStore } from "../../store/useAppStore";
+import { IconX } from "../icons";
 
 const EMPTY_VIRTUAL_PAGES: VirtualPage[] = [];
 
@@ -80,9 +81,7 @@ export function DrawPanel() {
                   title="Remove this page"
                   style={{ color: "#ef4444" }}
                 >
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
+                  <IconX className="w-3.5 h-3.5" />
                 </button>
               </div>
             ))}
