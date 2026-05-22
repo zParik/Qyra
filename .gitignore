@@ -35,3 +35,12 @@ pdf-toolkit-spec-tauri-rust.md
 
 # Tauri updater private key — never commit this
 src-tauri/updater.key
+
+# Misc
+src-tauri/nul
+target/
+*.jks
+
+# Local-only notes & scripts
+PLAN.md
+bulk_apperror.py
