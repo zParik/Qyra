@@ -82,7 +82,7 @@ export default function ReorderPages() {
         <div className="space-y-4">
           <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-4 flex items-center justify-between">
             <div>
-              <p className="font-medium text-sm">{file.name}</p>
+              <p className="font-medium text-sm">{file!.name}</p>
               <p className="text-xs text-gray-400">{pageCount} pages</p>
             </div>
             <button onClick={clearFiles} className="text-xs text-gray-400 hover:text-red-500">Remove</button>

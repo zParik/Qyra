@@ -12,7 +12,7 @@ const SWATCHES = ["#c87a52","#5e7a8a","#7a5e8a","#5e8a7a","#8a7a5e","#5e7a5e"];
 function imgSwatch(name: string): string {
   let h = 0;
   for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
-  return SWATCHES[Math.abs(h) % SWATCHES.length];
+  return SWATCHES[Math.abs(h) % SWATCHES.length]!;
 }
 
 export default function ImagesToPdf() {

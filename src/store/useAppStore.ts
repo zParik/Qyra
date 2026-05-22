@@ -71,7 +71,7 @@ export const useAppStore = create<AppState>((set) => ({
     set((s) => {
       const files = [...s.files];
       const [moved] = files.splice(fromIndex, 1);
-      files.splice(toIndex, 0, moved);
+      if (moved) files.splice(toIndex, 0, moved);
       return { files };
     }),
   clearFiles: () => set({ files: [] }),

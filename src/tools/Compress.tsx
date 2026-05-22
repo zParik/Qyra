@@ -31,7 +31,7 @@ type Level = 0 | 1 | 2;
 export default function Compress() {
   const { files, clearFiles, isProcessing } = useAppStore();
   const { run } = usePdfCommand();
-  const file = files[0];
+  const file = files[0]!;
   const [level, setLevel] = useState<Level>(0);
 
   function formatSize(bytes: number) {

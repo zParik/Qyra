@@ -96,7 +96,7 @@ export default function Ocr() {
             .filter((w) => w.confidence > 30)
             .map((w) => ({ text: w.text, x: w.x, y: w.y, w: w.w, h: w.h })),
         });
-        totalWords += ocrPages[i - 1].words.length;
+        totalWords += ocrPages[i - 1]!.words.length;
       }
 
       // Step 4: embed text layer via Rust

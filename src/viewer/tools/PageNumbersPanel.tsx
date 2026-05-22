@@ -52,7 +52,7 @@ export function PageNumbersPanel({ file, onApplied }: PageNumbersPanelProps) {
                 position === p ? "v-toggle-on" : "v-toggle-off"
               }`}
             >
-              {p!.split("-").map((w) => w[0].toUpperCase() + w.slice(1)).join(" ")}
+              {p!.split("-").map((w) => w[0]!.toUpperCase() + w.slice(1)).join(" ")}
             </button>
           ))}
         </div>

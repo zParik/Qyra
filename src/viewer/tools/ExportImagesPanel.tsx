@@ -3,32 +3,30 @@ import { LoadedFile } from "../../store/useAppStore";
 import { writeBytes, pickDirectory, showInFolder, shareFile } from "../../lib/tauri";
 import { isAndroid } from "../../lib/androidFileUtils";
 import { renderPageForExport } from "../../hooks/usePageThumbnails";
+import { parsePages } from "../../lib/pageRange";
 
 interface ExportImagesPanelProps {
   file: LoadedFile;
 }
 
-/** Parse a page range string like "1-3, 5, 7-9" into a sorted, deduplicated list of 1-indexed page numbers. */
-function parsePageRange(input: string, total: number): number[] | null {
-  const pages = new Set<number>();
+function isValidPageRange(input: string, total: number): boolean {
   const parts = input.split(",").map((s) => s.trim()).filter(Boolean);
+  if (parts.length === 0) return false;
   for (const part of parts) {
-    const rangeMatch = part.match(/^(\d+)\s*-\s*(\d+)$/);
-    const singleMatch = part.match(/^(\d+)$/);
-    if (rangeMatch) {
-      const from = parseInt(rangeMatch[1], 10);
-      const to = parseInt(rangeMatch[2], 10);
-      if (from < 1 || to > total || from > to) return null;
-      for (let i = from; i <= to; i++) pages.add(i);
-    } else if (singleMatch) {
-      const n = parseInt(singleMatch[1], 10);
-      if (n < 1 || n > total) return null;
-      pages.add(n);
+    const range = part.match(/^(\d+)\s*-\s*(\d+)$/);
+    const single = part.match(/^(\d+)$/);
+    if (range) {
+      const a = parseInt(range[1]!, 10);
+      const b = parseInt(range[2]!, 10);
+      if (a < 1 || b > total || a > b) return false;
+    } else if (single) {
+      const n = parseInt(single[1]!, 10);
+      if (n < 1 || n > total) return false;
     } else {
-      return null;
+      return false;
     }
   }
-  return [...pages].sort((a, b) => a - b);
+  return true;
 }
 
 export function ExportImagesPanel({ file }: ExportImagesPanelProps) {
@@ -46,10 +44,13 @@ export function ExportImagesPanel({ file }: ExportImagesPanelProps) {
   const pageCount = file.info?.page_count ?? 0;
   const stem = file.path.replace(/\\/g, "/").split("/").pop()?.replace(/\.pdf$/i, "") ?? "page";
 
+  const trimmedInput = pageInput.trim();
   const resolvedPages: number[] | null =
-    pageInput.trim() === ""
+    trimmedInput === ""
       ? Array.from({ length: pageCount }, (_, i) => i + 1)
-      : parsePageRange(pageInput.trim(), pageCount);
+      : isValidPageRange(trimmedInput, pageCount)
+        ? parsePages(trimmedInput, pageCount)
+        : null;
 
   function handlePageInputChange(val: string) {
     setPageInput(val);
@@ -89,7 +90,7 @@ export function ExportImagesPanel({ file }: ExportImagesPanelProps) {
           setCancelled(true);
           break;
         }
-        const pageNum = resolvedPages[idx];
+        const pageNum = resolvedPages[idx]!;
         const bytes = await renderPageForExport(file.path, pageNum, scale, format);
         if (cancelRef.current) {
           setCancelled(true);
@@ -111,9 +112,9 @@ export function ExportImagesPanel({ file }: ExportImagesPanelProps) {
     setIsExporting(false);
     if (!cancelRef.current && outputPaths.length > 0) {
       if (isAndroid()) {
-        shareFile(outputPaths[0]).catch(() => {});
+        shareFile(outputPaths[0]!).catch(() => {});
       } else {
-        showInFolder(outputPaths[0]).catch(() => {});
+        showInFolder(outputPaths[0]!).catch(() => {});
       }
     }
   }

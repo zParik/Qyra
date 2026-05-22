@@ -11,7 +11,7 @@ export default function Protect() {
   const [userPassword, setUserPassword] = useState("");
   const [ownerPassword, setOwnerPassword] = useState("");
   const [show, setShow] = useState(false);
-  const file = files[0];
+  const file = files[0]!;
 
   async function handleProtect() {
     if (!file || !userPassword) return;

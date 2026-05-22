@@ -5,6 +5,7 @@ import { addWatermark, showSaveDialog, copyFile } from "../../lib/tauri";
 import type { WatermarkOptions } from "../../lib/tauri";
 import { ProgressBar, Spinner } from "../../components/ProgressBar";
 import { sanitizeError, type ProgressData } from "../usePanelCommand";
+import { StatusBox } from "../components/StatusBox";
 
 const PRESET_COLORS = [
   { label: "Gray",   value: "#888888" },
@@ -241,29 +242,26 @@ export function WatermarkPanel({ file, onApplied }: Props) {
       )}
 
       {error && !isProcessing && (
-        <div className="mt-2 v-panel-bad space-y-1.5">
-          <p className="text-xs font-semibold" style={{ color: "var(--v-bad-text)" }}>Error</p>
-          <p className="text-xs wrap-break-word" style={{ color: "var(--v-bad-text)", opacity: 0.9 }}>
-            {error}
-          </p>
-          <button onClick={() => setError(null)} className="text-xs underline" style={{ color: "var(--v-bad-text)" }}>
-            Dismiss
-          </button>
-        </div>
+        <StatusBox
+          status="error"
+          message={error}
+          onDismiss={() => setError(null)}
+          marginTopClass="mt-2"
+        />
       )}
 
       {outputPath && !isProcessing && !error && (
-        <div className="mt-2 v-panel-ok space-y-2">
-          <div className="flex items-center gap-1.5" style={{ color: "var(--v-ok-text)" }}>
-            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-            </svg>
-            <span className="text-xs font-semibold">Watermark applied</span>
-          </div>
-          <button onClick={handleSaveAs} className="v-btn-secondary w-full text-xs">
-            Save As…
-          </button>
-        </div>
+        <StatusBox
+          status="success"
+          title="Watermark applied"
+          message=""
+          detail={
+            <button onClick={handleSaveAs} className="v-btn-secondary w-full text-xs">
+              Save As…
+            </button>
+          }
+          marginTopClass="mt-2"
+        />
       )}
     </div>
   );
