@@ -92,8 +92,7 @@ export function LeftRail({ active, onPick, recentCount, storageUsage }: {
       </div>
 
       <div className="flex items-center gap-2 px-3.5 py-2.5" style={{ borderTop: "1px solid var(--line2)" }}>
-        <div className="w-5.5 h-5.5 rounded-full flex items-center justify-center text-[10px] font-bold"
-          style={{ background: "var(--accent)", color: "var(--accent-text)", fontFamily: UI }}>Q</div>
+        <img src="/Logo.png" alt="Qyra" className="w-8 h-8 rounded-full object-contain" />
         <div className="flex flex-col min-w-0">
           <span className="text-[11.5px] font-medium leading-tight" style={{ color: "var(--fg0)", fontFamily: UI }}>Qyra</span>
           <span className="text-[10px] leading-tight" style={{ color: "var(--fg2)", fontFamily: MONO }}>free · offline · open source</span>

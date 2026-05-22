@@ -4,6 +4,7 @@ import { LoadedFile } from "../../store/useAppStore";
 import { ProgressBar, Spinner } from "../../components/ProgressBar";
 import { compressPdf } from "../../lib/tauri";
 import { sanitizeError, type ProgressData } from "../usePanelCommand";
+import { StatusBox } from "../components/StatusBox";
 
 function formatSize(bytes: number) {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -140,44 +141,29 @@ export function CompressPanel({ file, onApplied }: CompressPanelProps) {
 
       {/* Error */}
       {error && !isProcessing && (
-        <div className="mt-3 v-panel-bad space-y-1.5">
-          <p className="text-xs font-semibold" style={{ color: "var(--v-bad-text)" }}>Error</p>
-          <p className="text-xs wrap-break-word" style={{ color: "var(--v-bad-text)", opacity: 0.9 }}>
-            {error}
-          </p>
-          <button
-            onClick={() => setError(null)}
-            className="text-xs underline"
-            style={{ color: "var(--v-bad-text)" }}
-          >
-            Dismiss
-          </button>
-        </div>
+        <StatusBox status="error" message={error} onDismiss={() => setError(null)} />
       )}
 
       {/* Size result */}
       {sizes && !isProcessing && (
-        <div className="mt-3 v-panel-ok space-y-1.5">
-          <div className="flex items-center gap-1.5" style={{ color: "var(--v-ok-text)" }}>
-            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-            </svg>
-            <span className="text-xs font-semibold">Done</span>
-          </div>
-          <p className="text-xs" style={{ color: "var(--v-ok-text)" }}>
-            {formatSize(sizes.original)}
-            {" → "}
-            <span className="font-semibold">{formatSize(sizes.compressed)}</span>
-            {sizes.compressed < sizes.original && (
-              <span style={{ opacity: 0.8 }}>
-                {" "}(−{savingsPct(sizes.original, sizes.compressed)}%)
-              </span>
-            )}
-            {sizes.compressed >= sizes.original && (
-              <span style={{ opacity: 0.8 }}> (already optimal)</span>
-            )}
-          </p>
-        </div>
+        <StatusBox
+          status="success"
+          message={
+            <>
+              {formatSize(sizes.original)}
+              {" → "}
+              <span className="font-semibold">{formatSize(sizes.compressed)}</span>
+              {sizes.compressed < sizes.original && (
+                <span style={{ opacity: 0.8 }}>
+                  {" "}(−{savingsPct(sizes.original, sizes.compressed)}%)
+                </span>
+              )}
+              {sizes.compressed >= sizes.original && (
+                <span style={{ opacity: 0.8 }}> (already optimal)</span>
+              )}
+            </>
+          }
+        />
       )}
     </div>
   );

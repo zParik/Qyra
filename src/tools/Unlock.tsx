@@ -10,7 +10,7 @@ export default function Unlock() {
   const { run } = usePdfCommand();
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
-  const file = files[0];
+  const file = files[0]!;
 
   async function handleUnlock() {
     if (!file || !password) return;

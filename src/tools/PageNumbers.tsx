@@ -16,7 +16,7 @@ export default function PageNumbers() {
   const [startAt, setStartAt] = useState(1);
   const [position, setPosition] = useState<PageNumberOptions["position"]>("bottom-center");
   const [fontSize, setFontSize] = useState(10);
-  const file = files[0];
+  const file = files[0]!;
 
   async function handleAdd() {
     if (!file) return;
@@ -60,7 +60,7 @@ export default function PageNumbers() {
                       : "border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400"
                   }`}
                 >
-                  {p!.split("-").map((w) => w[0].toUpperCase() + w.slice(1)).join(" ")}
+                  {p!.split("-").map((w) => w[0]!.toUpperCase() + w.slice(1)).join(" ")}
                 </button>
               ))}
             </div>

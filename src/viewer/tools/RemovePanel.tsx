@@ -1,43 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { LoadedFile } from "../../store/useAppStore";
 import { usePanelCommand } from "../usePanelCommand";
-import { PanelOutput } from "../PanelOutput";
+import { ToolPanelLayout } from "../components/ToolPanelLayout";
+import { LabeledInput } from "../components/LabeledInput";
 import { removePages } from "../../lib/tauri";
-
-function parsePages(text: string, pageCount: number): number[] {
-  const pages: number[] = [];
-  for (const part of text.split(",").map((s) => s.trim())) {
-    if (part.includes("-")) {
-      const [a, b] = part.split("-").map(Number);
-      if (!isNaN(a) && !isNaN(b) && a >= 1 && b >= a && b <= pageCount) {
-        for (let i = a; i <= b; i++) pages.push(i);
-      }
-    } else {
-      const n = Number(part);
-      if (!isNaN(n) && n >= 1 && n <= pageCount) pages.push(n);
-    }
-  }
-  return [...new Set(pages)].sort((a, b) => a - b);
-}
-
-function formatPages(pages: number[]): string {
-  if (pages.length === 0) return "";
-  const sorted = [...pages].sort((a, b) => a - b);
-  const ranges: string[] = [];
-  let start = sorted[0];
-  let end = sorted[0];
-  for (let i = 1; i < sorted.length; i++) {
-    if (sorted[i] === end + 1) {
-      end = sorted[i];
-    } else {
-      ranges.push(start === end ? `${start}` : `${start}-${end}`);
-      start = sorted[i];
-      end = sorted[i];
-    }
-  }
-  ranges.push(start === end ? `${start}` : `${start}-${end}`);
-  return ranges.join(", ");
-}
+import { parsePages, formatPages } from "../../lib/pageRange";
 
 interface RemovePanelProps {
   file: LoadedFile;
@@ -79,42 +46,31 @@ export function RemovePanel({ file, onApplied, selectedPages, onSelectedPagesCha
   }
 
   return (
-    <div className="space-y-4">
+    <ToolPanelLayout
+      onSubmit={handle}
+      submitLabel={`Remove ${
+        pagesToRemove.length > 0
+          ? `${pagesToRemove.length} Page${pagesToRemove.length !== 1 ? "s" : ""}`
+          : "Pages"
+      }`}
+      submitClassName="v-btn-danger"
+      submitDisabled={pagesToRemove.length === 0}
+      isProcessing={isProcessing}
+      result={result}
+      error={error}
+      onClearError={clearError}
+    >
       {pageCount > 0 && (
         <p className="text-xs" style={{ color: "var(--viewer-text-muted)" }}>{pageCount} pages total</p>
       )}
 
-      <div>
-        <label className="text-xs mb-1 block" style={{ color: "var(--viewer-text-muted)" }}>
-          Pages to remove
-        </label>
-        <input
-          className="v-input"
-          placeholder="e.g. 2, 4-6, 9"
-          value={inputText}
-          onChange={(e) => handleInputChange(e.target.value)}
-        />
-        <p className="text-xs mt-1" style={{ color: "var(--viewer-text-muted)" }}>
-          Type page numbers, or click any page in the left strip or center view to select it.
-        </p>
-      </div>
-
-      <button
-        disabled={isProcessing || pagesToRemove.length === 0}
-        onClick={handle}
-        className="v-btn-danger"
-      >
-        Remove {pagesToRemove.length > 0
-          ? `${pagesToRemove.length} Page${pagesToRemove.length !== 1 ? "s" : ""}`
-          : "Pages"}
-      </button>
-
-      <PanelOutput
-        isProcessing={isProcessing}
-        result={result}
-        error={error}
-        onClearError={clearError}
+      <LabeledInput
+        label="Pages to remove"
+        value={inputText}
+        onChange={handleInputChange}
+        placeholder="e.g. 2, 4-6, 9"
+        hint="Type page numbers, or click any page in the left strip or center view to select it."
       />
-    </div>
+    </ToolPanelLayout>
   );
 }

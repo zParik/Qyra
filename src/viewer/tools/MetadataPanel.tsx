@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import { LoadedFile } from "../../store/useAppStore";
 import { usePanelCommand } from "../usePanelCommand";
-import { PanelOutput } from "../PanelOutput";
+import { ToolPanelLayout } from "../components/ToolPanelLayout";
+import { LabeledInput } from "../components/LabeledInput";
 import { setMetadata, getMetadata, PdfMetadata } from "../../lib/tauri";
 
 const FIELDS: { key: keyof PdfMetadata; label: string }[] = [
@@ -35,37 +36,28 @@ export function MetadataPanel({ file, onApplied }: MetadataPanelProps) {
   }
 
   return (
-    <div className="space-y-3">
+    <ToolPanelLayout
+      onSubmit={handle}
+      submitLabel="Save Metadata"
+      submitDisabled={!loaded}
+      isProcessing={isProcessing}
+      result={result}
+      error={error}
+      onClearError={clearError}
+    >
       {!loaded && (
         <p className="text-xs" style={{ color: "var(--viewer-text-muted)" }}>Loading metadata...</p>
       )}
 
       {loaded && FIELDS.map(({ key, label }) => (
-        <div key={key}>
-          <label className="text-xs mb-1 block" style={{ color: "var(--viewer-text-muted)" }}>{label}</label>
-          <input
-            value={meta[key] ?? ""}
-            onChange={(e) => setMeta((m) => ({ ...m, [key]: e.target.value || undefined }))}
-            className="v-input"
-            placeholder={label}
-          />
-        </div>
+        <LabeledInput
+          key={key}
+          label={label}
+          value={meta[key] ?? ""}
+          onChange={(v) => setMeta((m) => ({ ...m, [key]: v || undefined }))}
+          placeholder={label}
+        />
       ))}
-
-      <button
-        disabled={!loaded || isProcessing}
-        onClick={handle}
-        className="v-btn-primary"
-      >
-        Save Metadata
-      </button>
-
-      <PanelOutput
-        isProcessing={isProcessing}
-        result={result}
-        error={error}
-        onClearError={clearError}
-      />
-    </div>
+    </ToolPanelLayout>
   );
 }

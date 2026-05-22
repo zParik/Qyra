@@ -9,7 +9,7 @@ export default function RemovePages() {
   const { files, clearFiles, isProcessing } = useAppStore();
   const { run } = usePdfCommand();
   const [pageList, setPageList] = useState("");
-  const file = files[0];
+  const file = files[0]!;
   const pageCount = file?.info?.page_count ?? 0;
 
   function parsePages(text: string): number[] {
@@ -18,7 +18,7 @@ export default function RemovePages() {
     for (const part of text.split(",").map((s) => s.trim())) {
       if (part.includes("-")) {
         const [a, b] = part.split("-").map(Number);
-        if (!isNaN(a) && !isNaN(b) && a >= 1 && b >= a && b <= MAX_PAGE) {
+        if (a !== undefined && b !== undefined && !isNaN(a) && !isNaN(b) && a >= 1 && b >= a && b <= MAX_PAGE) {
           for (let i = a; i <= b; i++) pages.push(i);
         }
       } else {

@@ -10,9 +10,10 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { LoadedFile } from "../../store/useAppStore";
 import { usePanelCommand } from "../usePanelCommand";
-import { PanelOutput } from "../PanelOutput";
+import { ToolPanelLayout } from "../components/ToolPanelLayout";
 import { reorderPages } from "../../lib/tauri";
 import { seedThumbnailsForReorder } from "../../hooks/usePageThumbnails";
+import { IconDocWord } from "../icons";
 
 // Must match the scales used by Viewer.tsx's two usePageThumbnails calls.
 const VIEWER_SCALES = [0.3, 2.0];
@@ -29,10 +30,7 @@ function PageChip({ id, label }: { id: string; label: string }) {
       {...listeners}
       className="v-page-chip w-12 h-14 flex flex-col items-center justify-center rounded-lg text-xs cursor-grab active:cursor-grabbing select-none"
     >
-      <svg className="w-4 h-4 mb-0.5" style={{ color: "var(--viewer-text-muted)" }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-          d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-      </svg>
+      <IconDocWord className="w-4 h-4 mb-0.5" style={{ color: "var(--viewer-text-muted)" }} />
       <span className="font-medium">{label}</span>
     </div>
   );
@@ -99,7 +97,14 @@ export function ReorderPanel({ file, onApplied }: ReorderPanelProps) {
   }
 
   return (
-    <div className="space-y-4">
+    <ToolPanelLayout
+      onSubmit={handle}
+      submitLabel="Apply New Order"
+      isProcessing={isProcessing}
+      result={result}
+      error={error}
+      onClearError={clearError}
+    >
       <p className="text-xs" style={{ color: "var(--viewer-text-muted)" }}>Drag pages into the order you want, then apply.</p>
 
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -111,21 +116,6 @@ export function ReorderPanel({ file, onApplied }: ReorderPanelProps) {
           </div>
         </SortableContext>
       </DndContext>
-
-      <button
-        disabled={isProcessing}
-        onClick={handle}
-        className="v-btn-primary"
-      >
-        Apply New Order
-      </button>
-
-      <PanelOutput
-        isProcessing={isProcessing}
-        result={result}
-        error={error}
-        onClearError={clearError}
-      />
-    </div>
+    </ToolPanelLayout>
   );
 }

@@ -59,11 +59,11 @@ export function FileResult({ result, resultFiles = [], message, onDoMore }: File
       {/* Actions */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         {isAndroid() ? (
-          <ActionBtn onClick={() => shareFile(allFiles[0]).catch(() => {})}>Save to Downloads</ActionBtn>
+          <ActionBtn onClick={() => shareFile(allFiles[0]!).catch(() => {})}>Save to Downloads</ActionBtn>
         ) : (
           <>
-            <ActionBtn onClick={() => openFile(allFiles[0])}>Open file</ActionBtn>
-            <ActionBtn onClick={() => openFolder(allFiles[0])}>
+            <ActionBtn onClick={() => openFile(allFiles[0]!)}>Open file</ActionBtn>
+            <ActionBtn onClick={() => openFolder(allFiles[0]!)}>
               {/mac/i.test(navigator.platform) ? "Reveal in Finder" : "Show in Explorer"}
             </ActionBtn>
           </>
