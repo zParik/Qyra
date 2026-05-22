@@ -5,15 +5,16 @@ use printpdf::{
 use std::fs::File;
 use std::io::BufWriter;
 use crate::utils::paths::temp_output_path;
+use crate::error::{AppError, AppResult};
 
 /// Convert a list of images (PNG/JPG/WebP) to a PDF.
 #[tauri::command]
 pub fn images_to_pdf(
     image_paths: Vec<String>,
     output: Option<String>,
-) -> Result<String, String> {
+) -> AppResult<String> {
     if image_paths.is_empty() {
-        return Err("No images provided".into());
+        return Err(AppError::Invalid("No images provided".to_string()));
     }
 
     let out = output.unwrap_or_else(|| temp_output_path(&image_paths[0], "converted"));
@@ -22,7 +23,7 @@ pub fn images_to_pdf(
 
     for (i, img_path) in image_paths.iter().enumerate() {
         let img = ::image::open(img_path)
-            .map_err(|e| format!("Failed to open image {}: {}", img_path, e))?;
+            .map_err(|e| AppError::Other(format!("Failed to open image {}: {}", img_path, e)))?;
 
         let (width_px, height_px) = ::image::GenericImageView::dimensions(&img);
 
@@ -79,7 +80,7 @@ pub fn images_to_pdf(
         );
     }
 
-    let file = File::create(&out).map_err(|e| e.to_string())?;
-    doc.save(&mut BufWriter::new(file)).map_err(|e| e.to_string())?;
+    let file = File::create(&out)?;
+    doc.save(&mut BufWriter::new(file)).map_err(|e| AppError::Pdf(e.to_string()))?;
     Ok(out)
 }

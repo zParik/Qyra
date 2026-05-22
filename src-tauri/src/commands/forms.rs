@@ -1,5 +1,6 @@
 use lopdf::{Document, Object, ObjectId};
 use crate::utils::paths::temp_output_path;
+use crate::error::{AppError, AppResult};
 
 #[derive(serde::Serialize)]
 pub struct FormField {
@@ -297,18 +298,16 @@ fn collect_fields(
     out.push(FormField { name, field_type: ft, value, page: page_num, rect, options, flags });
 }
 
-fn get_form_fields_sync(path: &str) -> Result<Vec<FormField>, String> {
-    let doc = Document::load(path).map_err(|e| e.to_string())?;
+fn get_form_fields_sync(path: &str) -> AppResult<Vec<FormField>> {
+    let doc = Document::load(path)?;
 
     let catalog_id = doc
         .trailer
         .get(b"Root")
-        .and_then(|o| o.as_reference())
-        .map_err(|e| e.to_string())?;
+        .and_then(|o| o.as_reference())?;
     let catalog = doc
         .get_object(catalog_id)
-        .and_then(|o| o.as_dict())
-        .map_err(|e| e.to_string())?
+        .and_then(|o| o.as_dict())?
         .clone();
 
     let acroform_obj = match catalog.get(b"AcroForm") {
@@ -320,8 +319,7 @@ fn get_form_fields_sync(path: &str) -> Result<Vec<FormField>, String> {
         Object::Dictionary(d) => d.clone(),
         Object::Reference(id) => doc
             .get_object(*id)
-            .and_then(|o| o.as_dict())
-            .map_err(|e| e.to_string())?
+            .and_then(|o| o.as_dict())?
             .clone(),
         _ => return Ok(vec![]),
     };
@@ -331,8 +329,7 @@ fn get_form_fields_sync(path: &str) -> Result<Vec<FormField>, String> {
             Object::Array(a) => a.clone(),
             Object::Reference(id) => doc
                 .get_object(*id)
-                .and_then(|o| o.as_array())
-                .map_err(|e| e.to_string())?
+                .and_then(|o| o.as_array())?
                 .clone(),
             _ => return Ok(vec![]),
         },
@@ -359,10 +356,10 @@ fn get_form_fields_sync(path: &str) -> Result<Vec<FormField>, String> {
 }
 
 #[tauri::command]
-pub async fn get_form_fields(path: String) -> Result<Vec<FormField>, String> {
+pub async fn get_form_fields(path: String) -> AppResult<Vec<FormField>> {
     tokio::task::spawn_blocking(move || get_form_fields_sync(&path))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| AppError::Other(e.to_string()))?
 }
 
 // ── fill_form ─────────────────────────────────────────────────────────────────
@@ -404,16 +401,14 @@ fn collect_field_object_ids(
 }
 
 /// Returns field object IDs from the AcroForm tree, or None if no form exists.
-fn acroform_field_ids(doc: &Document) -> Result<Vec<ObjectId>, String> {
+fn acroform_field_ids(doc: &Document) -> AppResult<Vec<ObjectId>> {
     let catalog_id = doc
         .trailer
         .get(b"Root")
-        .and_then(|o| o.as_reference())
-        .map_err(|e| e.to_string())?;
+        .and_then(|o| o.as_reference())?;
     let catalog = doc
         .get_object(catalog_id)
-        .and_then(|o| o.as_dict())
-        .map_err(|e| e.to_string())?
+        .and_then(|o| o.as_dict())?
         .clone();
 
     let acroform_obj = match catalog.get(b"AcroForm") {
@@ -425,8 +420,7 @@ fn acroform_field_ids(doc: &Document) -> Result<Vec<ObjectId>, String> {
         Object::Dictionary(d) => d,
         Object::Reference(id) => doc
             .get_object(id)
-            .and_then(|o| o.as_dict())
-            .map_err(|e| e.to_string())?
+            .and_then(|o| o.as_dict())?
             .clone(),
         _ => return Ok(vec![]),
     };
@@ -435,8 +429,7 @@ fn acroform_field_ids(doc: &Document) -> Result<Vec<ObjectId>, String> {
         Ok(Object::Array(a)) => a.clone(),
         Ok(Object::Reference(id)) => doc
             .get_object(*id)
-            .and_then(|o| o.as_array())
-            .map_err(|e| e.to_string())?
+            .and_then(|o| o.as_array())?
             .clone(),
         _ => return Ok(vec![]),
     };
@@ -454,9 +447,9 @@ fn fill_form_sync(
     fields: Vec<FieldValue>,
     flatten: bool,
     output: Option<String>,
-) -> Result<String, String> {
+) -> AppResult<String> {
     let out = output.unwrap_or_else(|| temp_output_path(path, "filled"));
-    let mut doc = Document::load(path).map_err(|e| e.to_string())?;
+    let mut doc = Document::load(path)?;
 
     let field_obj_ids = acroform_field_ids(&doc)?;
 
@@ -482,7 +475,7 @@ fn fill_form_sync(
             None => continue,
         };
 
-        let obj_mut = doc.get_object_mut(obj_id).map_err(|e| e.to_string())?;
+        let obj_mut = doc.get_object_mut(obj_id)?;
         if let Object::Dictionary(d) = obj_mut {
             d.set("V", Object::string_literal(new_value));
             d.set("AP", Object::Null);
@@ -502,15 +495,14 @@ fn fill_form_sync(
         let catalog_id = doc
             .trailer
             .get(b"Root")
-            .and_then(|o| o.as_reference())
-            .map_err(|e| e.to_string())?;
-        let catalog_obj = doc.get_object_mut(catalog_id).map_err(|e| e.to_string())?;
+            .and_then(|o| o.as_reference())?;
+        let catalog_obj = doc.get_object_mut(catalog_id)?;
         if let Object::Dictionary(d) = catalog_obj {
             d.set("AcroForm", Object::Null);
         }
     }
 
-    doc.save(&out).map_err(|e| e.to_string())?;
+    doc.save(&out)?;
     Ok(out)
 }
 
@@ -520,8 +512,8 @@ pub async fn fill_form(
     fields: Vec<FieldValue>,
     flatten: bool,
     output: Option<String>,
-) -> Result<String, String> {
+) -> AppResult<String> {
     tokio::task::spawn_blocking(move || fill_form_sync(&path, fields, flatten, output))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| AppError::Other(e.to_string()))?
 }

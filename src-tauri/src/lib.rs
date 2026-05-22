@@ -1,6 +1,9 @@
 mod commands;
+mod error;
 mod pdf;
 mod utils;
+
+pub use error::{AppError, AppResult};
 
 use commands::*;
 use std::sync::Mutex;
@@ -43,7 +46,9 @@ pub fn run() {
                         .expect("in-memory sqlite always works")
                 });
             app.manage(commands::library::LibraryDb(Mutex::new(conn)));
-            app.manage(commands::thumb_store::ThumbStore::new(app.handle()));
+            let thumb_store = commands::thumb_store::ThumbStore::new(app.handle())
+                .expect("failed to initialize thumb store");
+            app.manage(thumb_store);
             // When opened via "Open with" or double-click, the file path is passed as a CLI arg.
             // Emit it to the frontend after a short delay so the webview has time to load.
             let file_path = std::env::args()
@@ -79,6 +84,7 @@ pub fn run() {
             reorder::reorder_pages,
             render::read_pdf_bytes,
             render::render_page,
+            render::render_page_uncached,
             render::set_active_document,
             render::get_page_aspect_ratio,
             render::get_text_page,
@@ -130,10 +136,12 @@ pub fn run() {
             forms::fill_form,
             pdf_annotations::get_page_annotations,
             pdf_annotations::add_pdf_annotation,
+            pdf_annotations::export_annotations,
             redact::redact_pdf,
             crop::crop_pages,
             flatten::flatten_pdf,
             export_text::export_pdf_to_text,
+            export_word::export_pdf_to_word,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,3 +1,4 @@
+use crate::error::{AppError, AppResult};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
@@ -28,39 +29,40 @@ const DB_SCHEMA: &str = "
         value TEXT NOT NULL
     );";
 
-pub fn open_db(app: &AppHandle) -> rusqlite::Result<Connection> {
-    let dir = app.path().app_data_dir().expect("no app data dir");
+pub fn open_db(app: &AppHandle) -> AppResult<Connection> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Other(format!("no app data dir: {e}")))?;
     std::fs::create_dir_all(&dir).ok();
     let conn = Connection::open(dir.join("library.db"))?;
     conn.execute_batch(DB_SCHEMA)?;
     Ok(conn)
 }
 
-pub fn open_db_in_memory() -> rusqlite::Result<Connection> {
+pub fn open_db_in_memory() -> AppResult<Connection> {
     let conn = Connection::open_in_memory()?;
     conn.execute_batch(DB_SCHEMA)?;
     Ok(conn)
 }
 
 #[tauri::command]
-pub fn get_setting(db: State<LibraryDb>, key: String) -> Result<Option<String>, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
+pub fn get_setting(db: State<LibraryDb>, key: String) -> AppResult<Option<String>> {
+    let conn = db.0.lock().map_err(|e| AppError::Lock(e.to_string()))?;
     let val = conn
         .query_row("SELECT value FROM settings WHERE key = ?1", params![key], |r| r.get(0))
-        .optional()
-        .map_err(|e| e.to_string())?;
+        .optional()?;
     Ok(val)
 }
 
 #[tauri::command]
-pub fn set_setting(db: State<LibraryDb>, key: String, value: String) -> Result<(), String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
+pub fn set_setting(db: State<LibraryDb>, key: String, value: String) -> AppResult<()> {
+    let conn = db.0.lock().map_err(|e| AppError::Lock(e.to_string()))?;
     conn.execute(
         "INSERT INTO settings (key, value) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value = ?2",
         params![key, value],
-    )
-    .map_err(|e| e.to_string())?;
+    )?;
     Ok(())
 }
 
@@ -70,15 +72,14 @@ pub fn set_starred(
     path: String,
     name: String,
     starred: bool,
-) -> Result<(), String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
+) -> AppResult<()> {
+    let conn = db.0.lock().map_err(|e| AppError::Lock(e.to_string()))?;
     conn.execute(
         "INSERT INTO library (path, name, starred, archived, added_at)
          VALUES (?1, ?2, ?3, 0, (strftime('%s','now') * 1000))
          ON CONFLICT(path) DO UPDATE SET name = ?2, starred = ?3",
         params![path, name, starred as i32],
-    )
-    .map_err(|e| e.to_string())?;
+    )?;
     Ok(())
 }
 
@@ -88,27 +89,24 @@ pub fn set_archived(
     path: String,
     name: String,
     archived: bool,
-) -> Result<(), String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
+) -> AppResult<()> {
+    let conn = db.0.lock().map_err(|e| AppError::Lock(e.to_string()))?;
     conn.execute(
         "INSERT INTO library (path, name, starred, archived, added_at)
          VALUES (?1, ?2, 0, ?3, (strftime('%s','now') * 1000))
          ON CONFLICT(path) DO UPDATE SET name = ?2, archived = ?3",
         params![path, name, archived as i32],
-    )
-    .map_err(|e| e.to_string())?;
+    )?;
     Ok(())
 }
 
 #[tauri::command]
-pub fn get_starred(db: State<LibraryDb>) -> Result<Vec<LibraryEntry>, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    let mut stmt = conn
-        .prepare(
-            "SELECT path, name, starred, archived, added_at
-             FROM library WHERE starred = 1 ORDER BY added_at DESC",
-        )
-        .map_err(|e| e.to_string())?;
+pub fn get_starred(db: State<LibraryDb>) -> AppResult<Vec<LibraryEntry>> {
+    let conn = db.0.lock().map_err(|e| AppError::Lock(e.to_string()))?;
+    let mut stmt = conn.prepare(
+        "SELECT path, name, starred, archived, added_at
+         FROM library WHERE starred = 1 ORDER BY added_at DESC",
+    )?;
     let entries = stmt
         .query_map([], |row| {
             Ok(LibraryEntry {
@@ -118,22 +116,19 @@ pub fn get_starred(db: State<LibraryDb>) -> Result<Vec<LibraryEntry>, String> {
                 archived: row.get::<_, i32>(3)? != 0,
                 added_at: row.get(4)?,
             })
-        })
-        .map_err(|e| e.to_string())?
+        })?
         .filter_map(|r| r.ok())
         .collect();
     Ok(entries)
 }
 
 #[tauri::command]
-pub fn get_archived(db: State<LibraryDb>) -> Result<Vec<LibraryEntry>, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    let mut stmt = conn
-        .prepare(
-            "SELECT path, name, starred, archived, added_at
-             FROM library WHERE archived = 1 ORDER BY added_at DESC",
-        )
-        .map_err(|e| e.to_string())?;
+pub fn get_archived(db: State<LibraryDb>) -> AppResult<Vec<LibraryEntry>> {
+    let conn = db.0.lock().map_err(|e| AppError::Lock(e.to_string()))?;
+    let mut stmt = conn.prepare(
+        "SELECT path, name, starred, archived, added_at
+         FROM library WHERE archived = 1 ORDER BY added_at DESC",
+    )?;
     let entries = stmt
         .query_map([], |row| {
             Ok(LibraryEntry {
@@ -143,22 +138,19 @@ pub fn get_archived(db: State<LibraryDb>) -> Result<Vec<LibraryEntry>, String> {
                 archived: row.get::<_, i32>(3)? != 0,
                 added_at: row.get(4)?,
             })
-        })
-        .map_err(|e| e.to_string())?
+        })?
         .filter_map(|r| r.ok())
         .collect();
     Ok(entries)
 }
 
 #[tauri::command]
-pub fn get_entry(db: State<LibraryDb>, path: String) -> Result<Option<LibraryEntry>, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    let mut stmt = conn
-        .prepare(
-            "SELECT path, name, starred, archived, added_at
-             FROM library WHERE path = ?1",
-        )
-        .map_err(|e| e.to_string())?;
+pub fn get_entry(db: State<LibraryDb>, path: String) -> AppResult<Option<LibraryEntry>> {
+    let conn = db.0.lock().map_err(|e| AppError::Lock(e.to_string()))?;
+    let mut stmt = conn.prepare(
+        "SELECT path, name, starred, archived, added_at
+         FROM library WHERE path = ?1",
+    )?;
     let entry = stmt
         .query_row(params![path], |row| {
             Ok(LibraryEntry {
@@ -169,7 +161,6 @@ pub fn get_entry(db: State<LibraryDb>, path: String) -> Result<Option<LibraryEnt
                 added_at: row.get(4)?,
             })
         })
-        .optional()
-        .map_err(|e| e.to_string())?;
+        .optional()?;
     Ok(entry)
 }

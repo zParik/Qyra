@@ -1,5 +1,6 @@
 use lopdf::{Document, Object, ObjectId};
 use crate::utils::paths::temp_output_path;
+use crate::error::{AppError, AppResult};
 
 fn get_page_dims(doc: &Document, page_id: ObjectId) -> (f64, f64) {
     let page = match doc.get_object(page_id) {
@@ -28,9 +29,9 @@ pub async fn crop_pages(
     pages: Vec<u32>,
     crop_rect: [f64; 4],
     output: Option<String>,
-) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || {
-        let mut doc = Document::load(&path).map_err(|e| e.to_string())?;
+) -> AppResult<String> {
+    tokio::task::spawn_blocking(move || -> AppResult<String> {
+        let mut doc = Document::load(&path)?;
         let out = output.unwrap_or_else(|| temp_output_path(&path, "cropped"));
 
         let page_map: std::collections::HashMap<u32, ObjectId> =
@@ -78,7 +79,7 @@ pub async fn crop_pages(
 
         // Second pass: mutate page dicts
         for (page_id, box_array) in crops {
-            let page_obj = doc.get_object_mut(page_id).map_err(|e| e.to_string())?;
+            let page_obj = doc.get_object_mut(page_id)?;
             if let Object::Dictionary(d) = page_obj {
                 d.set("CropBox", Object::Array(box_array.clone()));
                 d.set("TrimBox", Object::Array(box_array.clone()));
@@ -86,9 +87,9 @@ pub async fn crop_pages(
             }
         }
 
-        doc.save(&out).map_err(|e| e.to_string())?;
+        doc.save(&out)?;
         Ok(out)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| AppError::Other(e.to_string()))?
 }

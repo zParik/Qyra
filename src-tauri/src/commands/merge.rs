@@ -3,6 +3,7 @@ use lopdf::{Document, Object, ObjectId};
 use tauri::Emitter;
 use crate::utils::paths::temp_output_path;
 use crate::utils::progress::Progress;
+use crate::error::{AppError, AppResult};
 
 /// Merge multiple PDFs into one, using the approach from the lopdf merge example.
 #[tauri::command]
@@ -10,15 +11,15 @@ pub async fn merge_pdfs(
     paths: Vec<String>,
     output: Option<String>,
     app_handle: tauri::AppHandle,
-) -> Result<String, String> {
+) -> AppResult<String> {
     if paths.len() < 2 {
-        return Err("Need at least 2 files to merge".into());
+        return Err(AppError::Invalid("Need at least 2 files to merge".to_string()));
     }
 
     let total = paths.len();
     let mut documents = Vec::with_capacity(total);
     for (i, p) in paths.iter().enumerate() {
-        let doc = Document::load(p).map_err(|e| format!("Failed to load {}: {}", p, e))?;
+        let doc = Document::load(p).map_err(|e| AppError::Pdf(format!("Failed to load {}: {}", p, e)))?;
         documents.push(doc);
         let _ = app_handle.emit(
             "operation-progress",
@@ -29,11 +30,11 @@ pub async fn merge_pdfs(
     let mut merged = merge_documents(documents)?;
 
     let out = output.unwrap_or_else(|| temp_output_path(&paths[0], "merged"));
-    merged.save(&out).map_err(|e| format!("Save error: {}", e))?;
+    merged.save(&out)?;
     Ok(out)
 }
 
-pub fn merge_documents(mut documents: Vec<Document>) -> Result<Document, String> {
+pub fn merge_documents(mut documents: Vec<Document>) -> AppResult<Document> {
     let mut max_id = 1u32;
     let mut documents_pages: BTreeMap<ObjectId, Object> = BTreeMap::new();
     let mut documents_objects: BTreeMap<ObjectId, Object> = BTreeMap::new();
@@ -86,8 +87,8 @@ pub fn merge_documents(mut documents: Vec<Document>) -> Result<Document, String>
         }
     }
 
-    let pages_object = pages_object.ok_or("Pages root not found in source PDFs")?;
-    let catalog_object = catalog_object.ok_or("Catalog not found in source PDFs")?;
+    let pages_object = pages_object.ok_or_else(|| AppError::Pdf("Pages root not found in source PDFs".to_string()))?;
+    let catalog_object = catalog_object.ok_or_else(|| AppError::Pdf("Catalog not found in source PDFs".to_string()))?;
 
     // Insert all pages with updated Parent reference
     for (object_id, object) in documents_pages.iter() {
