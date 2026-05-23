@@ -27,6 +27,18 @@ const DB_SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS settings (
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS open_tabs (
+        position  INTEGER NOT NULL,
+        path      TEXT    NOT NULL UNIQUE,
+        name      TEXT    NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS tab_ui_state (
+        path         TEXT    PRIMARY KEY,
+        current_page INTEGER NOT NULL DEFAULT 1,
+        zoom         REAL    NOT NULL DEFAULT 1.0,
+        updated_at   INTEGER NOT NULL DEFAULT (strftime('%s','now'))
     );";
 
 pub fn open_db(app: &AppHandle) -> AppResult<Connection> {
