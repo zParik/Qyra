@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { LoadedFile } from "../store/useAppStore";
+import { useIsPhone } from "../hooks/useMediaQuery";
 import { RotatePanel } from "./tools/RotatePanel";
 import { RemovePanel } from "./tools/RemovePanel";
 import { ReorderPanel } from "./tools/ReorderPanel";
@@ -151,12 +152,15 @@ export function ToolSidebar({ file, onApplied, activeTool, onToolChange, selecte
     // comment, annotate, forms, signature, redact have no sidebar panel — handled directly in Viewer
   };
 
+  const isPhone = useIsPhone();
+
   return (
     <div
       style={{
         width: "100%", flexShrink: 0, height: "100%", display: "flex", flexDirection: "column",
         background: "var(--viewer-surface)", borderLeft: "1px solid var(--viewer-border)",
         overflow: "hidden",
+        paddingTop: isPhone ? "env(safe-area-inset-top, 0px)" : undefined,
       }}
     >
       {/* Tab bar */}
@@ -167,22 +171,48 @@ export function ToolSidebar({ file, onApplied, activeTool, onToolChange, selecte
             onClick={() => {
               setTab(t);
               if (t === "comments") {
-                // If switching to comments, don't clear activeTool if it's already "comment"
                 if (activeTool !== "comment") setActiveTool(null);
               } else if (t !== "tools") {
                 setActiveTool(null);
               }
             }}
             style={{
-              flex: 1, padding: "10px 8px", border: "none",
+              flex: 1,
+              padding: isPhone ? "14px 8px" : "10px 8px",
+              minHeight: isPhone ? 48 : undefined,
+              border: "none",
               background: "transparent",
               borderBottom: `2px solid ${tab === t ? "var(--accent)" : "transparent"}`,
               color: tab === t ? "var(--viewer-text)" : "var(--viewer-text-muted)",
-              fontFamily: UI, fontSize: 11, fontWeight: 500,
+              fontFamily: UI,
+              fontSize: isPhone ? 14 : 11,
+              fontWeight: 500,
               textTransform: "capitalize", cursor: "pointer", transition: "color 100ms",
+              WebkitTapHighlightColor: "transparent",
             }}
           >{t}</button>
         ))}
+        {isPhone && (
+          <button
+            onClick={() => {
+              // Close sidebar on phone — find the showTools setter via Viewer's prop indirectly
+              // by dispatching a custom event the Viewer can listen to. Simpler: call onToolChange(null)
+              // then rely on header toggle to dismiss. We just clear activeTool here.
+              onToolChange(null);
+              window.dispatchEvent(new CustomEvent("viewer:closeTools"));
+            }}
+            aria-label="Close panel"
+            style={{
+              width: 48, minHeight: 48,
+              border: "none", background: "transparent",
+              color: "var(--viewer-text-muted)",
+              cursor: "pointer",
+              borderLeft: "1px solid var(--viewer-border-sub)",
+              fontSize: 20, lineHeight: 1,
+              WebkitTapHighlightColor: "transparent",
+            }}
+          >×</button>
+        )}
       </div>
 
       {/* Tools tab */}

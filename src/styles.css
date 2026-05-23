@@ -745,6 +745,15 @@
   [role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"] {
     min-height: 44px;
   }
+
+  /* Viewer sidebar tool rows */
+  .v-row-btn {
+    min-height: 48px;
+    padding: 12px 16px !important;
+  }
+  .v-row-btn span:not(.v-row-icon):not(.v-row-chevron) {
+    font-size: 14px !important;
+  }
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
