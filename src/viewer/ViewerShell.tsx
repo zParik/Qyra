@@ -16,6 +16,7 @@ export default function ViewerShell() {
   const closeTab = useAppStore((s) => s.closeTab);
   const activateTab = useAppStore((s) => s.activateTab);
   const replaceTab = useAppStore((s) => s.replaceTab);
+  const reopenClosedTab = useAppStore((s) => s.reopenClosedTab);
   const setTabOriginal = useAppStore((s) => s.setTabOriginal);
   const setTabDirty = useAppStore((s) => s.setTabDirty);
   const setTabUndo = useAppStore((s) => s.setTabUndo);
@@ -101,7 +102,10 @@ export default function ViewerShell() {
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.key === "t") {
+      if (e.ctrlKey && e.shiftKey && (e.key === "T" || e.key === "t")) {
+        e.preventDefault();
+        reopenClosedTab();
+      } else if (e.ctrlKey && !e.shiftKey && e.key === "t") {
         e.preventDefault();
         handleNewTab();
       } else if (e.ctrlKey && e.key === "w") {
@@ -125,7 +129,7 @@ export default function ViewerShell() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeTabIndex, openTabs.length, handleNewTab, handleCloseTab, activateTab]);
+  }, [activeTabIndex, openTabs.length, handleNewTab, handleCloseTab, activateTab, reopenClosedTab]);
 
   if (openTabs.length === 0) return null;
 
