@@ -6,9 +6,8 @@ import Home from "./tools/Home";
 import Merge from "./tools/Merge";
 import ImagesToPdf from "./tools/ImagesToPdf";
 import Ocr from "./tools/Ocr";
-import Viewer from "./viewer/Viewer";
+import ViewerShell from "./viewer/ViewerShell";
 import { useOpenWithFile } from "./hooks/useOpenWithFile";
-import { ViewerErrorFallback } from "./components/ErrorFallback";
 import { useUpdater } from "./hooks/useUpdater";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { ErrorFallback } from "./components/ErrorFallback";
@@ -43,11 +42,7 @@ export default function App() {
       />
       <Routes>
         <Route path="/" element={<Home />} />
-        <Route path="/view" element={
-          <ErrorBoundary FallbackComponent={ViewerErrorFallback} key="viewer">
-            <Viewer />
-          </ErrorBoundary>
-        } />
+        <Route path="/view" element={<ViewerShell />} />
         <Route path="/merge" element={<Merge />} />
         <Route path="/images-to-pdf" element={<ImagesToPdf />} />
         <Route path="/ocr" element={<Ocr />} />

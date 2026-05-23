@@ -142,6 +142,11 @@ pub fn run() {
             flatten::flatten_pdf,
             export_text::export_pdf_to_text,
             export_word::export_pdf_to_word,
+            tabs::get_tab_session,
+            tabs::save_tab_session,
+            tabs::save_tab_ui_state,
+            tabs::get_tab_ui_state,
+            tabs::clear_tab_session,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
