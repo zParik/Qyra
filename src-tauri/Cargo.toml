@@ -37,6 +37,8 @@ quick-xml = "0.36"
 mupdf = "0.6"
 
 # Updater only makes sense on desktop (Play Store handles app-store updates on Android).
+# mupdf-sys cross-compiles to Android via the NDK on Linux CI (Windows host requires
+# MSYS2/WSL — handled in GitHub Actions, not locally).
 [target.'cfg(not(target_os = "android"))'.dependencies]
 tauri-plugin-updater = "2"
 

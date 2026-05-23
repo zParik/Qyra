@@ -43,4 +43,6 @@ target/
 
 # Local-only notes & scripts
 PLAN.md
+CLAUDE.md
+ROADMAP.md
 bulk_apperror.py
