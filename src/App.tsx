@@ -45,7 +45,7 @@ export default function App() {
         <Route path="/" element={<Home />} />
         <Route path="/view" element={
           <ErrorBoundary FallbackComponent={ViewerErrorFallback} key="viewer">
-            <Viewer />
+            <Viewer tabPath="" />
           </ErrorBoundary>
         } />
         <Route path="/merge" element={<Merge />} />

@@ -52,14 +52,27 @@ function findActiveMatchOrdinalOnPage(
   return ordinal;
 }
 
-export default function Viewer() {
+export default function Viewer({ tabPath }: { tabPath: string }) {
   const navigate = useNavigate();
-  const {
-    viewerFile, setViewerFile,
-    undoViewerFile, setUndoViewerFile,
-    originalViewerPath, setOriginalViewerPath,
-    isViewerDirty, setIsViewerDirty,
-  } = useAppStore();
+  const viewerFile = useAppStore((s) => {
+    const file = s.tabFiles[tabPath];
+    const tab = s.openTabs.find((t) => t.path === tabPath);
+    return file ?? tab ?? null;
+  });
+  const isViewerDirty = useAppStore((s) => s.tabDirty[tabPath] ?? false);
+  const undoViewerFile = useAppStore((s) => s.tabUndo[tabPath] ?? null);
+  const originalViewerPath = useAppStore((s) => s.tabOriginal[tabPath] ?? tabPath);
+  const setTabFileAction = useAppStore((s) => s.setTabFile);
+  const setTabDirtyAction = useAppStore((s) => s.setTabDirty);
+  const setTabUndoAction = useAppStore((s) => s.setTabUndo);
+  const setTabOriginalAction = useAppStore((s) => s.setTabOriginal);
+
+  const setViewerFile = (file: import("../store/useAppStore").LoadedFile | null) => {
+    if (file) setTabFileAction(tabPath, file);
+  };
+  const setIsViewerDirty = (v: boolean) => setTabDirtyAction(tabPath, v);
+  const setUndoViewerFile = (file: import("../store/useAppStore").LoadedFile | null) => setTabUndoAction(tabPath, file);
+  const setOriginalViewerPath = (p: string | null) => { if (p) setTabOriginalAction(tabPath, p); };
   const [currentPage, setCurrentPage] = useState(1);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -119,6 +132,31 @@ export default function Viewer() {
   // are read by CommentLayer/sidebar via useCommentsStore — Viewer only needs
   // the hook to wire up the load and auto-save effects.
   useComments(viewerFile?.path);
+
+  // Restore page + zoom from SQLite when this tab is mounted
+  useEffect(() => {
+    invoke<[number, number]>("get_tab_ui_state", { path: tabPath }).then(([page, z]) => {
+      if (page > 1) setCurrentPage(page);
+      if (z !== 1.0) setZoom(z);
+    }).catch(() => {});
+  }, [tabPath]);
+
+  const uiStateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (uiStateTimerRef.current) clearTimeout(uiStateTimerRef.current);
+    uiStateTimerRef.current = setTimeout(() => {
+      invoke("save_tab_ui_state", {
+        path: tabPath,
+        currentPage,
+        zoom,
+      }).catch(() => {});
+    }, 800);
+    return () => {
+      if (uiStateTimerRef.current) clearTimeout(uiStateTimerRef.current);
+    };
+  }, [tabPath, currentPage, zoom]);
+
   // True while comment mode is active — opens the comments tab in the sidebar
   const isCommentMode = activeTool === "comment";
 
