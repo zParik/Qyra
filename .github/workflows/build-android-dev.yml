@@ -66,6 +66,59 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      # mupdf-sys 0.6.0 wrapper/context.c #includes "androidfonts.c" on Android but
+      # the crate forgets to ship that file. Pre-fetch the crate and write a stub
+      # that installs no-op system font loaders (TOFU + bundled Noto subset cover
+      # rendering — no system fonts on Android).
+      - name: Patch mupdf-sys for Android
+        working-directory: src-tauri
+        run: |
+          cargo fetch --target aarch64-linux-android
+          MUPDF_SYS_DIR=$(find ~/.cargo/registry/src -type d -name 'mupdf-sys-0.6.0' | head -1)
+          if [ -z "$MUPDF_SYS_DIR" ]; then
+            echo "::error::mupdf-sys-0.6.0 source not found in cargo registry"
+            find ~/.cargo/registry/src -maxdepth 4 -type d | head
+            exit 1
+          fi
+          echo "Patching $MUPDF_SYS_DIR/wrapper/androidfonts.c"
+          mkdir -p "$MUPDF_SYS_DIR/wrapper"
+          cat > "$MUPDF_SYS_DIR/wrapper/androidfonts.c" <<'EOF'
+          /* Stub provided by Qyra CI: mupdf-sys 0.6.0 forgot to ship this file.
+           * No system fonts on Android — TOFU + bundled Noto subset covers rendering. */
+          #include "mupdf/fitz.h"
+
+          static fz_font *
+          android_load_system_font(fz_context *ctx, const char *name,
+                                   int bold, int italic, int needs_exact_metrics)
+          {
+              return NULL;
+          }
+
+          static fz_font *
+          android_load_system_cjk_font(fz_context *ctx, const char *name,
+                                       int ros, int serif)
+          {
+              return NULL;
+          }
+
+          static fz_font *
+          android_load_system_fallback_font(fz_context *ctx, int script, int language,
+                                            int serif, int bold, int italic)
+          {
+              return NULL;
+          }
+
+          void fz_install_load_system_font_funcs_android(fz_context *ctx)
+          {
+              fz_install_load_system_font_funcs(ctx,
+                  android_load_system_font,
+                  android_load_system_cjk_font,
+                  android_load_system_fallback_font);
+          }
+          EOF
+          # Make the file writable in case the registry copy was marked read-only
+          chmod -R u+w "$MUPDF_SYS_DIR"
+
       - name: Build debug APK
         run: npm run tauri android build -- --debug --apk
         env:
