@@ -84,36 +84,36 @@ jobs:
           mkdir -p "$MUPDF_SYS_DIR/wrapper"
           cat > "$MUPDF_SYS_DIR/wrapper/androidfonts.c" <<'EOF'
           /* Stub provided by Qyra CI: mupdf-sys 0.6.0 forgot to ship this file.
-           * No system fonts on Android — TOFU + bundled Noto subset covers rendering. */
+           * wrapper/context.c references load_droid_font / load_droid_cjk_font /
+           * load_droid_fallback_font directly (without the static / namespacing dance the
+           * real implementation would have). We provide the three symbols as no-op
+           * loaders that return NULL — TOFU + the bundled Noto subset compiled into
+           * mupdf cover rendering on Android. No system fonts needed.
+           */
           #include "mupdf/fitz.h"
 
-          static fz_font *
-          android_load_system_font(fz_context *ctx, const char *name,
-                                   int bold, int italic, int needs_exact_metrics)
+          fz_font *
+          load_droid_font(fz_context *ctx, const char *name,
+                          int bold, int italic, int needs_exact_metrics)
           {
+              (void)ctx; (void)name; (void)bold; (void)italic; (void)needs_exact_metrics;
               return NULL;
           }
 
-          static fz_font *
-          android_load_system_cjk_font(fz_context *ctx, const char *name,
-                                       int ros, int serif)
+          fz_font *
+          load_droid_cjk_font(fz_context *ctx, const char *name,
+                              int ros, int serif)
           {
+              (void)ctx; (void)name; (void)ros; (void)serif;
               return NULL;
           }
 
-          static fz_font *
-          android_load_system_fallback_font(fz_context *ctx, int script, int language,
-                                            int serif, int bold, int italic)
+          fz_font *
+          load_droid_fallback_font(fz_context *ctx, int script, int language,
+                                   int serif, int bold, int italic)
           {
+              (void)ctx; (void)script; (void)language; (void)serif; (void)bold; (void)italic;
               return NULL;
-          }
-
-          void fz_install_load_system_font_funcs_android(fz_context *ctx)
-          {
-              fz_install_load_system_font_funcs(ctx,
-                  android_load_system_font,
-                  android_load_system_cjk_font,
-                  android_load_system_fallback_font);
           }
           EOF
           # Make the file writable in case the registry copy was marked read-only
