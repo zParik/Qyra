@@ -11,16 +11,22 @@ import { CSS } from "@dnd-kit/utilities";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useAppStore } from "../store/useAppStore";
 import { UI } from "../lib/tokens";
+import { useIsPhone } from "../hooks/useMediaQuery";
 
 function TabPill({
-  id, label, active, dirty, onActivate, onClose, onContextMenu,
+  id, label, active, dirty, onActivate, onClose, onContextMenu, isPhone,
 }: {
   id: string; label: string; active: boolean; dirty: boolean;
   onActivate: () => void; onClose: () => void;
   onContextMenu: (x: number, y: number) => void;
+  isPhone: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id });
+
+  const height = isPhone ? 40 : 32;
+  const fontSize = isPhone ? 13 : 12;
+  const maxWidth = isPhone ? 160 : 200;
 
   return (
     <div
@@ -32,18 +38,19 @@ function TabPill({
         display: "flex",
         alignItems: "center",
         gap: 4,
-        padding: "0 10px 0 12px",
-        height: 32,
+        padding: isPhone ? "0 6px 0 12px" : "0 10px 0 12px",
+        height,
         borderRadius: 6,
         cursor: "pointer",
         flexShrink: 0,
-        maxWidth: 200,
+        maxWidth,
         background: active ? "var(--bg3)" : "transparent",
         border: active ? "1px solid var(--line)" : "1px solid transparent",
         color: active ? "var(--fg0)" : "var(--fg2)",
         fontFamily: UI,
-        fontSize: 12,
+        fontSize,
         userSelect: "none",
+        WebkitTapHighlightColor: "transparent",
       }}
       onClick={onActivate}
       onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onClose(); } }}
@@ -59,9 +66,16 @@ function TabPill({
         onClick={(e) => { e.stopPropagation(); onClose(); }}
         style={{
           background: "none", border: "none", cursor: "pointer",
-          color: "var(--fg2)", padding: "0 2px", lineHeight: 1,
-          fontSize: 14, borderRadius: 3,
+          color: "var(--fg2)",
+          padding: 0, margin: 0,
+          width: isPhone ? 32 : 22,
+          height: isPhone ? 32 : 22,
+          lineHeight: 1,
+          fontSize: isPhone ? 20 : 14,
+          borderRadius: 4,
           flexShrink: 0,
+          display: "inline-flex", alignItems: "center", justifyContent: "center",
+          WebkitTapHighlightColor: "transparent",
         }}
         aria-label="Close tab"
       >
@@ -126,8 +140,11 @@ export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile }: {
     for (let i = openTabs.length - 1; i > index; i--) onCloseTab(i);
   }
 
+  const isPhone = useIsPhone();
   const sensors = useSensors(useSensor(PointerSensor, {
-    activationConstraint: { distance: 6 },
+    activationConstraint: isPhone
+      ? { delay: 200, tolerance: 8 }
+      : { distance: 6 },
   }));
 
   function handleDragEnd(event: DragEndEvent) {
@@ -144,10 +161,12 @@ export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile }: {
         display: "flex",
         alignItems: "center",
         gap: 4,
-        padding: "4px 8px",
+        padding: isPhone ? "6px 8px" : "4px 8px",
+        paddingTop: `calc(env(safe-area-inset-top, 0px) + ${isPhone ? 6 : 4}px)`,
         borderBottom: "1px solid var(--line2)",
         background: "var(--bg1)",
         overflowX: "auto",
+        WebkitOverflowScrolling: "touch",
         scrollbarWidth: "none",
         flexShrink: 0,
       }}
@@ -176,6 +195,7 @@ export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile }: {
               onActivate={() => activateTab(i)}
               onClose={() => onCloseTab(i)}
               onContextMenu={(x, y) => setCtxMenu({ x, y, index: i })}
+              isPhone={isPhone}
             />
           ))}
         </SortableContext>
@@ -220,7 +240,10 @@ export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile }: {
                   it.onSelect();
                 }}
                 style={{
-                  padding: "6px 12px",
+                  padding: isPhone ? "12px 16px" : "6px 12px",
+                  minHeight: isPhone ? 44 : undefined,
+                  fontSize: isPhone ? 14 : 12,
+                  display: "flex", alignItems: "center",
                   color: it.disabled ? "var(--fg3, #45475a)" : "var(--fg0, #cdd6f4)",
                   cursor: it.disabled ? "default" : "pointer",
                   userSelect: "none",
@@ -240,8 +263,12 @@ export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile }: {
         title="Open file in new tab (Ctrl+T)"
         style={{
           background: "none", border: "none", cursor: "pointer",
-          color: "var(--fg2)", fontSize: 18, lineHeight: 1,
-          padding: "0 6px", borderRadius: 4, flexShrink: 0,
+          color: "var(--fg2)",
+          fontSize: isPhone ? 24 : 18, lineHeight: 1,
+          width: isPhone ? 40 : 28, height: isPhone ? 40 : 28,
+          display: "inline-flex", alignItems: "center", justifyContent: "center",
+          borderRadius: 4, flexShrink: 0,
+          WebkitTapHighlightColor: "transparent",
         }}
         aria-label="Open new tab"
       >
