@@ -37,8 +37,9 @@ quick-xml = "0.36"
 mupdf = "0.6"
 
 # Updater only makes sense on desktop (Play Store handles app-store updates on Android).
-# mupdf-sys cross-compiles to Android via the NDK on Linux CI (Windows host requires
-# MSYS2/WSL — handled in GitHub Actions, not locally).
+# mupdf-sys 0.6.0 ships wrapper/context.c which #includes "androidfonts.c" on Android
+# but forgets to ship that file. The CI workflow drops a stub androidfonts.c into the
+# fetched crate before `cargo build` so the C side links.
 [target.'cfg(not(target_os = "android"))'.dependencies]
 tauri-plugin-updater = "2"
 
