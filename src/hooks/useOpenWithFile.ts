@@ -5,10 +5,6 @@ import { useAppStore } from "../store/useAppStore";
 
 export function useOpenWithFile() {
   const navigate = useNavigate();
-  const openTab = useAppStore((s) => s.openTab);
-  const setTabOriginal = useAppStore((s) => s.setTabOriginal);
-  const setTabDirty = useAppStore((s) => s.setTabDirty);
-  const setTabUndo = useAppStore((s) => s.setTabUndo);
 
   useEffect(() => {
     let cleanup: (() => void) | null = null;
@@ -16,10 +12,18 @@ export function useOpenWithFile() {
     listen<string>("open-pdf", (event) => {
       const path = event.payload;
       const name = path.split(/[\\/]/).pop() ?? path;
-      openTab({ path, name });
-      setTabOriginal(path, path);
-      setTabDirty(path, false);
-      setTabUndo(path, null);
+      const s = useAppStore.getState();
+      const activeTab = s.openTabs[s.activeTabIndex];
+
+      s.setTabOriginal(path, path);
+      s.setTabDirty(path, false);
+      s.setTabUndo(path, null);
+
+      if (activeTab?.type === "home") {
+        s.replaceTab(s.activeTabIndex, { type: "pdf", path, name });
+      } else {
+        s.openTab({ type: "pdf", path, name });
+      }
       navigate("/view");
     }).then((fn) => { cleanup = fn; });
 
