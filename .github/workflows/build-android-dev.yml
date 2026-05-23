@@ -45,6 +45,25 @@ jobs:
         run: |
           sdkmanager "ndk;27.0.11902837"
           echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.0.11902837" >> $GITHUB_ENV
+          # Force every downstream tool (tauri, cargo's cc crate, our LD wrapper)
+          # onto the same NDK. The ubuntu runner image pre-installs newer NDKs and
+          # tauri picks them up otherwise, which then mismatches our LD env.
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.0.11902837" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/27.0.11902837" >> $GITHUB_ENV
+
+      - name: Create aarch64 LD wrapper
+        run: |
+          # mupdf's Makefile calls $(LD) -r -b binary directly to embed CFF fonts
+          # and the hyphenation zip into linker objects. It ignores LDFLAGS env, so
+          # we wrap ld.lld in a script that always prepends '-m aarch64linux' to
+          # force aarch64 ELF output regardless of how make invokes us.
+          mkdir -p /tmp/qyra-bin
+          cat > /tmp/qyra-bin/ld <<EOF
+          #!/usr/bin/env bash
+          exec "$ANDROID_SDK_ROOT/ndk/27.0.11902837/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" -m aarch64linux "\$@"
+          EOF
+          chmod +x /tmp/qyra-bin/ld
+          echo "QYRA_LD_WRAPPER=/tmp/qyra-bin/ld" >> $GITHUB_ENV
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -94,11 +113,9 @@ jobs:
           BINDGEN_EXTRA_CLANG_ARGS_x86_64_linux_android: --sysroot=${{ env.NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/sysroot --target=x86_64-linux-android24
           # mupdf's Makefile embeds *.cff fonts + hyph-all.zip into linker objects via
           # `ld -r -b binary`. mupdf-sys's make.rs only forwards CC + XCFLAGS to make,
-          # NOT LD, so make picks up the host `ld` and emits x86_64 ELF objects. The
-          # Android linker then rejects them as 'incompatible with aarch64linux'.
-          # Point LD at the NDK lld and force the aarch64 ELF emulation.
-          LD: ${{ env.NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld
-          LDFLAGS: -m aarch64linux
+          # NOT LD. Plain `LD=ld.lld` would still emit host-arch objects because make
+          # ignores LDFLAGS env. We use a wrapper that always prepends '-m aarch64linux'.
+          LD: ${{ env.QYRA_LD_WRAPPER }}
 
       - name: List APK output (debug)
         run: |
