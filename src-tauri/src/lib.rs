@@ -9,6 +9,32 @@ use commands::*;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
+/// Android: drain the pending-open marker file left by MainActivity when the
+/// user opened a PDF via ACTION_VIEW / ACTION_SEND / ACTION_EDIT.
+/// Reads the absolute path, deletes the marker, emits "open-pdf" to the frontend.
+#[cfg(target_os = "android")]
+fn drain_pending_open<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    use std::path::PathBuf;
+    let Ok(files_dir) = app.path().app_local_data_dir() else { return };
+    // app_local_data_dir() on Android resolves to /data/data/<pkg>/files via the Tauri path API.
+    // MainActivity writes the marker into Android `filesDir`, which is the same location.
+    let candidates: Vec<PathBuf> = vec![
+        files_dir.join(".pending_open.txt"),
+        // Fallback in case the Tauri path API resolves to a parent dir
+        files_dir.parent().map(|p| p.join("files/.pending_open.txt")).unwrap_or_default(),
+    ];
+    for marker in candidates {
+        if !marker.exists() { continue; }
+        let Ok(contents) = std::fs::read_to_string(&marker) else { continue };
+        let path = contents.trim().to_string();
+        let _ = std::fs::remove_file(&marker);
+        if !path.is_empty() {
+            let _ = app.emit("open-pdf", path);
+        }
+        return;
+    }
+}
+
 fn cleanup_stale_sessions(current_pid: u32) {
     let temp = std::env::temp_dir();
     let now = std::time::SystemTime::now();
@@ -49,18 +75,34 @@ pub fn run() {
             let thumb_store = commands::thumb_store::ThumbStore::new(app.handle())
                 .expect("failed to initialize thumb store");
             app.manage(thumb_store);
-            // When opened via "Open with" or double-click, the file path is passed as a CLI arg.
-            // Emit it to the frontend after a short delay so the webview has time to load.
-            let file_path = std::env::args()
-                .skip(1)
-                .find(|a| !a.starts_with('-'));
-            if let Some(path) = file_path {
+            // Desktop: "Open with" passes the file path as a CLI arg.
+            #[cfg(not(target_os = "android"))]
+            {
+                let file_path = std::env::args()
+                    .skip(1)
+                    .find(|a| !a.starts_with('-'));
+                if let Some(path) = file_path {
+                    let handle = app.handle().clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(800));
+                        handle.emit("open-pdf", path).ok();
+                    });
+                }
+            }
+
+            // Android: MainActivity copies the incoming intent's URI into
+            // filesDir/imports/ and writes the absolute path into
+            // filesDir/.pending_open.txt. We poll that marker on startup and
+            // again whenever the activity resumes (handled below in RunEvent::Resumed).
+            #[cfg(target_os = "android")]
+            {
                 let handle = app.handle().clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_millis(800));
-                    handle.emit("open-pdf", path).ok();
+                    drain_pending_open(&handle);
                 });
             }
+
             Ok(())
         });
 
@@ -148,6 +190,12 @@ pub fn run() {
             tabs::get_tab_ui_state,
             tabs::clear_tab_session,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|_app_handle, _event| {
+            #[cfg(target_os = "android")]
+            if matches!(_event, tauri::RunEvent::Resumed) {
+                drain_pending_open(_app_handle);
+            }
+        });
 }
