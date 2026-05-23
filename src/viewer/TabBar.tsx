@@ -43,6 +43,7 @@ function TabPill({
         userSelect: "none",
       }}
       onClick={onActivate}
+      onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onClose(); } }}
       {...attributes}
       {...listeners}
     >
