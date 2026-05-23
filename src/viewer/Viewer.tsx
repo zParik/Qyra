@@ -1393,13 +1393,24 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
           />
         )}
 
-        {/* Left: page strip — side-in drawer (mobile) or fixed column (desktop) */}
+        {/* Left: page strip — slide-in drawer on phone (with backdrop), fixed column on desktop */}
+        {showStrip && !readingMode && (
+          <div
+            className="absolute inset-0 z-10 bg-black/40 sm:hidden"
+            onClick={() => setShowStrip(false)}
+            aria-hidden="true"
+          />
+        )}
         <div
           className={`h-full shrink-0 flex-col ${
             showStrip && !readingMode
-              ? "flex absolute inset-y-0 left-0 z-20 sm:relative sm:z-auto"
+              ? "flex absolute inset-y-0 left-0 z-20 sm:relative sm:z-auto page-strip-drawer"
               : "hidden"
           }`}
+          style={{
+            paddingTop: showStrip && !readingMode ? "env(safe-area-inset-top, 0px)" : undefined,
+            boxShadow: showStrip && !readingMode ? "6px 0 24px rgba(0,0,0,0.45)" : undefined,
+          }}
         >
           <PageStrip
             pageCount={pageCount}
