@@ -6,7 +6,6 @@ pub enum AppError {
     #[error("db: {0}")] Db(#[from] rusqlite::Error),
     #[error("pdf: {0}")] Pdf(String),
     #[error("pdf: {0}")] Lopdf(#[from] lopdf::Error),
-    #[cfg(not(target_os = "android"))]
     #[error("pdf: {0}")] Mupdf(#[from] mupdf::Error),
     #[error("image: {0}")] Image(#[from] image::ImageError),
     #[error("invalid input: {0}")] Invalid(String),
