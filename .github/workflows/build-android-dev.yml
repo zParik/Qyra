@@ -82,6 +82,16 @@ jobs:
           CFLAGS_armv7_linux_androideabi: -UHAVE_ANDROID
           CFLAGS_i686_linux_android: -UHAVE_ANDROID
           CFLAGS_x86_64_linux_android: -UHAVE_ANDROID
+          # mupdf-sys runs bindgen to generate Rust bindings from mupdf headers.
+          # bindgen uses libclang which by default picks up the host Linux glibc
+          # headers (e.g. /usr/include/features-time64.h that #includes bits/wordsize.h
+          # — the latter is x86_64-specific and not in the Android sysroot). Tell
+          # libclang to use the NDK sysroot + target triple so it parses Android
+          # headers instead.
+          BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android: --sysroot=${{ env.NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/sysroot --target=aarch64-linux-android24
+          BINDGEN_EXTRA_CLANG_ARGS_armv7_linux_androideabi: --sysroot=${{ env.NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/sysroot --target=armv7a-linux-androideabi24
+          BINDGEN_EXTRA_CLANG_ARGS_i686_linux_android: --sysroot=${{ env.NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/sysroot --target=i686-linux-android24
+          BINDGEN_EXTRA_CLANG_ARGS_x86_64_linux_android: --sysroot=${{ env.NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/sysroot --target=x86_64-linux-android24
 
       - name: List APK output (debug)
         run: |
