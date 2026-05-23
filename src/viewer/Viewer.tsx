@@ -5,6 +5,7 @@ import { useNotesStore, PageTemplate, VirtualPage } from "../store/useNotesStore
 
 import { usePageThumbnails, evictPathFromThumbnailCache } from "../hooks/usePageThumbnails";
 import { PageStrip } from "./PageStrip";
+import { ScrollPageIndicator } from "./ScrollPageIndicator";
 import { ToolSidebar, ViewerTool } from "./ToolSidebar";
 import { invoke } from "@tauri-apps/api/core";
 import { copyFile, showSaveDialog, bakeAnnotations, setActiveDocument } from "../lib/tauri";
@@ -1432,9 +1433,14 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
         <div
           ref={scrollContainerRef}
           className="flex-1 overflow-auto"
-          style={{ background: "var(--viewer-canvas)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+          style={{ background: "var(--viewer-canvas)", paddingBottom: "env(safe-area-inset-bottom, 0px)", position: "relative" }}
           onScroll={handleScroll}
         >
+          <ScrollPageIndicator
+            scrollContainerRef={scrollContainerRef}
+            currentPage={currentPage}
+            pageCount={pageCount}
+          />
           {/* "Add page" template picker — fixed overlay, unaffected by virtual scroll */}
           {addPageAt !== null && activeTool === "draw" && (
             <div
