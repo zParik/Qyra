@@ -1,5 +1,20 @@
-import { appCacheDir, join } from "@tauri-apps/api/path";
-import { writeFile } from "@tauri-apps/plugin-fs";
+import { appCacheDir, appLocalDataDir, join } from "@tauri-apps/api/path";
+import { writeFile, mkdir, exists } from "@tauri-apps/plugin-fs";
+
+/**
+ * Imported PDFs live in appLocalDataDir/imports/ — NOT cache.
+ * Cache can be evicted by Android at any time, which would silently break
+ * the user's Recents / Library / open-tabs the next time they launch Qyra.
+ * Local-data is only cleared when the user uninstalls or clears app data.
+ */
+async function ensureImportsDir(): Promise<string> {
+  const base = await appLocalDataDir();
+  const dir = await join(base, "imports");
+  if (!(await exists(dir))) {
+    await mkdir(dir, { recursive: true });
+  }
+  return dir;
+}
 
 export function isAndroid(): boolean {
   return /android/i.test(navigator.userAgent);
@@ -14,17 +29,14 @@ function readFileBytes(file: File): Promise<Uint8Array> {
   });
 }
 
-async function cacheFileToDisk(file: File): Promise<{ path: string; name: string }> {
+async function importFileToDisk(file: File): Promise<{ path: string; name: string }> {
   const bytes = await readFileBytes(file);
-  const ext = file.name.includes(".") ? file.name.split(".").pop()! : "bin";
-  const cacheDir = await appCacheDir();
-  const tmpPath = await join(
-    cacheDir,
-    `na_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`
-  );
+  const safeName = file.name.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120) || "document";
+  const importsDir = await ensureImportsDir();
+  const dst = await join(importsDir, `${Date.now()}_${safeName}`);
   // Use plugin-fs writeFile for efficient binary transfer (avoids JSON-array IPC overhead)
-  await writeFile(tmpPath, bytes);
-  return { path: tmpPath, name: file.name };
+  await writeFile(dst, bytes);
+  return { path: dst, name: file.name };
 }
 
 function showNativeFilePicker(accept: string, multiple: boolean): Promise<File[]> {
@@ -64,8 +76,9 @@ function showNativeFilePicker(accept: string, multiple: boolean): Promise<File[]
 }
 
 /**
- * Show Android's native file picker and return resolved temp-file entries.
- * Files are read via FileReader and written to app cache dir so Rust can access them.
+ * Show Android's native file picker. Imported files are copied into
+ * appLocalDataDir/imports/ so they survive cache eviction and the user
+ * can re-open them from Library/Recents without re-picking.
  */
 export async function pickFilesAndroid(
   accept: string,
@@ -73,10 +86,11 @@ export async function pickFilesAndroid(
 ): Promise<{ path: string; name: string }[]> {
   const files = await showNativeFilePicker(accept, multiple);
   if (!files.length) return [];
-  return Promise.all(files.map(cacheFileToDisk));
+  return Promise.all(files.map(importFileToDisk));
 }
 
-/** Returns a writable path in the app cache dir for saving output on Android. */
+/** Returns a writable path in the app cache dir for saving generated output on Android.
+ * (Outputs are ephemeral results of tool operations; cache is fine for those.) */
 export async function androidSavePath(defaultName: string): Promise<string> {
   const base = defaultName.replace(/\.pdf$/i, "");
   const cacheDir = await appCacheDir();
