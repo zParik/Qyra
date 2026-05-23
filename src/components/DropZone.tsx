@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { getPdfInfo } from "../lib/tauri";
 import { useAppStore } from "../store/useAppStore";
 import { isAndroid, pickFilesAndroid } from "../lib/androidFileUtils";
+import { useIsPhone } from "../hooks/useMediaQuery";
 
 interface DropZoneProps {
   accept?: string[];
@@ -14,6 +15,7 @@ export function DropZone({ accept = [".pdf"], multiple = true, label }: DropZone
   const { addFile, setError } = useAppStore();
   const [dragging, setDragging] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const isPhone = useIsPhone();
 
   async function handlePaths(paths: string[]) {
     for (const path of paths) {
@@ -106,9 +108,12 @@ export function DropZone({ accept = [".pdf"], multiple = true, label }: DropZone
         position: "relative", borderRadius: 6,
         border: `1px ${dragging ? "solid" : "dashed"} ${dragging ? "var(--accent)" : "var(--line)"}`,
         background: dragging ? "var(--accent-soft)" : "var(--bg1)",
-        padding: "32px 24px", textAlign: "center", cursor: "pointer",
+        padding: isPhone ? "40px 20px" : "32px 24px",
+        minHeight: isPhone ? 180 : undefined,
+        textAlign: "center", cursor: "pointer",
         transition: "all 120ms ease",
         overflow: "hidden",
+        WebkitTapHighlightColor: "transparent",
       }}
       onMouseEnter={(e) => {
         if (!dragging) (e.currentTarget as HTMLDivElement).style.borderColor = "var(--fg2)";
@@ -125,18 +130,26 @@ export function DropZone({ accept = [".pdf"], multiple = true, label }: DropZone
         transition: "opacity 120ms",
       }} />
 
-      <div style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
-        <svg width={32} height={32} fill="none" stroke="currentColor" strokeWidth={1.5}
+      <div style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: isPhone ? 14 : 10 }}>
+        <svg width={isPhone ? 44 : 32} height={isPhone ? 44 : 32} fill="none" stroke="currentColor" strokeWidth={1.5}
           strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"
           aria-hidden="true"
           style={{ color: dragging ? "var(--accent)" : "var(--fg2)" }}>
           <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
         </svg>
         <div>
-          <p style={{ fontFamily: "'Inter', system-ui, sans-serif", fontSize: 13, fontWeight: 500, color: "var(--fg0)", margin: 0 }}>
-            {label ?? `Drop ${accept.join(", ")} files here or click to browse`}
+          <p style={{
+            fontFamily: "'Inter', system-ui, sans-serif",
+            fontSize: isPhone ? 15 : 13, fontWeight: 500, color: "var(--fg0)", margin: 0,
+          }}>
+            {isPhone
+              ? (label?.replace(/^Drop\s/, "Tap to add ").replace(/here or click to browse$/i, "").trim() || `Tap to add ${accept.join(", ")}`)
+              : (label ?? `Drop ${accept.join(", ")} files here or click to browse`)}
           </p>
-          <p style={{ fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 10.5, color: "var(--fg2)", margin: "4px 0 0" }}>
+          <p style={{
+            fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+            fontSize: isPhone ? 12 : 10.5, color: "var(--fg2)", margin: "4px 0 0",
+          }}>
             Files never leave your device
           </p>
         </div>
