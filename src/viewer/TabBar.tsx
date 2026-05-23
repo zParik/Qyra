@@ -11,9 +11,9 @@ import { useAppStore } from "../store/useAppStore";
 import { UI } from "../lib/tokens";
 
 function TabPill({
-  id, label, active, onActivate, onClose,
+  id, label, active, dirty, onActivate, onClose,
 }: {
-  id: string; label: string; active: boolean;
+  id: string; label: string; active: boolean; dirty: boolean;
   onActivate: () => void; onClose: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
@@ -47,7 +47,7 @@ function TabPill({
       {...listeners}
     >
       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
-        {label}
+        {dirty ? "• " : ""}{label}
       </span>
       <button
         onPointerDown={(e) => e.stopPropagation()}
@@ -75,6 +75,7 @@ export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile }: {
   const activeTabIndex = useAppStore((s) => s.activeTabIndex);
   const activateTab = useAppStore((s) => s.activateTab);
   const reorderTab = useAppStore((s) => s.reorderTab);
+  const tabDirty = useAppStore((s) => s.tabDirty);
 
   const sensors = useSensors(useSensor(PointerSensor, {
     activationConstraint: { distance: 6 },
@@ -122,6 +123,7 @@ export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile }: {
               id={tab.path}
               label={tab.name}
               active={i === activeTabIndex}
+              dirty={tabDirty[tab.path] ?? false}
               onActivate={() => activateTab(i)}
               onClose={() => onCloseTab(i)}
             />
