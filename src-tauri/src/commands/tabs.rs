@@ -1,7 +1,6 @@
 use crate::error::{AppError, AppResult};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
 use tauri::State;
 
 use super::library::LibraryDb;
@@ -13,7 +12,7 @@ pub struct TabEntry {
     pub name: String,
 }
 
-fn lock(db: &State<LibraryDb>) -> AppResult<std::sync::MutexGuard<Connection>> {
+fn lock(db: &State<'_, LibraryDb>) -> AppResult<std::sync::MutexGuard<'_, Connection>> {
     db.0.lock().map_err(|e| AppError::Lock(e.to_string()))
 }
 
@@ -26,7 +25,7 @@ pub fn get_tab_session(db: State<LibraryDb>) -> AppResult<(Vec<TabEntry>, i32)> 
     )?;
     let mut tabs = Vec::new();
     let mut active: i32 = 0;
-    let rows = stmt.query_map([], |r| {
+    let rows = stmt.query_map([], |r: &rusqlite::Row| {
         Ok((
             TabEntry { path: r.get(0)?, name: r.get(1)? },
             r.get::<_, i32>(2)?,
@@ -86,15 +85,15 @@ pub fn save_tab_ui_state(
 #[tauri::command]
 pub fn get_tab_ui_state(db: State<LibraryDb>, path: String) -> AppResult<(i32, f64)> {
     let conn = lock(&db)?;
-    let result = conn.query_row(
+    let result: Result<(i32, f64), rusqlite::Error> = conn.query_row(
         "SELECT current_page, zoom FROM tab_ui_state WHERE path = ?1",
         params![path],
-        |r| Ok((r.get::<_, i32>(0)?, r.get::<_, f64>(1)?)),
+        |r: &rusqlite::Row| Ok((r.get::<_, i32>(0)?, r.get::<_, f64>(1)?)),
     );
     match result {
         Ok(v) => Ok(v),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok((1, 1.0)),
-        Err(e) => Err(e.into()),
+        Err(e) => Err(AppError::Db(e)),
     }
 }
 
