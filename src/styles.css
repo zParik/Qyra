@@ -690,19 +690,67 @@
    Touch / coarse-pointer overrides (Android, iOS)
 ───────────────────────────────────────────────────────────────────────── */
 @media (pointer: coarse) {
-  /* AddPageBar button: always visible on touch (hover doesn't exist) */
-  .add-page-btn {
-    opacity: 1 !important;
+  /* Prevent double-tap zoom on all interactive elements */
+  button, [role="button"], a, input, select, textarea,
+  .btn-primary, .btn-secondary, .v-btn-primary, .v-btn-danger,
+  .v-icon-btn, .v-row-btn, .v-toggle-on, .v-toggle-off {
+    touch-action: manipulation;
   }
 
-  /* Increase tap target size for small viewer header buttons */
+  /* Hover affordances always visible on touch (no hover state) */
+  .add-page-btn { opacity: 1 !important; }
+
+  /* Tap-target floor: 44px (Apple HIG) / 48dp (Material) — split the diff at 44 */
+  .btn-primary, .btn-secondary {
+    min-height: 44px;
+    padding-left: 16px; padding-right: 16px;
+    font-size: 14px;
+  }
+
+  .v-btn-primary, .v-btn-danger {
+    min-height: 44px;
+    font-size: 14px;
+  }
+
   .v-icon-btn {
-    min-width: 36px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .v-header-btn {
+    width: 36px; height: 36px;
+    border-radius: 4px;
+  }
+
+  .v-page-chip {
     min-height: 36px;
   }
 
-  /* Outline tree rows need bigger tap areas */
-  .outline-row {
-    min-height: 36px;
+  /* Outline / list rows */
+  .outline-row { min-height: 44px; }
+
+  /* Inputs */
+  .input, .v-input {
+    min-height: 44px;
+    font-size: 16px; /* iOS Safari: prevents auto-zoom on focus */
+    padding: 0.625rem 0.75rem;
+  }
+
+  /* Radix dropdown / menu items */
+  [role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"] {
+    min-height: 44px;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Small-viewport (phone) overrides
+───────────────────────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  /* MONO labels (breadcrumb, metadata strips) are 10.5px on desktop — unreadable on phone */
+  :root {
+    --mono-sm: 12px;
+    --mono-md: 13px;
+    --body-sm: 13px;
+    --body-md: 14px;
   }
 }
