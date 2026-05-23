@@ -66,64 +66,22 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      # mupdf-sys 0.6.0 wrapper/context.c #includes "androidfonts.c" on Android but
-      # the crate forgets to ship that file. Pre-fetch the crate and write a stub
-      # that installs no-op system font loaders (TOFU + bundled Noto subset cover
-      # rendering — no system fonts on Android).
-      - name: Patch mupdf-sys for Android
-        working-directory: src-tauri
-        run: |
-          cargo fetch --target aarch64-linux-android
-          MUPDF_SYS_DIR=$(find ~/.cargo/registry/src -type d -name 'mupdf-sys-0.6.0' | head -1)
-          if [ -z "$MUPDF_SYS_DIR" ]; then
-            echo "::error::mupdf-sys-0.6.0 source not found in cargo registry"
-            find ~/.cargo/registry/src -maxdepth 4 -type d | head
-            exit 1
-          fi
-          echo "Patching $MUPDF_SYS_DIR/wrapper/androidfonts.c"
-          mkdir -p "$MUPDF_SYS_DIR/wrapper"
-          cat > "$MUPDF_SYS_DIR/wrapper/androidfonts.c" <<'EOF'
-          /* Stub provided by Qyra CI: mupdf-sys 0.6.0 forgot to ship this file.
-           * wrapper/context.c references load_droid_font / load_droid_cjk_font /
-           * load_droid_fallback_font directly (without the static / namespacing dance the
-           * real implementation would have). We provide the three symbols as no-op
-           * loaders that return NULL — TOFU + the bundled Noto subset compiled into
-           * mupdf cover rendering on Android. No system fonts needed.
-           */
-          #include "mupdf/fitz.h"
-
-          fz_font *
-          load_droid_font(fz_context *ctx, const char *name,
-                          int bold, int italic, int needs_exact_metrics)
-          {
-              (void)ctx; (void)name; (void)bold; (void)italic; (void)needs_exact_metrics;
-              return NULL;
-          }
-
-          fz_font *
-          load_droid_cjk_font(fz_context *ctx, const char *name,
-                              int ros, int serif)
-          {
-              (void)ctx; (void)name; (void)ros; (void)serif;
-              return NULL;
-          }
-
-          fz_font *
-          load_droid_fallback_font(fz_context *ctx, int script, int language,
-                                   int serif, int bold, int italic)
-          {
-              (void)ctx; (void)script; (void)language; (void)serif; (void)bold; (void)italic;
-              return NULL;
-          }
-          EOF
-          # Make the file writable in case the registry copy was marked read-only
-          chmod -R u+w "$MUPDF_SYS_DIR"
-
       - name: Build debug APK
         run: npm run tauri android build -- --debug --apk
         env:
           NDK_HOME: ${{ env.NDK_HOME }}
           ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
+          # mupdf-sys 0.6.0 wrapper/context.c does `#ifdef HAVE_ANDROID #include "androidfonts.c"`
+          # but the crate forgets to ship androidfonts.c. The cc crate auto-defines
+          # HAVE_ANDROID when target_os = android; we append -UHAVE_ANDROID via
+          # the target-specific CFLAGS env (which cc appends LAST), undefining the
+          # macro after definition so the include + font-install block is skipped.
+          # mupdf still ships its own bundled Noto/Droid subset via the TOFU build
+          # flags already set by mupdf-sys, so rendering works without system fonts.
+          CFLAGS_aarch64_linux_android: -UHAVE_ANDROID
+          CFLAGS_armv7_linux_androideabi: -UHAVE_ANDROID
+          CFLAGS_i686_linux_android: -UHAVE_ANDROID
+          CFLAGS_x86_64_linux_android: -UHAVE_ANDROID
 
       - name: List APK output (debug)
         run: |
