@@ -4064,6 +4064,7 @@ dependencies = [
  "ndk-context",
  "printpdf",
  "quick-xml 0.36.2",
+ "rand 0.10.0",
  "rayon",
  "rusqlite",
  "serde",
