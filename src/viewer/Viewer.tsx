@@ -545,12 +545,24 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
         e.preventDefault(); handleSaveAs();
         return;
       }
-      if (!mod && (e.key === "ArrowRight" || e.key === "ArrowDown")) {
+      if (!mod && (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === "PageDown")) {
+        e.preventDefault();
         if (currentPage < pageCount) scrollToPage(currentPage + 1);
         return;
       }
-      if (!mod && (e.key === "ArrowLeft" || e.key === "ArrowUp")) {
+      if (!mod && (e.key === "ArrowLeft" || e.key === "ArrowUp" || e.key === "PageUp")) {
+        e.preventDefault();
         if (currentPage > 1) scrollToPage(currentPage - 1);
+        return;
+      }
+      if (!mod && e.key === "Home") {
+        e.preventDefault();
+        if (currentPage !== 1) scrollToPage(1);
+        return;
+      }
+      if (!mod && e.key === "End") {
+        e.preventDefault();
+        if (pageCount > 0 && currentPage !== pageCount) scrollToPage(pageCount);
         return;
       }
     }
