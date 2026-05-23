@@ -12,7 +12,7 @@ pub struct TabEntry {
     pub name: String,
 }
 
-fn lock(db: &State<'_, LibraryDb>) -> AppResult<std::sync::MutexGuard<'_, Connection>> {
+fn lock<'a>(db: &'a State<'a, LibraryDb>) -> AppResult<std::sync::MutexGuard<'a, Connection>> {
     db.0.lock().map_err(|e| AppError::Lock(e.to_string()))
 }
 
