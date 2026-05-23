@@ -1,10 +1,10 @@
 import { useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useAppStore, TabEntry } from "../store/useAppStore";
 import { TabBar } from "./TabBar";
 import Viewer from "./Viewer";
+import Home from "../tools/Home";
 import { ErrorBoundary } from "react-error-boundary";
 import { ViewerErrorFallback } from "../components/ErrorFallback";
 
@@ -15,23 +15,42 @@ export default function ViewerShell() {
   const openTab = useAppStore((s) => s.openTab);
   const closeTab = useAppStore((s) => s.closeTab);
   const activateTab = useAppStore((s) => s.activateTab);
+  const replaceTab = useAppStore((s) => s.replaceTab);
+  const setTabOriginal = useAppStore((s) => s.setTabOriginal);
+  const setTabDirty = useAppStore((s) => s.setTabDirty);
+  const setTabUndo = useAppStore((s) => s.setTabUndo);
   const tabDirty = useAppStore((s) => s.tabDirty);
+
+  const activeTab = openTabs[activeTabIndex];
+  const homeVisible = activeTab?.type === "home";
 
   // Load persisted session on first mount (only if no tabs already open)
   useEffect(() => {
     if (openTabs.length > 0) return;
     invoke<[TabEntry[], number]>("get_tab_session").then(([tabs, active]) => {
-      if (tabs.length === 0) { navigate("/"); return; }
-      tabs.forEach((t) => openTab(t));
+      if (tabs.length === 0) {
+        openTab({ type: "home", path: "__home__0", name: "New Tab" });
+        return;
+      }
+      tabs.forEach((t) =>
+        openTab(
+          t.path.startsWith("__home__")
+            ? { type: "home", path: t.path, name: t.name }
+            : { type: "pdf", path: t.path, name: t.name }
+        )
+      );
       activateTab(active);
-    }).catch(() => navigate("/"));
+    }).catch(() => {
+      openTab({ type: "home", path: "__home__0", name: "New Tab" });
+    });
   }, []);
 
-  // Persist session whenever tabs or active index change
+  // Persist session whenever tabs or active index change (skip home-only sessions)
   useEffect(() => {
-    if (openTabs.length === 0) return;
+    const savable = openTabs.filter((t) => t.type !== "home");
+    if (savable.length === 0) return;
     invoke("save_tab_session", {
-      tabs: openTabs.map((t) => ({ path: t.path, name: t.name })),
+      tabs: savable.map((t) => ({ path: t.path, name: t.name })),
       activeIndex: activeTabIndex,
     }).catch(console.error);
   }, [openTabs, activeTabIndex]);
@@ -39,9 +58,10 @@ export default function ViewerShell() {
   // Persist session on page unload
   useEffect(() => {
     const handler = () => {
-      if (openTabs.length === 0) return;
+      const savable = openTabs.filter((t) => t.type !== "home");
+      if (savable.length === 0) return;
       invoke("save_tab_session", {
-        tabs: openTabs.map((t) => ({ path: t.path, name: t.name })),
+        tabs: savable.map((t) => ({ path: t.path, name: t.name })),
         activeIndex: activeTabIndex,
       });
     };
@@ -49,21 +69,14 @@ export default function ViewerShell() {
     return () => window.removeEventListener("beforeunload", handler);
   }, [openTabs, activeTabIndex]);
 
-  const handleOpenFile = useCallback(async () => {
-    const selected = await openDialog({
-      multiple: false,
-      filters: [{ name: "PDF", extensions: ["pdf"] }],
-    });
-    if (!selected) return;
-    const path = typeof selected === "string" ? selected : (selected as string[])[0];
-    if (!path) return;
-    const name = path.split(/[\\/]/).pop() ?? path;
-    openTab({ path, name });
+  // Open a new home tab (Ctrl+T, + button)
+  const handleNewTab = useCallback(() => {
+    openTab({ type: "home", path: `__home__${Date.now()}`, name: "New Tab" });
   }, [openTab]);
 
   const handleCloseTab = useCallback((index: number) => {
     const tab = openTabs[index];
-    if (tab && tabDirty[tab.path]) {
+    if (tab && tab.type !== "home" && tabDirty[tab.path]) {
       if (!confirm(`"${tab.name}" has unsaved changes. Close anyway?`)) return;
     }
     closeTab(index);
@@ -73,12 +86,24 @@ export default function ViewerShell() {
     }
   }, [openTabs, tabDirty, closeTab, navigate]);
 
+  // Called by the singleton Home when user opens a PDF from a home tab
+  const handleHomePdfOpen = useCallback((path: string, name: string) => {
+    setTabOriginal(path, path);
+    setTabDirty(path, false);
+    setTabUndo(path, null);
+    if (activeTabIndex >= 0 && openTabs[activeTabIndex]?.type === "home") {
+      replaceTab(activeTabIndex, { type: "pdf", path, name });
+    } else {
+      openTab({ type: "pdf", path, name });
+    }
+  }, [activeTabIndex, openTabs, replaceTab, openTab, setTabOriginal, setTabDirty, setTabUndo]);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key === "t") {
         e.preventDefault();
-        handleOpenFile();
+        handleNewTab();
       } else if (e.ctrlKey && e.key === "w") {
         e.preventDefault();
         if (activeTabIndex >= 0) handleCloseTab(activeTabIndex);
@@ -94,33 +119,47 @@ export default function ViewerShell() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeTabIndex, openTabs.length, handleOpenFile, handleCloseTab, activateTab]);
+  }, [activeTabIndex, openTabs.length, handleNewTab, handleCloseTab, activateTab]);
 
   if (openTabs.length === 0) return null;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
       <TabBar
-        onOpenFile={handleOpenFile}
+        onOpenFile={handleNewTab}
         onCloseTab={handleCloseTab}
-        onOpenExternalFile={(path, name) => openTab({ path, name })}
+        onOpenExternalFile={(path, name) => openTab({ type: "pdf", path, name })}
       />
       <div style={{ position: "relative", flex: 1, overflow: "hidden" }}>
-        {openTabs.map((tab, i) => (
-          <div
-            key={tab.path}
-            style={{
-              position: "absolute",
-              inset: 0,
-              visibility: i === activeTabIndex ? "visible" : "hidden",
-              pointerEvents: i === activeTabIndex ? "auto" : "none",
-            }}
-          >
-            <ErrorBoundary FallbackComponent={ViewerErrorFallback} key={tab.path}>
-              <Viewer tabPath={tab.path} />
-            </ErrorBoundary>
-          </div>
-        ))}
+        {/* Singleton Home — visible when active tab is a home tab */}
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            visibility: homeVisible ? "visible" : "hidden",
+            pointerEvents: homeVisible ? "auto" : "none",
+          }}
+        >
+          <Home onOpenPdf={handleHomePdfOpen} />
+        </div>
+        {/* PDF tabs stack */}
+        {openTabs.map((tab, i) =>
+          tab.type === "home" ? null : (
+            <div
+              key={tab.path}
+              style={{
+                position: "absolute",
+                inset: 0,
+                visibility: i === activeTabIndex ? "visible" : "hidden",
+                pointerEvents: i === activeTabIndex ? "auto" : "none",
+              }}
+            >
+              <ErrorBoundary FallbackComponent={ViewerErrorFallback} key={tab.path}>
+                <Viewer tabPath={tab.path} />
+              </ErrorBoundary>
+            </div>
+          )
+        )}
       </div>
     </div>
   );
