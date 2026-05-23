@@ -19,7 +19,7 @@ export default function Protect() {
   }
 
   return (
-    <ToolLayout title="Password Protect" description="Encrypt a PDF with a user password">
+    <ToolLayout title="Password Protect" description="Encrypt a PDF with a user password (AES-256)">
       {files.length === 0 ? (
         <DropZone multiple={false} />
       ) : (
