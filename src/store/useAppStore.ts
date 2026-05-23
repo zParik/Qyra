@@ -11,6 +11,7 @@ export interface LoadedFile {
 export interface TabEntry {
   path: string;
   name: string;
+  type?: "home" | "pdf";
   info?: PdfInfo;
   thumbnail?: string;
 }
@@ -67,6 +68,7 @@ interface AppState {
   closeTab: (index: number) => void;
   activateTab: (index: number) => void;
   reorderTab: (from: number, to: number) => void;
+  replaceTab: (index: number, entry: TabEntry) => void;
   setTabFile: (path: string, file: LoadedFile) => void;
   setTabUndo: (path: string, file: LoadedFile | null) => void;
   setTabOriginal: (path: string, p: string) => void;
@@ -192,6 +194,25 @@ export const useAppStore = create<AppState>((set, get) => ({
       else if (s.activeTabIndex < from && s.activeTabIndex >= to) newActive++;
       const next: SyncSlice = { ...s, openTabs: tabs, activeTabIndex: newActive };
       return { openTabs: tabs, activeTabIndex: newActive, ...legacySync(next) };
+    }),
+
+  replaceTab: (index, entry) =>
+    set((s) => {
+      const oldTab = s.openTabs[index];
+      const newTabs = [...s.openTabs];
+      newTabs[index] = entry;
+      const tabFiles = { ...s.tabFiles, [entry.path]: entry };
+      const tabOriginal = { ...s.tabOriginal, [entry.path]: entry.path };
+      const tabUndo = { ...s.tabUndo };
+      const tabDirty = { ...s.tabDirty };
+      if (oldTab && oldTab.path !== entry.path) {
+        delete tabFiles[oldTab.path];
+        delete tabOriginal[oldTab.path];
+        delete tabUndo[oldTab.path];
+        delete tabDirty[oldTab.path];
+      }
+      const next: SyncSlice = { openTabs: newTabs, activeTabIndex: s.activeTabIndex, tabFiles, tabUndo, tabOriginal, tabDirty };
+      return { ...next, ...legacySync(next) };
     }),
 
   setTabFile: (path, file) =>
