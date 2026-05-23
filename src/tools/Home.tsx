@@ -55,7 +55,11 @@ async function getDisplayName(rawPath: string): Promise<string> {
   return rawPath.split(/[\\/]/).pop() ?? rawPath;
 }
 
-export default function Home() {
+interface HomeProps {
+  onOpenPdf?: (path: string, name: string) => void;
+}
+
+export default function Home({ onOpenPdf }: HomeProps = {}) {
   const navigate = useNavigate();
   const { openTab, setTabOriginal, setTabDirty, setTabUndo } = useAppStore();
   const [dragging, setDragging] = useState(false);
@@ -119,12 +123,19 @@ export default function Home() {
 
     setLoading(name);
     const path = await resolveAndroidUri(rawPath).catch(() => rawPath);
-    openTab({ path, name });
+    addToRecent(path, name);
+    setRecentFiles(loadRecent());
+
+    if (onOpenPdf) {
+      onOpenPdf(path, name);
+      setLoading(null);
+      return;
+    }
+
+    openTab({ type: "pdf", path, name });
     setTabOriginal(path, path);
     setTabDirty(path, false);
     setTabUndo(path, null);
-    addToRecent(path, name);
-    setRecentFiles(loadRecent());
     navigate("/view");
   }
 
@@ -136,11 +147,16 @@ export default function Home() {
         const { path: rawPath, name } = picked[0]!;
         setLoading(name);
         const path = await resolveAndroidUri(rawPath).catch(() => rawPath);
-        openTab({ path, name });
+        addToRecent(path, name);
+        if (onOpenPdf) {
+          onOpenPdf(path, name);
+          setLoading(null);
+          return;
+        }
+        openTab({ type: "pdf", path, name });
         setTabOriginal(path, path);
         setTabDirty(path, false);
         setTabUndo(path, null);
-        addToRecent(path, name);
         navigate("/view");
         return;
       }
