@@ -115,6 +115,12 @@ export default function ViewerShell() {
             : (activeTabIndex + 1) % openTabs.length;
           activateTab(next);
         }
+      } else if (e.ctrlKey && !e.shiftKey && !e.altKey && /^[1-9]$/.test(e.key)) {
+        // Ctrl+1..8 jump to tab N (1-indexed). Ctrl+9 jumps to the last tab.
+        e.preventDefault();
+        const n = parseInt(e.key, 10);
+        const target = n === 9 ? openTabs.length - 1 : Math.min(n - 1, openTabs.length - 1);
+        if (target >= 0 && target !== activeTabIndex) activateTab(target);
       }
     };
     window.addEventListener("keydown", handler);
