@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore, TabEntry } from "../store/useAppStore";
@@ -7,6 +7,7 @@ import Viewer from "./Viewer";
 import Home from "../tools/Home";
 import { ErrorBoundary } from "react-error-boundary";
 import { ViewerErrorFallback } from "../components/ErrorFallback";
+import { ShortcutsModal } from "../components/ShortcutsModal";
 
 export default function ViewerShell() {
   const navigate = useNavigate();
@@ -21,6 +22,7 @@ export default function ViewerShell() {
   const setTabDirty = useAppStore((s) => s.setTabDirty);
   const setTabUndo = useAppStore((s) => s.setTabUndo);
   const tabDirty = useAppStore((s) => s.tabDirty);
+  const [showShortcuts, setShowShortcuts] = useState(false);
 
   const activeTab = openTabs[activeTabIndex];
   const homeVisible = activeTab?.type === "home";
@@ -102,6 +104,14 @@ export default function ViewerShell() {
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // "?" cheatsheet — Shift+/ on US layouts; ignore when typing into inputs.
+      const tgt = e.target as HTMLElement | null;
+      const inField = tgt && (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA" || tgt.isContentEditable);
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && !inField && e.key === "?") {
+        e.preventDefault();
+        setShowShortcuts((v) => !v);
+        return;
+      }
       if (e.ctrlKey && e.shiftKey && (e.key === "T" || e.key === "t")) {
         e.preventDefault();
         reopenClosedTab();
@@ -140,6 +150,7 @@ export default function ViewerShell() {
         onCloseTab={handleCloseTab}
         onOpenExternalFile={(path, name) => openTab({ type: "pdf", path, name })}
       />
+      <ShortcutsModal open={showShortcuts} onOpenChange={setShowShortcuts} />
       <div style={{ position: "relative", flex: 1, overflow: "hidden" }}>
         {/* Singleton Home — visible when active tab is a home tab */}
         <div
