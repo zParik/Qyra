@@ -57,7 +57,7 @@ async function getDisplayName(rawPath: string): Promise<string> {
 
 export default function Home() {
   const navigate = useNavigate();
-  const { setViewerFile } = useAppStore();
+  const { openTab, setTabOriginal, setTabDirty, setTabUndo } = useAppStore();
   const [dragging, setDragging] = useState(false);
   const [recentFiles, setRecentFiles] = useState<RecentFile[]>([]);
   const [loading, setLoading] = useState<string | null>(null);
@@ -119,7 +119,10 @@ export default function Home() {
 
     setLoading(name);
     const path = await resolveAndroidUri(rawPath).catch(() => rawPath);
-    setViewerFile({ path, name });
+    openTab({ path, name });
+    setTabOriginal(path, path);
+    setTabDirty(path, false);
+    setTabUndo(path, null);
     addToRecent(path, name);
     setRecentFiles(loadRecent());
     navigate("/view");
@@ -133,7 +136,10 @@ export default function Home() {
         const { path: rawPath, name } = picked[0]!;
         setLoading(name);
         const path = await resolveAndroidUri(rawPath).catch(() => rawPath);
-        setViewerFile({ path, name });
+        openTab({ path, name });
+        setTabOriginal(path, path);
+        setTabDirty(path, false);
+        setTabUndo(path, null);
         addToRecent(path, name);
         navigate("/view");
         return;
