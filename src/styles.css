@@ -700,6 +700,9 @@
    Touch / coarse-pointer overrides (Android, iOS)
 ───────────────────────────────────────────────────────────────────────── */
 @media (pointer: coarse) {
+  /* Kill Chrome's gray tap-flash globally — every interactive element looks cleaner without it */
+  * { -webkit-tap-highlight-color: transparent; }
+
   /* Prevent double-tap zoom on all interactive elements */
   button, [role="button"], a, input, select, textarea,
   .btn-primary, .btn-secondary, .v-btn-primary, .v-btn-danger,
