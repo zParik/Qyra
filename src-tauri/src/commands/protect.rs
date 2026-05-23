@@ -1,6 +1,6 @@
 use lopdf::{Document, EncryptionVersion, EncryptionState, Permissions};
 use lopdf::encryption::crypt_filters::{Aes256CryptFilter, CryptFilter};
-use rand::Rng;
+use rand::RngExt;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use crate::utils::paths::temp_output_path;
