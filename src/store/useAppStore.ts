@@ -35,6 +35,8 @@ interface AppState {
   // Multi-tab viewer
   openTabs: TabEntry[];
   activeTabIndex: number;
+  // Stack of recently-closed PDF tabs (cap 10); newest at the end.
+  closedTabsStack: TabEntry[];
 
   // Per-path keyed state (path → value)
   tabFiles: Record<string, LoadedFile>;
@@ -69,6 +71,7 @@ interface AppState {
   activateTab: (index: number) => void;
   reorderTab: (from: number, to: number) => void;
   replaceTab: (index: number, entry: TabEntry) => void;
+  reopenClosedTab: () => TabEntry | undefined;
   setTabFile: (path: string, file: LoadedFile) => void;
   setTabUndo: (path: string, file: LoadedFile | null) => void;
   setTabOriginal: (path: string, p: string) => void;
@@ -107,6 +110,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   openTabs: [],
   activeTabIndex: -1,
+  closedTabsStack: [],
   tabFiles: {},
   tabUndo: {},
   tabOriginal: {},
@@ -167,14 +171,18 @@ export const useAppStore = create<AppState>((set, get) => ({
       const tabUndo = { ...s.tabUndo };
       const tabOriginal = { ...s.tabOriginal };
       const tabDirty = { ...s.tabDirty };
+      let closedTabsStack = s.closedTabsStack;
       if (tab) {
         delete tabFiles[tab.path];
         delete tabUndo[tab.path];
         delete tabOriginal[tab.path];
         delete tabDirty[tab.path];
+        if (tab.type !== "home") {
+          closedTabsStack = [...s.closedTabsStack.filter((t) => t.path !== tab.path), tab].slice(-10);
+        }
       }
       const next: SyncSlice = { openTabs: newTabs, activeTabIndex: newActive, tabFiles, tabUndo, tabOriginal, tabDirty };
-      return { ...next, ...legacySync(next) };
+      return { ...next, closedTabsStack, ...legacySync(next) };
     }),
 
   activateTab: (index) =>
@@ -214,6 +222,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       const next: SyncSlice = { openTabs: newTabs, activeTabIndex: s.activeTabIndex, tabFiles, tabUndo, tabOriginal, tabDirty };
       return { ...next, ...legacySync(next) };
     }),
+
+  reopenClosedTab: () => {
+    const s = get();
+    if (s.closedTabsStack.length === 0) return undefined;
+    const entry = s.closedTabsStack[s.closedTabsStack.length - 1]!;
+    set({ closedTabsStack: s.closedTabsStack.slice(0, -1) });
+    get().openTab(entry);
+    return entry;
+  },
 
   setTabFile: (path, file) =>
     set((s) => {
