@@ -753,4 +753,10 @@
     --body-sm: 13px;
     --body-md: 14px;
   }
+
+  /* PageGrid: 2-col fixed on phone — auto-fill goes too small */
+  .pg-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 12px !important;
+  }
 }

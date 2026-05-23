@@ -53,12 +53,15 @@ function FileCard({ file, thumbnail, onRemove, selectable, selected, onToggleSel
       <div
         {...listeners}
         {...attributes}
-        style={{ touchAction: "none", position: "absolute", top: 6, left: 6, zIndex: 10,
-          cursor: "grab", color: "var(--fg3)", padding: 3 }}
+        className="pg-handle"
+        style={{ touchAction: "none", position: "absolute", top: 4, left: 4, zIndex: 10,
+          cursor: "grab", color: "var(--fg3)", padding: 6,
+          display: "inline-flex", alignItems: "center", justifyContent: "center",
+          background: "rgba(0,0,0,0.18)", borderRadius: 4, backdropFilter: "blur(2px)" }}
         onMouseEnter={(e) => (e.currentTarget.style.color = "var(--fg1)")}
         onMouseLeave={(e) => (e.currentTarget.style.color = "var(--fg3)")}
       >
-        <svg width={14} height={14} fill="currentColor" viewBox="0 0 20 20">
+        <svg width={16} height={16} fill="currentColor" viewBox="0 0 20 20">
           <path d="M7 2a2 2 0 110 4 2 2 0 010-4zm6 0a2 2 0 110 4 2 2 0 010-4zM7 8a2 2 0 110 4 2 2 0 010-4zm6 0a2 2 0 110 4 2 2 0 010-4zM7 14a2 2 0 110 4 2 2 0 010-4zm6 0a2 2 0 110 4 2 2 0 010-4z" />
         </svg>
       </div>
@@ -66,15 +69,19 @@ function FileCard({ file, thumbnail, onRemove, selectable, selected, onToggleSel
       {/* Remove button */}
       <button
         onClick={(e) => { e.stopPropagation(); onRemove(); }}
+        aria-label="Remove file"
+        className="pg-remove"
         style={{
-          position: "absolute", top: 6, right: 6, zIndex: 10,
-          background: "transparent", border: "none", cursor: "pointer",
-          color: "var(--fg3)", padding: 3, display: "inline-flex",
+          position: "absolute", top: 4, right: 4, zIndex: 10,
+          background: "rgba(0,0,0,0.18)", border: "none", cursor: "pointer",
+          color: "var(--fg1)", padding: 6, borderRadius: 4,
+          display: "inline-flex", alignItems: "center", justifyContent: "center",
+          backdropFilter: "blur(2px)", WebkitTapHighlightColor: "transparent",
         }}
         onMouseEnter={(e) => (e.currentTarget.style.color = "var(--danger)")}
-        onMouseLeave={(e) => (e.currentTarget.style.color = "var(--fg3)")}
+        onMouseLeave={(e) => (e.currentTarget.style.color = "var(--fg1)")}
       >
-        <svg width={14} height={14} fill="none" stroke="currentColor" strokeWidth={1.5}
+        <svg width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.8}
           strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 16 16">
           <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" />
         </svg>
@@ -146,9 +153,9 @@ export function PageGrid({ files, onRemove, onReorder, selectable, selected, onT
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
       <SortableContext items={files.map((f) => f.path)} strategy={rectSortingStrategy}>
-        <div style={{
+        <div className="pg-grid" style={{
           display: "grid", gap: 10,
-          gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
+          gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
         }}>
           {files.map((file) => (
             <FileCard
