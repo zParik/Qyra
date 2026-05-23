@@ -3,6 +3,11 @@
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
+@keyframes dialog-slide-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
 /* ─────────────────────────────────────────────────────────────────────────
    Design tokens — dense pro-tool, amber accent
    Primary palette: deep warm neutrals, single amber accent
