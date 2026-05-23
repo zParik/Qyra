@@ -1,0 +1,92 @@
+name: 'Build Android (Dev Testing)'
+
+# Dev-only workflow: builds a debug APK for sideload testing.
+# Triggers on `android-test-*` tags so it does NOT collide with the production
+# `v*` release flow, and on manual workflow_dispatch from the Actions tab.
+
+on:
+  push:
+    tags:
+      - 'android-test-*'
+  workflow_dispatch:
+
+jobs:
+  build-android-dev:
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: |
+          sdkmanager "ndk;27.0.11902837"
+          echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.0.11902837" >> $GITHUB_ENV
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+          key: android-dev
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build debug APK
+        run: npm run tauri android build -- --debug --apk
+        env:
+          NDK_HOME: ${{ env.NDK_HOME }}
+          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
+
+      - name: List APK output (debug)
+        run: |
+          echo "=== APK outputs ==="
+          find src-tauri/gen/android/app/build/outputs -name '*.apk' -print
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: qyra-android-debug-${{ github.ref_name }}
+          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish prerelease with APK
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          prerelease: true
+          name: 'Android dev build — ${{ github.ref_name }}'
+          tag_name: ${{ github.ref_name }}
+          body: |
+            **Unsigned debug APK for sideload testing.**
+
+            Built from branch `dev/android-testing` on commit ${{ github.sha }}.
+
+            Install: download the `.apk` below, enable "Install from unknown sources" for your file manager, tap to install. May need to uninstall any previously installed Qyra debug build first since debug signatures differ.
+
+            Not for production. Use the regular `v*` release for signed builds.
+          files: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
