@@ -144,7 +144,7 @@ export default function ViewerShell() {
   if (openTabs.length === 0) return null;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100dvh", overflow: "hidden" }}>
       <TabBar
         onOpenFile={handleNewTab}
         onCloseTab={handleCloseTab}

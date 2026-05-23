@@ -253,7 +253,9 @@ export function ToolSidebar({ file, onApplied, activeTool, onToolChange, selecte
                   <IconPrint width={16} height={16} />
                 </span>
                 <span style={{ flex: 1, fontFamily: UI, fontSize: 12 }}>Print</span>
-                <span style={{ fontFamily: MONO, fontSize: 10.5, color: "var(--viewer-text-muted)" }}>Ctrl+P</span>
+                {!isPhone && (
+                  <span style={{ fontFamily: MONO, fontSize: 10.5, color: "var(--viewer-text-muted)" }}>Ctrl+P</span>
+                )}
               </button>
               <div style={{ paddingBottom: 4 }} />
             </div>
