@@ -84,7 +84,7 @@ type SyncSlice = Pick<AppState,
 >;
 
 function legacySync(s: SyncSlice) {
-  const tab = s.openTabs[s.activeTabIndex];
+  const tab = s.activeTabIndex >= 0 ? s.openTabs[s.activeTabIndex] : undefined;
   return {
     viewerFile: tab ? (s.tabFiles[tab.path] ?? tab) : null,
     undoViewerFile: tab ? (s.tabUndo[tab.path] ?? null) : null,
@@ -137,6 +137,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   openTab: (entry) =>
     set((s) => {
+      if (!entry.path) return {};
       const existing = s.openTabs.findIndex((t) => t.path === entry.path);
       if (existing !== -1) {
         const next: SyncSlice = { ...s, activeTabIndex: existing };
