@@ -97,6 +97,13 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
     confirmingBack, setConfirmingBack,
   } = useViewerUI();
 
+  // ToolSidebar (full-screen on phone) dispatches this when its × is tapped
+  useEffect(() => {
+    const close = () => setShowTools(false);
+    window.addEventListener("viewer:closeTools", close);
+    return () => window.removeEventListener("viewer:closeTools", close);
+  }, [setShowTools]);
+
   // Tool-mode cluster (activeTool, selectedPages, splitAfter, annotation pills)
   const initialSplitAfter = Math.max(1, Math.floor((viewerFile?.info?.page_count ?? 2) / 2));
   const {
