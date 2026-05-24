@@ -360,7 +360,11 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
       try {
         count = await invoke<number>("get_page_count", { path });
       } catch (e) {
+        // DEV-DIAG: surface the actual backend error string so we can debug
+        // Android render failures without USB DevTools. Remove before prod.
         if (!cancelled) {
+          // eslint-disable-next-line no-alert
+          alert(`get_page_count failed.\npath: ${path}\nerror: ${String(e)}`);
           const msg = String(e).toLowerCase();
           const isEncrypted = msg.includes("password") || msg.includes("encrypt") || msg.includes("no password");
           setLoadError(isEncrypted ? "encrypted" : "corrupt");
