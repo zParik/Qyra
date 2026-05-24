@@ -89,14 +89,19 @@ fn init_ndk_context() {
             Ok(g) => g,
             Err(e) => { eprintln!("[qyra] init_ndk_context: new_global_ref: {e}"); return; }
         };
-
         let activity_ptr = global.as_raw();
+
+        // Snapshot the raw JavaVM pointer while the wrapper is still owned,
+        // then drop the env (it borrows java_vm) so we can leak the wrapper.
+        let vm_ptr = java_vm.get_java_vm_pointer();
+        drop(env);
+
         // Keep the global ref alive for the process lifetime so the JVM
         // does not GC the Application reference under ndk-context.
         std::mem::forget(global);
 
         ndk_context::initialize_android_context(
-            java_vm.get_java_vm_pointer() as *mut _,
+            vm_ptr as *mut _,
             activity_ptr as *mut _,
         );
         // Intentionally leak the JavaVM wrapper too — the underlying *mut JavaVM
