@@ -35,6 +35,77 @@ fn drain_pending_open<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     }
 }
 
+/// Android: initialize ndk_context so our commands (files.rs / render.rs /
+/// page_count.rs) that call `ndk_context::android_context()` don't panic.
+///
+/// Tauri 2 does NOT auto-initialize ndk-context — it has its own JNI bridge.
+/// We reach into the live JVM via JNI_GetCreatedJavaVMs, walk the
+/// ActivityThread reflection chain to find the Application instance, and feed
+/// both into ndk-context's static. Runs ONCE on startup.
+#[cfg(target_os = "android")]
+fn init_ndk_context() {
+    use jni::{sys::JNI_OK, JavaVM};
+
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| unsafe {
+        let mut raw_vm: *mut jni::sys::JavaVM = std::ptr::null_mut();
+        let mut count: jni::sys::jsize = 0;
+        let result = jni::sys::JNI_GetCreatedJavaVMs(&mut raw_vm, 1, &mut count);
+        if result != JNI_OK as i32 || count == 0 || raw_vm.is_null() {
+            eprintln!("[qyra] init_ndk_context: no live JVM (result={result} count={count})");
+            return;
+        }
+
+        let java_vm = match JavaVM::from_raw(raw_vm) {
+            Ok(v) => v,
+            Err(e) => { eprintln!("[qyra] init_ndk_context: JavaVM::from_raw: {e}"); return; }
+        };
+        let mut env = match java_vm.attach_current_thread() {
+            Ok(e) => e,
+            Err(e) => { eprintln!("[qyra] init_ndk_context: attach: {e}"); return; }
+        };
+
+        let at = match env.call_static_method(
+            "android/app/ActivityThread",
+            "currentActivityThread",
+            "()Landroid/app/ActivityThread;",
+            &[],
+        ) {
+            Ok(v) => v.l().unwrap(),
+            Err(e) => { eprintln!("[qyra] init_ndk_context: currentActivityThread: {e}"); return; }
+        };
+
+        let app = match env.call_method(
+            &at,
+            "getApplication",
+            "()Landroid/app/Application;",
+            &[],
+        ) {
+            Ok(v) => v.l().unwrap(),
+            Err(e) => { eprintln!("[qyra] init_ndk_context: getApplication: {e}"); return; }
+        };
+
+        let global = match env.new_global_ref(&app) {
+            Ok(g) => g,
+            Err(e) => { eprintln!("[qyra] init_ndk_context: new_global_ref: {e}"); return; }
+        };
+
+        let activity_ptr = global.as_raw();
+        // Keep the global ref alive for the process lifetime so the JVM
+        // does not GC the Application reference under ndk-context.
+        std::mem::forget(global);
+
+        ndk_context::initialize_android_context(
+            java_vm.get_java_vm_pointer() as *mut _,
+            activity_ptr as *mut _,
+        );
+        // Intentionally leak the JavaVM wrapper too — the underlying *mut JavaVM
+        // is process-lifetime owned by libart.
+        std::mem::forget(java_vm);
+        eprintln!("[qyra] init_ndk_context: OK");
+    });
+}
+
 fn cleanup_stale_sessions(current_pid: u32) {
     let temp = std::env::temp_dir();
     let now = std::time::SystemTime::now();
@@ -64,6 +135,9 @@ pub fn run() {
         .manage(commands::cache::SessionCacheState::new())
         .manage(commands::render::ActiveDocument::new())
         .setup(|app| {
+            #[cfg(target_os = "android")]
+            init_ndk_context();
+
             cleanup_stale_sessions(std::process::id());
             let conn = commands::library::open_db(app.handle())
                 .unwrap_or_else(|e| {
