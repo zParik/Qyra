@@ -20,6 +20,17 @@ pub fn pdf_render_lock() -> &'static Mutex<()> {
     PDF_RENDER_LOCK.get_or_init(|| Mutex::new(()))
 }
 
+/// Lock helper that recovers from poison. A prior PDF op may have panicked
+/// while holding the lock (typically the first call hitting an uninitialised
+/// ndk-context). Without this, every subsequent PDF open returns
+/// 'lock poisoned' forever. The lock guards no state — it only serialises
+/// PdfRenderer access — so it is safe to keep using after a poisoning panic.
+pub fn pdf_render_guard() -> std::sync::MutexGuard<'static, ()> {
+    pdf_render_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// Opens a read-only `ParcelFileDescriptor` for `path`.
 ///
 /// Accepts regular filesystem paths and `content://` URIs (from the Android

@@ -16,10 +16,10 @@ pub async fn get_page_count(path: String) -> AppResult<usize> {
 #[cfg(target_os = "android")]
 pub async fn get_page_count(path: String) -> AppResult<usize> {
     tokio::task::spawn_blocking(move || -> AppResult<usize> {
-        use crate::commands::android_pdf::{open_pfd, pdf_render_lock};
+        use crate::commands::android_pdf::{open_pfd, pdf_render_guard};
         use jni::objects::{JObject, JValue};
 
-        let _lock = pdf_render_lock().lock().map_err(|e| AppError::Lock(e.to_string()))?;
+        let _lock = pdf_render_guard();
 
         let ctx = ndk_context::android_context();
         let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }

@@ -180,10 +180,10 @@ pub async fn render_page(
     scale: f32,
 ) -> AppResult<String> {
     tokio::task::spawn_blocking(move || -> Result<String, String> {
-        use crate::commands::android_pdf::{app_cache_dir, open_pfd, pdf_render_lock};
+        use crate::commands::android_pdf::{app_cache_dir, open_pfd, pdf_render_guard};
         use jni::objects::{JObject, JValue};
 
-        let _lock = pdf_render_lock().lock().map_err(|e| e.to_string())?;
+        let _lock = pdf_render_guard();
 
         let ctx = ndk_context::android_context();
         let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }
@@ -357,10 +357,10 @@ pub async fn get_page_aspect_ratio(path: String) -> AppResult<f64> {
 #[cfg(target_os = "android")]
 pub async fn get_page_aspect_ratio(path: String) -> AppResult<f64> {
     tokio::task::spawn_blocking(move || -> Result<f64, String> {
-        use crate::commands::android_pdf::{open_pfd, pdf_render_lock};
+        use crate::commands::android_pdf::{open_pfd, pdf_render_guard};
         use jni::objects::{JObject, JValue};
 
-        let _lock = pdf_render_lock().lock().map_err(|e| e.to_string())?;
+        let _lock = pdf_render_guard();
 
         let ctx = ndk_context::android_context();
         let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }
