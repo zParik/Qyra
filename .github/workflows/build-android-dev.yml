@@ -67,6 +67,22 @@ jobs:
           chmod +x /tmp/qyra-bin/ld
           echo "QYRA_LD_WRAPPER=/tmp/qyra-bin/ld" >> $GITHUB_ENV
 
+      - name: Stub libfontconfig.so in NDK sysroot
+        run: |
+          # yeslogic-fontconfig-sys emits `cargo:rustc-link-lib=fontconfig` regardless
+          # of pkg-config probe output, so the final link still needs SOMETHING called
+          # libfontconfig.so to satisfy `-lfontconfig`. Drop an empty stub .so into
+          # the NDK aarch64 sysroot lib dir. `-Wl,--as-needed` (set by tauri's
+          # CARGO_TARGET_*_RUSTFLAGS) will then drop the lib from DT_NEEDED at link
+          # time because no symbols from it are actually referenced — the Rust crate
+          # routes fontconfig through dlopen via RUST_FONTCONFIG_DLOPEN. Result: the
+          # APK does NOT ship libfontconfig.so.
+          NDK_AARCH64_LIB_DIR=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android
+          CLANG=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
+          echo "" > /tmp/empty.c
+          "$CLANG" -shared -fPIC -o "$NDK_AARCH64_LIB_DIR/libfontconfig.so" /tmp/empty.c
+          ls -l "$NDK_AARCH64_LIB_DIR/libfontconfig.so"
+
       - name: Stub fontconfig.pc for cross-compile
         run: |
           # yeslogic-fontconfig-sys 6.0.1 always probes pkg-config in its build.rs.
