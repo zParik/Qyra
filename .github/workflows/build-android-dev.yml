@@ -41,15 +41,17 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android NDK
+      - name: Detect active Android NDK
         run: |
-          sdkmanager "ndk;27.0.11902837"
-          echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.0.11902837" >> $GITHUB_ENV
-          # Force every downstream tool (tauri, cargo's cc crate, our LD wrapper)
-          # onto the same NDK. The ubuntu runner image pre-installs newer NDKs and
-          # tauri picks them up otherwise, which then mismatches our LD env.
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.0.11902837" >> $GITHUB_ENV
-          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/27.0.11902837" >> $GITHUB_ENV
+          # Tauri/cargo-mobile2 auto-pick the newest installed NDK regardless of env.
+          # Detect whichever NDK that is and use it everywhere — pinning to 27 left
+          # our LD wrapper out of sync with the toolchain tauri actually used.
+          ACTIVE_NDK=$(ls -d $ANDROID_SDK_ROOT/ndk/*/ | sort -V | tail -1)
+          ACTIVE_NDK=${ACTIVE_NDK%/}
+          echo "Detected NDK: $ACTIVE_NDK"
+          echo "NDK_HOME=$ACTIVE_NDK" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$ACTIVE_NDK" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=$ACTIVE_NDK" >> $GITHUB_ENV
 
       - name: Create aarch64 LD wrapper
         run: |
@@ -60,7 +62,7 @@ jobs:
           mkdir -p /tmp/qyra-bin
           cat > /tmp/qyra-bin/ld <<EOF
           #!/usr/bin/env bash
-          exec "$ANDROID_SDK_ROOT/ndk/27.0.11902837/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" -m aarch64linux "\$@"
+          exec "${NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" -m aarch64linux "\$@"
           EOF
           chmod +x /tmp/qyra-bin/ld
           echo "QYRA_LD_WRAPPER=/tmp/qyra-bin/ld" >> $GITHUB_ENV
@@ -116,6 +118,14 @@ jobs:
           # NOT LD. Plain `LD=ld.lld` would still emit host-arch objects because make
           # ignores LDFLAGS env. We use a wrapper that always prepends '-m aarch64linux'.
           LD: ${{ env.QYRA_LD_WRAPPER }}
+          # yeslogic-fontconfig-sys (pulled in by printpdf → font-kit) calls pkg-config
+          # at build time before honoring RUST_FONTCONFIG_DLOPEN. Cross-compiling to
+          # Android, pkg-config has no sysroot and panics. FONTCONFIG_NO_PKG_CONFIG
+          # makes the build script skip pkg-config entirely, then RUST_FONTCONFIG_DLOPEN=1
+          # (from src-tauri/.cargo/config.toml) routes fontconfig through dlopen at
+          # runtime — which fails gracefully on Android since libfontconfig isn't
+          # present. mupdf supplies its own bundled fonts, so this loss is OK.
+          FONTCONFIG_NO_PKG_CONFIG: "1"
 
       - name: List APK output (debug)
         run: |
