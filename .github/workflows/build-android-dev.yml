@@ -67,6 +67,46 @@ jobs:
           chmod +x /tmp/qyra-bin/ld
           echo "QYRA_LD_WRAPPER=/tmp/qyra-bin/ld" >> $GITHUB_ENV
 
+      - name: Stub fontconfig.pc for cross-compile
+        run: |
+          # yeslogic-fontconfig-sys 6.0.1 always probes pkg-config in its build.rs.
+          # FONTCONFIG_NO_PKG_CONFIG doesn't bypass — it just makes pkg-config-rs
+          # return Err which the build script then unwrap-panics on. Provide a fake
+          # .pc with empty Libs so the probe succeeds with no -lfontconfig link arg;
+          # actual fontconfig use is routed through dlopen via RUST_FONTCONFIG_DLOPEN
+          # (set in src-tauri/.cargo/config.toml).
+          mkdir -p /tmp/qyra-pc
+          cat > /tmp/qyra-pc/fontconfig.pc <<'EOF'
+          prefix=/usr
+          exec_prefix=${prefix}
+          libdir=${exec_prefix}/lib
+          includedir=${prefix}/include
+
+          Name: Fontconfig
+          Description: Stub for Android cross-compile (Qyra dev CI)
+          Version: 2.14.0
+          Libs:
+          Cflags:
+          EOF
+          echo "QYRA_PKG_CONFIG_PATH=/tmp/qyra-pc" >> $GITHUB_ENV
+
+      - name: Generate ephemeral release keystore
+        run: |
+          # Release builds need a signing config. Dev branch doesn't carry the
+          # production keystore secrets, so generate a throwaway one per CI run.
+          # Sideloadable APK; obviously NOT for distribution.
+          KEYSTORE="$RUNNER_TEMP/qyra-dev.keystore"
+          keytool -genkeypair \
+            -keystore "$KEYSTORE" \
+            -alias qyra-dev \
+            -keyalg RSA -keysize 2048 -validity 3650 \
+            -storepass qyradev -keypass qyradev \
+            -dname "CN=Qyra Dev, OU=Dev, O=Qyra, L=NA, ST=NA, C=NA"
+          echo "ANDROID_KEYSTORE_PATH=$KEYSTORE" >> $GITHUB_ENV
+          echo "ANDROID_KEYSTORE_PASSWORD=qyradev" >> $GITHUB_ENV
+          echo "ANDROID_KEY_ALIAS=qyra-dev" >> $GITHUB_ENV
+          echo "ANDROID_KEY_PASSWORD=qyradev" >> $GITHUB_ENV
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -87,9 +127,13 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build debug APK
-        run: npm run tauri android build -- --debug --apk
+      - name: Build release APK
+        run: npm run tauri android build -- --apk
         env:
+          ANDROID_KEYSTORE_PATH: ${{ env.ANDROID_KEYSTORE_PATH }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ env.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ env.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ env.ANDROID_KEY_PASSWORD }}
           NDK_HOME: ${{ env.NDK_HOME }}
           ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
           # mupdf-sys 0.6.0 wrapper/context.c does `#ifdef HAVE_ANDROID #include "androidfonts.c"`
@@ -118,14 +162,12 @@ jobs:
           # NOT LD. Plain `LD=ld.lld` would still emit host-arch objects because make
           # ignores LDFLAGS env. We use a wrapper that always prepends '-m aarch64linux'.
           LD: ${{ env.QYRA_LD_WRAPPER }}
-          # yeslogic-fontconfig-sys (pulled in by printpdf → font-kit) calls pkg-config
-          # at build time before honoring RUST_FONTCONFIG_DLOPEN. Cross-compiling to
-          # Android, pkg-config has no sysroot and panics. FONTCONFIG_NO_PKG_CONFIG
-          # makes the build script skip pkg-config entirely, then RUST_FONTCONFIG_DLOPEN=1
-          # (from src-tauri/.cargo/config.toml) routes fontconfig through dlopen at
-          # runtime — which fails gracefully on Android since libfontconfig isn't
-          # present. mupdf supplies its own bundled fonts, so this loss is OK.
-          FONTCONFIG_NO_PKG_CONFIG: "1"
+          # Force pkg-config to find our fake fontconfig.pc (empty Libs). Without
+          # this and PKG_CONFIG_ALLOW_CROSS, yeslogic-fontconfig-sys's build.rs
+          # panics on cross-compile.
+          PKG_CONFIG_PATH: ${{ env.QYRA_PKG_CONFIG_PATH }}
+          PKG_CONFIG_ALLOW_CROSS: "1"
+          PKG_CONFIG_ALLOW_CROSS_aarch64_linux_android: "1"
 
       - name: List APK output (debug)
         run: |
@@ -135,7 +177,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: qyra-android-debug-${{ github.ref_name }}
+          name: qyra-android-${{ github.ref_name }}
           path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
           if-no-files-found: error
           retention-days: 14
@@ -149,11 +191,11 @@ jobs:
           name: 'Android dev build — ${{ github.ref_name }}'
           tag_name: ${{ github.ref_name }}
           body: |
-            **Unsigned debug APK for sideload testing.**
+            **Release APK signed with an ephemeral dev keystore for sideload testing.**
 
             Built from branch `dev/android-testing` on commit ${{ github.sha }}.
 
-            Install: download the `.apk` below, enable "Install from unknown sources" for your file manager, tap to install. May need to uninstall any previously installed Qyra debug build first since debug signatures differ.
+            Install: download the `.apk` below, enable "Install from unknown sources" for your file manager, tap to install. The signing key is regenerated per CI run, so you may need to uninstall any prior dev build (signatures will mismatch) before installing this one.
 
-            Not for production. Use the regular `v*` release for signed builds.
+            Not signed with the production key. Use the regular `v*` release for Play-Store-grade signed builds.
           files: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
