@@ -46,11 +46,32 @@ fn drain_pending_open<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 fn init_ndk_context() {
     use jni::{sys::JNI_OK, JavaVM};
 
+    // JNI_GetCreatedJavaVMs lives in libart.so on Android but is NOT in the NDK
+    // libs the linker sees at build time, so we cannot link it statically (the
+    // jni crate's `invocation` feature tries to link libjvm which does not
+    // exist on Android, causing dlopen of our .so to fail at app startup).
+    // Resolve it at runtime via dlsym(RTLD_DEFAULT, ...) instead.
+    type GetCreatedFn = unsafe extern "C" fn(
+        *mut *mut jni::sys::JavaVM,
+        jni::sys::jsize,
+        *mut jni::sys::jsize,
+    ) -> jni::sys::jint;
+
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(|| unsafe {
+        let sym_ptr = libc::dlsym(
+            libc::RTLD_DEFAULT,
+            b"JNI_GetCreatedJavaVMs\0".as_ptr() as *const _,
+        );
+        if sym_ptr.is_null() {
+            eprintln!("[qyra] init_ndk_context: dlsym(JNI_GetCreatedJavaVMs) returned null");
+            return;
+        }
+        let get_created: GetCreatedFn = std::mem::transmute(sym_ptr);
+
         let mut raw_vm: *mut jni::sys::JavaVM = std::ptr::null_mut();
         let mut count: jni::sys::jsize = 0;
-        let result = jni::sys::JNI_GetCreatedJavaVMs(&mut raw_vm, 1, &mut count);
+        let result = get_created(&mut raw_vm, 1, &mut count);
         if result != JNI_OK as i32 || count == 0 || raw_vm.is_null() {
             eprintln!("[qyra] init_ndk_context: no live JVM (result={result} count={count})");
             return;
