@@ -106,6 +106,30 @@ jobs:
           EOF
           echo "QYRA_PKG_CONFIG_PATH=/tmp/qyra-pc" >> $GITHUB_ENV
 
+      - name: Patch applicationId + label for dev coexistence
+        run: |
+          # Suffix the package id so the dev APK installs alongside the production
+          # com.parik.qyra package without signature-mismatch errors. Also rename
+          # the launcher label so users can tell the two builds apart on the home
+          # screen.
+          GRADLE_FILE=src-tauri/gen/android/app/build.gradle.kts
+          if ! grep -q 'applicationIdSuffix' "$GRADLE_FILE"; then
+            # Insert applicationIdSuffix into the release buildType block.
+            sed -i 's|getByName("release") {|getByName("release") {\n            applicationIdSuffix = ".dev"|' "$GRADLE_FILE"
+            sed -i 's|getByName("debug") {|getByName("debug") {\n            applicationIdSuffix = ".dev"|' "$GRADLE_FILE"
+          fi
+          echo "=== patched build.gradle.kts ==="
+          grep -n 'applicationIdSuffix\|getByName' "$GRADLE_FILE"
+
+          STRINGS_FILE=src-tauri/gen/android/app/src/main/res/values/strings.xml
+          # Append " Dev" to app_name and main_activity_title (idempotent — skip if already done).
+          if ! grep -q 'Qyra Dev' "$STRINGS_FILE"; then
+            sed -i 's|<string name="app_name">Qyra</string>|<string name="app_name">Qyra Dev</string>|' "$STRINGS_FILE"
+            sed -i 's|<string name="main_activity_title">Qyra</string>|<string name="main_activity_title">Qyra Dev</string>|' "$STRINGS_FILE"
+          fi
+          echo "=== patched strings.xml ==="
+          cat "$STRINGS_FILE"
+
       - name: Generate ephemeral release keystore
         run: |
           # Release builds need a signing config. Dev branch doesn't carry the
