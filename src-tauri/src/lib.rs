@@ -64,12 +64,25 @@ pub fn init_ndk_context() -> Result<(), String> {
     }
 
     let result: Result<(), String> = (|| unsafe {
-        let sym_ptr = libc::dlsym(
-            libc::RTLD_DEFAULT,
-            b"JNI_GetCreatedJavaVMs\0".as_ptr() as *const _,
-        );
+        // On Android Q+ apps live in an isolated linker namespace; RTLD_DEFAULT
+        // does NOT see libart.so where JNI_GetCreatedJavaVMs actually lives.
+        // dlopen the candidates explicitly and dlsym from the resulting handles.
+        let sym_name = b"JNI_GetCreatedJavaVMs\0".as_ptr() as *const _;
+        let mut sym_ptr = libc::dlsym(libc::RTLD_DEFAULT, sym_name);
         if sym_ptr.is_null() {
-            return Err("dlsym(JNI_GetCreatedJavaVMs) returned null".to_string());
+            for lib in [b"libart.so\0".as_ref(), b"libnativehelper.so\0".as_ref(), b"libdvm.so\0".as_ref()] {
+                let handle = libc::dlopen(lib.as_ptr() as *const _, libc::RTLD_NOW | libc::RTLD_GLOBAL);
+                if handle.is_null() { continue; }
+                let s = libc::dlsym(handle, sym_name);
+                if !s.is_null() {
+                    sym_ptr = s;
+                    eprintln!("[qyra] init_ndk_context: resolved JNI_GetCreatedJavaVMs via {:?}", std::ffi::CStr::from_ptr(lib.as_ptr() as *const _));
+                    break;
+                }
+            }
+        }
+        if sym_ptr.is_null() {
+            return Err("dlsym(JNI_GetCreatedJavaVMs) returned null after probing libart.so/libnativehelper.so/libdvm.so".to_string());
         }
         let get_created: GetCreatedFn = std::mem::transmute(sym_ptr);
 
