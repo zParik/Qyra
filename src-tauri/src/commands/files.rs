@@ -31,7 +31,7 @@ pub fn share_file(path: String, app_handle: tauri::AppHandle) -> AppResult<()> {
             .to_owned();
         let mime = mime_from_path(&path);
 
-        let ctx = ndk_context::android_context();
+        let ctx = crate::commands::android_pdf::safe_android_context()?;
         let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.map_err(|e| e.to_string())?;
         let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
         let context = unsafe { JObject::from_raw(ctx.context().cast()) };
@@ -181,7 +181,7 @@ pub fn get_content_uri_display_name(uri: String) -> String {
 fn android_query_display_name(uri: &str) -> Option<String> {
     use jni::objects::{JObject, JString, JValue};
 
-    let ctx = ndk_context::android_context();
+    let ctx = crate::commands::android_pdf::safe_android_context().ok()?;
     let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.ok()?;
     let mut env = vm.attach_current_thread().ok()?;
 

@@ -43,8 +43,9 @@ fn drain_pending_open<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 /// ActivityThread reflection chain to find the Application instance, and feed
 /// both into ndk-context's static. Runs ONCE on startup.
 #[cfg(target_os = "android")]
-fn init_ndk_context() {
+pub fn init_ndk_context() -> Result<(), String> {
     use jni::{sys::JNI_OK, JavaVM};
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     // JNI_GetCreatedJavaVMs lives in libart.so on Android but is NOT in the NDK
     // libs the linker sees at build time, so we cannot link it statically (the
@@ -57,79 +58,74 @@ fn init_ndk_context() {
         *mut jni::sys::jsize,
     ) -> jni::sys::jint;
 
-    static INIT: std::sync::Once = std::sync::Once::new();
-    INIT.call_once(|| unsafe {
+    static INITIALIZED: AtomicBool = AtomicBool::new(false);
+    if INITIALIZED.load(Ordering::Acquire) {
+        return Ok(());
+    }
+
+    let result: Result<(), String> = (|| unsafe {
         let sym_ptr = libc::dlsym(
             libc::RTLD_DEFAULT,
             b"JNI_GetCreatedJavaVMs\0".as_ptr() as *const _,
         );
         if sym_ptr.is_null() {
-            eprintln!("[qyra] init_ndk_context: dlsym(JNI_GetCreatedJavaVMs) returned null");
-            return;
+            return Err("dlsym(JNI_GetCreatedJavaVMs) returned null".to_string());
         }
         let get_created: GetCreatedFn = std::mem::transmute(sym_ptr);
 
         let mut raw_vm: *mut jni::sys::JavaVM = std::ptr::null_mut();
         let mut count: jni::sys::jsize = 0;
-        let result = get_created(&mut raw_vm, 1, &mut count);
-        if result != JNI_OK as i32 || count == 0 || raw_vm.is_null() {
-            eprintln!("[qyra] init_ndk_context: no live JVM (result={result} count={count})");
-            return;
+        let r = get_created(&mut raw_vm, 1, &mut count);
+        if r != JNI_OK as i32 || count == 0 || raw_vm.is_null() {
+            return Err(format!("no live JVM (result={r} count={count})"));
         }
 
-        let java_vm = match JavaVM::from_raw(raw_vm) {
-            Ok(v) => v,
-            Err(e) => { eprintln!("[qyra] init_ndk_context: JavaVM::from_raw: {e}"); return; }
-        };
-        let mut env = match java_vm.attach_current_thread() {
-            Ok(e) => e,
-            Err(e) => { eprintln!("[qyra] init_ndk_context: attach: {e}"); return; }
-        };
+        let java_vm = JavaVM::from_raw(raw_vm).map_err(|e| format!("JavaVM::from_raw: {e}"))?;
+        let mut env = java_vm.attach_current_thread().map_err(|e| format!("attach: {e}"))?;
 
-        let at = match env.call_static_method(
-            "android/app/ActivityThread",
-            "currentActivityThread",
-            "()Landroid/app/ActivityThread;",
-            &[],
-        ) {
-            Ok(v) => v.l().unwrap(),
-            Err(e) => { eprintln!("[qyra] init_ndk_context: currentActivityThread: {e}"); return; }
-        };
+        let at = env
+            .call_static_method(
+                "android/app/ActivityThread",
+                "currentActivityThread",
+                "()Landroid/app/ActivityThread;",
+                &[],
+            )
+            .map_err(|e| format!("currentActivityThread: {e}"))?
+            .l()
+            .map_err(|e| format!("currentActivityThread.l: {e}"))?;
+        if at.is_null() {
+            return Err("currentActivityThread returned null".to_string());
+        }
 
-        let app = match env.call_method(
-            &at,
-            "getApplication",
-            "()Landroid/app/Application;",
-            &[],
-        ) {
-            Ok(v) => v.l().unwrap(),
-            Err(e) => { eprintln!("[qyra] init_ndk_context: getApplication: {e}"); return; }
-        };
+        let app = env
+            .call_method(&at, "getApplication", "()Landroid/app/Application;", &[])
+            .map_err(|e| format!("getApplication: {e}"))?
+            .l()
+            .map_err(|e| format!("getApplication.l: {e}"))?;
+        if app.is_null() {
+            return Err("getApplication returned null (called too early?)".to_string());
+        }
 
-        let global = match env.new_global_ref(&app) {
-            Ok(g) => g,
-            Err(e) => { eprintln!("[qyra] init_ndk_context: new_global_ref: {e}"); return; }
-        };
+        let global = env.new_global_ref(&app).map_err(|e| format!("new_global_ref: {e}"))?;
         let activity_ptr = global.as_raw();
 
-        // Snapshot the raw JavaVM pointer while the wrapper is still owned,
-        // then drop the env (it borrows java_vm) so we can leak the wrapper.
         let vm_ptr = java_vm.get_java_vm_pointer();
         drop(env);
 
-        // Keep the global ref alive for the process lifetime so the JVM
-        // does not GC the Application reference under ndk-context.
         std::mem::forget(global);
-
-        ndk_context::initialize_android_context(
-            vm_ptr as *mut _,
-            activity_ptr as *mut _,
-        );
-        // Intentionally leak the JavaVM wrapper too — the underlying *mut JavaVM
-        // is process-lifetime owned by libart.
+        ndk_context::initialize_android_context(vm_ptr as *mut _, activity_ptr as *mut _);
         std::mem::forget(java_vm);
-        eprintln!("[qyra] init_ndk_context: OK");
-    });
+        Ok(())
+    })();
+
+    match &result {
+        Ok(()) => {
+            INITIALIZED.store(true, Ordering::Release);
+            eprintln!("[qyra] init_ndk_context: OK");
+        }
+        Err(e) => eprintln!("[qyra] init_ndk_context FAILED: {e}"),
+    }
+    result
 }
 
 fn cleanup_stale_sessions(current_pid: u32) {
@@ -162,7 +158,11 @@ pub fn run() {
         .manage(commands::render::ActiveDocument::new())
         .setup(|app| {
             #[cfg(target_os = "android")]
-            init_ndk_context();
+            {
+                if let Err(e) = init_ndk_context() {
+                    eprintln!("[qyra] startup init_ndk_context failed: {e} (will retry lazily)");
+                }
+            }
 
             cleanup_stale_sessions(std::process::id());
             let conn = commands::library::open_db(app.handle())

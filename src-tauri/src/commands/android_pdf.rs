@@ -31,6 +31,15 @@ pub fn pdf_render_guard() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// Lazily initializes ndk-context (no-op if already done) and returns the
+/// context, never panicking. If init has not happened yet and fails, returns
+/// the failure reason as a String so callers can propagate it through their
+/// AppResult instead of letting ndk_context::android_context() panic.
+pub fn safe_android_context() -> Result<ndk_context::AndroidContext, String> {
+    crate::init_ndk_context()?;
+    Ok(ndk_context::android_context())
+}
+
 /// Opens a read-only `ParcelFileDescriptor` for `path`.
 ///
 /// Accepts regular filesystem paths and `content://` URIs (from the Android
