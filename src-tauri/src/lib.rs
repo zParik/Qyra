@@ -35,6 +35,33 @@ fn drain_pending_open<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     }
 }
 
+/// Android: Tauri command — called by the frontend on mount to retrieve any
+/// PDF path staged by MainActivity (handles both cold-start timing race and
+/// the case where the app was already in the foreground when ACTION_VIEW fired).
+#[cfg(target_os = "android")]
+#[tauri::command]
+fn get_pending_open(app: tauri::AppHandle) -> Option<String> {
+    use std::path::PathBuf;
+    let Ok(files_dir) = app.path().app_local_data_dir() else { return None };
+    let candidates: Vec<PathBuf> = vec![
+        files_dir.join(".pending_open.txt"),
+        files_dir.parent().map(|p| p.join("files/.pending_open.txt")).unwrap_or_default(),
+    ];
+    for marker in candidates {
+        if !marker.exists() { continue; }
+        let Ok(contents) = std::fs::read_to_string(&marker) else { continue };
+        let path = contents.trim().to_string();
+        let _ = std::fs::remove_file(&marker);
+        if !path.is_empty() { return Some(path); }
+        return None;
+    }
+    None
+}
+
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+fn get_pending_open() -> Option<String> { None }
+
 /// Android: drain the SAF folder-picker marker left by MainActivity when the
 /// user grants access to a folder via the system tree picker. Each marker
 /// line is `<treeUri>\t<childUri>\t<displayName>` for one PDF inside the
@@ -354,6 +381,7 @@ pub fn run() {
             tabs::get_tab_ui_state,
             tabs::clear_tab_session,
             folder_pick::request_saf_folder_picker,
+            get_pending_open,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

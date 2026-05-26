@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.util.Log
+import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import java.io.File
@@ -16,6 +17,13 @@ import java.lang.ref.WeakReference
 class MainActivity : TauriActivity() {
 
   private val tag = "QyraIntent"
+
+  // Captured in onWebViewCreate so we can eval JS from onNewIntent (warm-start foreground).
+  private var webViewRef: WebView? = null
+
+  override fun onWebViewCreate(webView: WebView) {
+    webViewRef = webView
+  }
 
   // Native side (Rust) calls launchFolderPickerFromNative() on this companion;
   // we route to the live activity through this weak ref so the GC stays in
@@ -128,6 +136,15 @@ class MainActivity : TauriActivity() {
     super.onNewIntent(intent)
     setIntent(intent)
     handleIncomingIntent(intent)
+    // When the app is already in the foreground, onResume won't fire again,
+    // so RunEvent::Resumed never triggers. Signal the frontend to call
+    // get_pending_open via a custom DOM event instead.
+    runOnUiThread {
+      webViewRef?.evaluateJavascript(
+        "document.dispatchEvent(new CustomEvent('qyra-pending-open'))",
+        null
+      )
+    }
   }
 
   /**

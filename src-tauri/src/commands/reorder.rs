@@ -20,9 +20,13 @@ pub fn reorder_pages(
         )));
     }
 
+    let mut seen = std::collections::HashSet::new();
     for &page in &order {
         if page < 1 || page > total {
             return Err(AppError::Invalid(format!("Page {} out of range (1-{})", page, total)));
+        }
+        if !seen.insert(page) {
+            return Err(AppError::Invalid(format!("Page {} appears more than once in order", page)));
         }
     }
 
