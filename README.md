@@ -11,12 +11,12 @@
 </p>
 
 <p>
-  <img src="https://img.shields.io/badge/Tauri-2-ededee?style=flat-square&logo=tauri&logoColor=e8a14b&labelColor=141416"/>
-  <img src="https://img.shields.io/badge/React-19-ededee?style=flat-square&logo=react&logoColor=e8a14b&labelColor=141416"/>
-  <img src="https://img.shields.io/badge/Rust-stable-ededee?style=flat-square&logo=rust&logoColor=e8a14b&labelColor=141416"/>
-  <img src="https://img.shields.io/badge/TypeScript-5.8-ededee?style=flat-square&logo=typescript&logoColor=e8a14b&labelColor=141416"/>
-  <img src="https://img.shields.io/badge/MuPDF-native-ededee?style=flat-square&labelColor=141416"/>
-  <img src="https://img.shields.io/badge/100%25-Offline-ededee?style=flat-square&labelColor=141416"/>
+  <img src="https://img.shields.io/badge/Tauri-2-b8762f?style=flat-square&logo=tauri&logoColor=e8a14b&labelColor=141416"/>
+  <img src="https://img.shields.io/badge/React-19-b8762f?style=flat-square&logo=react&logoColor=e8a14b&labelColor=141416"/>
+  <img src="https://img.shields.io/badge/Rust-stable-b8762f?style=flat-square&logo=rust&logoColor=e8a14b&labelColor=141416"/>
+  <img src="https://img.shields.io/badge/TypeScript-5.8-b8762f?style=flat-square&logo=typescript&logoColor=e8a14b&labelColor=141416"/>
+  <img src="https://img.shields.io/badge/MuPDF-native-b8762f?style=flat-square&labelColor=141416"/>
+  <img src="https://img.shields.io/badge/100%25-Offline-b8762f?style=flat-square&labelColor=141416"/>
 </p>
 
 <p>
