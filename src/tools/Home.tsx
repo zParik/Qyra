@@ -8,7 +8,7 @@ import { getContentUriDisplayName } from "../lib/tauri";
 import type { LibraryEntry, RecentFile } from "../lib/schemas";
 import { RecentFileSchema } from "../lib/schemas";
 import { useDiskSpace, useStarred, useArchived, useSetStarred, useSetArchived } from "../lib/queries";
-import { isAndroid, pickFilesAndroid } from "../lib/androidFileUtils";
+import { isAndroid, pickFilesAndroid, pickFolderAndroid } from "../lib/androidFileUtils";
 
 import { UI, MONO } from "../lib/tokens";
 import { IcChevron, IcMerge, IcImage, IcFolder } from "../components/Icons";
@@ -167,6 +167,24 @@ export default function Home({ onOpenPdf }: HomeProps = {}) {
     } catch { /* dismissed */ }
   }, []);
 
+  // Android-only: grant a folder via SAF and add every PDF inside to Recents.
+  // We don't auto-open the viewer — folder grants typically yield many files;
+  // the user picks which to open from the recents list afterwards.
+  const handleBrowseFolder = useCallback(async () => {
+    if (!isAndroid()) return;
+    try {
+      const picked = await pickFolderAndroid();
+      if (!picked.length) return;
+      for (const { path, name } of picked) {
+        addToRecent(path, name);
+      }
+      // Refresh from localStorage so UI updates without a manual reload.
+      setRecentFiles(loadRecent());
+    } catch (e) {
+      setFileError(String(e));
+    }
+  }, []);
+
   const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setDragging(true); }, []);
   const handleDragLeave = useCallback(() => setDragging(false), []);
   const handleDrop = useCallback(async (e: React.DragEvent) => {
@@ -290,6 +308,33 @@ export default function Home({ onOpenPdf }: HomeProps = {}) {
               loading={loading}
               isMobile={isMobile}
             />
+
+            {isAndroid() && (
+              <button
+                onClick={handleBrowseFolder}
+                aria-label="Open a folder of PDFs"
+                style={{
+                  marginTop: 10,
+                  width: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 8,
+                  padding: "12px 16px",
+                  background: "var(--bg1)",
+                  border: "1px dashed var(--line)",
+                  borderRadius: 6,
+                  fontFamily: UI,
+                  fontSize: 13.5,
+                  color: "var(--fg1)",
+                  cursor: "pointer",
+                  WebkitTapHighlightColor: "transparent",
+                }}
+              >
+                <IcFolder size={16} />
+                Open a folder of PDFs
+              </button>
+            )}
 
             <section>
               <SectionHeader title="Quick actions" subtitle="03 tools" />
