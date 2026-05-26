@@ -3,20 +3,20 @@
 <img src=".github/assets/banner.svg" alt="Qyra: The offline, open-source PDF toolkit" width="100%"/>
 
 <p>
-  <a href="https://github.com/zParik/Qyra/releases"><img src="https://img.shields.io/github/v/release/zParik/Qyra?style=for-the-badge&color=7c5cff&labelColor=0b0f1a" alt="Release"/></a>
-  <a href="https://github.com/zParik/Qyra/actions"><img src="https://img.shields.io/github/actions/workflow/status/zParik/Qyra/build-cross-platform.yml?style=for-the-badge&color=3ee9d1&labelColor=0b0f1a&label=build" alt="Build"/></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/zParik/Qyra?style=for-the-badge&color=5eb1ff&labelColor=0b0f1a" alt="License"/></a>
-  <a href="https://github.com/zParik/Qyra/stargazers"><img src="https://img.shields.io/github/stars/zParik/Qyra?style=for-the-badge&color=f5a623&labelColor=0b0f1a" alt="Stars"/></a>
-  <a href="https://github.com/zParik/Qyra/issues"><img src="https://img.shields.io/github/issues/zParik/Qyra?style=for-the-badge&color=ff6b6b&labelColor=0b0f1a" alt="Issues"/></a>
+  <a href="https://github.com/zParik/Qyra/releases"><img src="https://img.shields.io/github/v/release/zParik/Qyra?style=for-the-badge&color=e8a14b&labelColor=0d0d0e" alt="Release"/></a>
+  <a href="https://github.com/zParik/Qyra/actions"><img src="https://img.shields.io/github/actions/workflow/status/zParik/Qyra/build-cross-platform.yml?style=for-the-badge&color=e8a14b&labelColor=0d0d0e&label=build" alt="Build"/></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/zParik/Qyra?style=for-the-badge&color=e8a14b&labelColor=0d0d0e" alt="License"/></a>
+  <a href="https://github.com/zParik/Qyra/stargazers"><img src="https://img.shields.io/github/stars/zParik/Qyra?style=for-the-badge&color=e8a14b&labelColor=0d0d0e" alt="Stars"/></a>
+  <a href="https://github.com/zParik/Qyra/issues"><img src="https://img.shields.io/github/issues/zParik/Qyra?style=for-the-badge&color=e8a14b&labelColor=0d0d0e" alt="Issues"/></a>
 </p>
 
 <p>
-  <img src="https://img.shields.io/badge/Tauri-2-24C8DB?style=flat-square&logo=tauri&logoColor=white&labelColor=0b0f1a"/>
-  <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=white&labelColor=0b0f1a"/>
-  <img src="https://img.shields.io/badge/Rust-stable-CE422B?style=flat-square&logo=rust&logoColor=white&labelColor=0b0f1a"/>
-  <img src="https://img.shields.io/badge/TypeScript-5.8-3178C6?style=flat-square&logo=typescript&logoColor=white&labelColor=0b0f1a"/>
-  <img src="https://img.shields.io/badge/MuPDF-native-7c5cff?style=flat-square&labelColor=0b0f1a"/>
-  <img src="https://img.shields.io/badge/100%25-Offline-3ee9d1?style=flat-square&labelColor=0b0f1a"/>
+  <img src="https://img.shields.io/badge/Tauri-2-ededee?style=flat-square&logo=tauri&logoColor=e8a14b&labelColor=141416"/>
+  <img src="https://img.shields.io/badge/React-19-ededee?style=flat-square&logo=react&logoColor=e8a14b&labelColor=141416"/>
+  <img src="https://img.shields.io/badge/Rust-stable-ededee?style=flat-square&logo=rust&logoColor=e8a14b&labelColor=141416"/>
+  <img src="https://img.shields.io/badge/TypeScript-5.8-ededee?style=flat-square&logo=typescript&logoColor=e8a14b&labelColor=141416"/>
+  <img src="https://img.shields.io/badge/MuPDF-native-ededee?style=flat-square&labelColor=141416"/>
+  <img src="https://img.shields.io/badge/100%25-Offline-ededee?style=flat-square&labelColor=141416"/>
 </p>
 
 <p>
