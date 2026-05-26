@@ -218,10 +218,19 @@ jobs:
           echo "=== APK outputs ==="
           find src-tauri/gen/android/app/build/outputs -name '*.apk' -print
 
+      - name: Sanitize ref name for artifact
+        id: artifact_name
+        run: |
+          # actions/upload-artifact rejects '/', '\', ':' and a handful of other
+          # NTFS-hostile characters in the artifact name. Branch refs like
+          # 'android/foo' would otherwise be invalid, so swap problem chars for '-'.
+          SAFE_REF=$(echo "${{ github.ref_name }}" | tr '/\\:<>|*?"' '-')
+          echo "value=qyra-android-${SAFE_REF}" >> "$GITHUB_OUTPUT"
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: qyra-android-${{ github.ref_name }}
+          name: ${{ steps.artifact_name.outputs.value }}
           path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
           if-no-files-found: error
           retention-days: 14
