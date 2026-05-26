@@ -299,9 +299,11 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
   }, [stripVisibleRange, pageCount]);
 
   const stripThumbnails = usePageThumbnails(viewerFile?.path ?? null, pageCount, 0.3, stripVisibleNums);
-  // Render at physical pixel density: multiply by dpr so HiDPI screens get crisp pages.
+  // Fixed render scale — independent of zoom. Browser CSS scales the <img> to the
+  // current displayed width, so zoom never triggers a re-render. Crisp up to
+  // ~1.3x zoom on HiDPI; slightly soft beyond. Eliminates flicker entirely.
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const centerRenderScale = Math.min(3.0, Math.max(1.0, zoom * 1.5 * dpr));
+  const centerRenderScale = 2.0 * dpr;
   const centerThumbnails = usePageThumbnails(viewerFile?.path ?? null, pageCount, centerRenderScale, visiblePageNums);
 
   // Re-anchor scroll position when zoom changes so the current page stays in view
@@ -360,11 +362,7 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
       try {
         count = await invoke<number>("get_page_count", { path });
       } catch (e) {
-        // DEV-DIAG: surface the actual backend error string so we can debug
-        // Android render failures without USB DevTools. Remove before prod.
         if (!cancelled) {
-          // eslint-disable-next-line no-alert
-          alert(`get_page_count failed.\npath: ${path}\nerror: ${String(e)}`);
           const msg = String(e).toLowerCase();
           const isEncrypted = msg.includes("password") || msg.includes("encrypt") || msg.includes("no password");
           setLoadError(isEncrypted ? "encrypted" : "corrupt");
