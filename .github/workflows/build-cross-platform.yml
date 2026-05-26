@@ -55,7 +55,12 @@ jobs:
 
       - name: Set macOS deployment target
         if: matrix.platform == 'macos-latest'
-        run: echo "MACOSX_DEPLOYMENT_TARGET=10.15" >> $GITHUB_ENV
+        run: |
+          echo "MACOSX_DEPLOYMENT_TARGET=10.15" >> $GITHUB_ENV
+          echo "CFLAGS_aarch64_apple_darwin=-mmacosx-version-min=10.15" >> $GITHUB_ENV
+          echo "CFLAGS_x86_64_apple_darwin=-mmacosx-version-min=10.15" >> $GITHUB_ENV
+          echo "CXXFLAGS_aarch64_apple_darwin=-mmacosx-version-min=10.15" >> $GITHUB_ENV
+          echo "CXXFLAGS_x86_64_apple_darwin=-mmacosx-version-min=10.15" >> $GITHUB_ENV
 
       - name: Setup Node
         uses: actions/setup-node@v4
