@@ -32,6 +32,7 @@ skills-lock.json
 # Specs and Docs
 FREEFORM_MODE_SPEC.md
 pdf-toolkit-spec-tauri-rust.md
+docs/
 
 # Tauri updater private key — never commit this
 src-tauri/updater.key
