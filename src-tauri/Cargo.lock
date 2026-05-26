@@ -4059,6 +4059,7 @@ dependencies = [
  "flate2",
  "image",
  "jni",
+ "libc",
  "lopdf 0.40.0",
  "mupdf",
  "ndk-context",

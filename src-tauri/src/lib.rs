@@ -166,6 +166,14 @@ fn cleanup_stale_sessions(current_pid: u32) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // MuPDF rendering at high scales (3.0+) on large pages can exceed the
+    // default 2MB Windows thread stack. Bump the minimum stack for any thread
+    // spawned via std::thread (which tokio's blocking pool uses) so
+    // spawn_blocking renders never hit STATUS_STACK_OVERFLOW.
+    if std::env::var_os("RUST_MIN_STACK").is_none() {
+        std::env::set_var("RUST_MIN_STACK", "8388608"); // 8 MiB
+    }
+
     let builder = tauri::Builder::default()
         .manage(commands::cache::SessionCacheState::new())
         .manage(commands::render::ActiveDocument::new())

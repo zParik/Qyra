@@ -25,6 +25,10 @@ pub mod watermark;
 pub mod outline;
 pub mod forms;
 pub mod pdf_annotations;
+#[cfg(not(target_os = "android"))]
+pub mod redact;
+#[cfg(target_os = "android")]
+#[path = "redact_android_stub.rs"]
 pub mod redact;
 pub mod crop;
 pub mod flatten;

@@ -16,6 +16,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install Linux build deps for mupdf-sys
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            llvm \
+            libclang-dev \
+            clang \
+            libssl-dev \
+            make
+
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
@@ -25,10 +37,64 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android NDK
+      - name: Detect active Android NDK
         run: |
-          sdkmanager "ndk;27.0.11902837"
-          echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.0.11902837" >> $GITHUB_ENV
+          # Tauri/cargo-mobile2 auto-pick the newest installed NDK regardless of env.
+          # Use whichever NDK that is so the LD wrapper below stays in sync with
+          # the toolchain Tauri actually invokes.
+          ACTIVE_NDK=$(ls -d $ANDROID_SDK_ROOT/ndk/*/ | sort -V | tail -1)
+          ACTIVE_NDK=${ACTIVE_NDK%/}
+          echo "Detected NDK: $ACTIVE_NDK"
+          echo "NDK_HOME=$ACTIVE_NDK" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$ACTIVE_NDK" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=$ACTIVE_NDK" >> $GITHUB_ENV
+
+      - name: Create aarch64 LD wrapper
+        run: |
+          # mupdf's Makefile calls $(LD) -r -b binary directly to embed CFF fonts
+          # and the hyphenation zip into linker objects. It ignores LDFLAGS env, so
+          # we wrap ld.lld in a script that always prepends '-m aarch64linux' to
+          # force aarch64 ELF output regardless of how make invokes us.
+          mkdir -p /tmp/qyra-bin
+          cat > /tmp/qyra-bin/ld <<EOF
+          #!/usr/bin/env bash
+          exec "${NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" -m aarch64linux "\$@"
+          EOF
+          chmod +x /tmp/qyra-bin/ld
+          echo "QYRA_LD_WRAPPER=/tmp/qyra-bin/ld" >> $GITHUB_ENV
+
+      - name: Stub libfontconfig.so in NDK sysroot
+        run: |
+          # yeslogic-fontconfig-sys emits `cargo:rustc-link-lib=fontconfig` regardless
+          # of pkg-config probe output. Drop an empty stub .so into the NDK aarch64
+          # sysroot so the link step finds something for -lfontconfig. -Wl,--as-needed
+          # drops it from DT_NEEDED at link time since no symbols are referenced —
+          # the Rust crate routes fontconfig through dlopen at runtime via
+          # RUST_FONTCONFIG_DLOPEN (set in src-tauri/.cargo/config.toml).
+          NDK_AARCH64_LIB_DIR=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android
+          CLANG=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
+          echo "" > /tmp/empty.c
+          "$CLANG" -shared -fPIC -o "$NDK_AARCH64_LIB_DIR/libfontconfig.so" /tmp/empty.c
+
+      - name: Stub fontconfig.pc for cross-compile
+        run: |
+          # yeslogic-fontconfig-sys 6.0.1 always probes pkg-config in its build.rs.
+          # Provide a fake .pc with empty Libs so the probe succeeds with no link
+          # arg; actual fontconfig use is routed through dlopen.
+          mkdir -p /tmp/qyra-pc
+          cat > /tmp/qyra-pc/fontconfig.pc <<'EOF'
+          prefix=/usr
+          exec_prefix=${prefix}
+          libdir=${exec_prefix}/lib
+          includedir=${prefix}/include
+
+          Name: Fontconfig
+          Description: Stub for Android cross-compile (Qyra CI)
+          Version: 2.14.0
+          Libs:
+          Cflags:
+          EOF
+          echo "QYRA_PKG_CONFIG_PATH=/tmp/qyra-pc" >> $GITHUB_ENV
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -45,6 +111,7 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
+          key: android-prod
 
       - name: Install frontend dependencies
         run: npm ci
@@ -62,8 +129,12 @@ jobs:
           echo "${{ secrets.ANDROID_KEYSTORE }}" | base64 --decode > $RUNNER_TEMP/keystore.jks
           echo "KEYSTORE_PATH=$RUNNER_TEMP/keystore.jks" >> $GITHUB_ENV
 
-      - name: Build Android APK
-        run: npm run tauri android build
+      - name: Build Android APK (aarch64 only)
+        # aarch64 only: the LD wrapper, BINDGEN sysroot args, and stub libfontconfig.so
+        # are all aarch64-specific. Modern Android phones are all aarch64; armv7 is
+        # legacy and x86 ABIs are emulator-only. If multi-arch is ever required, the
+        # wrapper / stubs / bindgen args need per-target versions.
+        run: npm run tauri android build -- --apk --target aarch64
         env:
           NDK_HOME: ${{ env.NDK_HOME }}
           ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
@@ -72,6 +143,21 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          # mupdf-sys 0.6.0 wrapper/context.c #includes "androidfonts.c" which the
+          # crate forgets to ship. Undef HAVE_ANDROID so the include + font-funcs
+          # install block is skipped; mupdf ships its own bundled Noto subset via
+          # TOFU flags so rendering still works without system fonts.
+          CFLAGS_aarch64_linux_android: -UHAVE_ANDROID
+          # bindgen runs libclang against host glibc headers by default. Point it
+          # at the NDK sysroot so it parses Android headers instead.
+          BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android: --sysroot=${{ env.NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/sysroot --target=aarch64-linux-android24
+          # mupdf's Makefile calls $(LD) -r -b binary directly. Force aarch64 ELF
+          # output via the wrapper script.
+          LD: ${{ env.QYRA_LD_WRAPPER }}
+          # Force pkg-config to find our fake fontconfig.pc.
+          PKG_CONFIG_PATH: ${{ env.QYRA_PKG_CONFIG_PATH }}
+          PKG_CONFIG_ALLOW_CROSS: "1"
+          PKG_CONFIG_ALLOW_CROSS_aarch64_linux_android: "1"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
