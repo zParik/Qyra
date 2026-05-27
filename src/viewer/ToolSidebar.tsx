@@ -275,7 +275,7 @@ export function ToolSidebar({ file, onApplied, activeTool, onToolChange, selecte
       {/* Outline tab */}
       {tab === "outline" && (
         <div className="scroll-invisible" style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
-          <OutlineContent filePath={file.path} onPageSelect={onPageSelect} />
+          <OutlineContent filePath={file.path} onPageSelect={onPageSelect} onApplied={onApplied} />
         </div>
       )}
 
@@ -304,17 +304,19 @@ async function buildOutline(filePath: string): Promise<OutlineNode[]> {
   return invoke<OutlineNode[]>("get_outline", { path: filePath });
 }
 
-function OutlineContent({ filePath, onPageSelect }: { filePath: string; onPageSelect: (page: number) => void }) {
+function OutlineContent({ filePath, onPageSelect, onApplied }: { filePath: string; onPageSelect: (page: number) => void; onApplied: (path: string) => void }) {
   const [nodes, setNodes] = useState<OutlineNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [autoDetecting, setAutoDetecting] = useState(false);
   const [isAuto, setIsAuto] = useState(false);
+  const [editing, setEditing] = useState(false);
   const pathRef = useRef(filePath);
 
   useEffect(() => {
     pathRef.current = filePath;
     setLoading(true);
     setIsAuto(false);
+    setEditing(false);
     buildOutline(filePath).then((result) => {
       if (pathRef.current === filePath) { setNodes(result); setLoading(false); }
     }).catch(() => { if (pathRef.current === filePath) setLoading(false); });
@@ -347,6 +349,21 @@ function OutlineContent({ filePath, onPageSelect }: { filePath: string; onPageSe
     );
   }
 
+  if (editing) {
+    return (
+      <OutlineEditor
+        filePath={filePath}
+        initial={nodes}
+        onCancel={() => setEditing(false)}
+        onSaved={(newPath, savedNodes) => {
+          setNodes(savedNodes);
+          setEditing(false);
+          onApplied(newPath);
+        }}
+      />
+    );
+  }
+
   const autoButton = (
     <button
       onClick={runAutoDetect}
@@ -376,12 +393,42 @@ function OutlineContent({ filePath, onPageSelect }: { filePath: string; onPageSe
           No outline in this document
         </p>
         {autoButton}
+        <button
+          onClick={() => setEditing(true)}
+          style={{
+            padding: "6px 12px",
+            background: "var(--viewer-elevated)",
+            color: "var(--viewer-text)",
+            border: "1px solid var(--viewer-border)",
+            borderRadius: 6,
+            fontFamily: UI, fontSize: 11.5,
+            cursor: "pointer",
+          }}
+        >
+          Create outline
+        </button>
       </div>
     );
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column" }}>
+      <div style={{ padding: "0 12px 8px", display: "flex", justifyContent: "flex-end" }}>
+        <button
+          onClick={() => setEditing(true)}
+          style={{
+            padding: "4px 10px",
+            background: "var(--viewer-elevated)",
+            color: "var(--viewer-text)",
+            border: "1px solid var(--viewer-border)",
+            borderRadius: 6,
+            fontFamily: UI, fontSize: 11,
+            cursor: "pointer",
+          }}
+        >
+          Edit outline
+        </button>
+      </div>
       {isAuto && (
         <div
           style={{
@@ -398,6 +445,242 @@ function OutlineContent({ filePath, onPageSelect }: { filePath: string; onPageSe
       <OutlineTree nodes={nodes} onPageSelect={onPageSelect} depth={0} />
       <div style={{ padding: "0 12px 12px" }}>{autoButton}</div>
     </div>
+  );
+}
+
+interface FlatItem { id: number; title: string; page: number | null; depth: number; }
+
+function flatten(nodes: OutlineNode[], depth: number, counter: { n: number }): FlatItem[] {
+  const out: FlatItem[] = [];
+  for (const node of nodes) {
+    out.push({ id: counter.n++, title: node.title, page: node.page, depth });
+    out.push(...flatten(node.items, depth + 1, counter));
+  }
+  return out;
+}
+
+function unflatten(items: FlatItem[]): OutlineNode[] {
+  const root: OutlineNode[] = [];
+  const stack: { depth: number; node: OutlineNode | null; children: OutlineNode[] }[] = [
+    { depth: -1, node: null, children: root },
+  ];
+  for (const item of items) {
+    while (stack.length > 1 && stack[stack.length - 1]!.depth >= item.depth) stack.pop();
+    const parentChildren = stack[stack.length - 1]!.children;
+    const newNode: OutlineNode = { title: item.title, page: item.page, items: [] };
+    parentChildren.push(newNode);
+    stack.push({ depth: item.depth, node: newNode, children: newNode.items });
+  }
+  return root;
+}
+
+function OutlineEditor({
+  filePath, initial, onCancel, onSaved,
+}: {
+  filePath: string;
+  initial: OutlineNode[];
+  onCancel: () => void;
+  onSaved: (newPath: string, nodes: OutlineNode[]) => void;
+}) {
+  const counter = useRef({ n: 0 });
+  const [items, setItems] = useState<FlatItem[]>(() => {
+    counter.current.n = 0;
+    return flatten(initial, 0, counter.current);
+  });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  function update(idx: number, patch: Partial<FlatItem>) {
+    setItems((arr) => arr.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
+  }
+
+  function move(idx: number, delta: number) {
+    setItems((arr) => {
+      const next = arr.slice();
+      const target = idx + delta;
+      if (target < 0 || target >= next.length) return arr;
+      const a = next[idx]!;
+      const b = next[target]!;
+      next[idx] = b; next[target] = a;
+      return next;
+    });
+  }
+
+  function remove(idx: number) {
+    setItems((arr) => arr.filter((_, i) => i !== idx));
+  }
+
+  function indent(idx: number, delta: number) {
+    setItems((arr) => {
+      const next = arr.slice();
+      const item = next[idx]!;
+      const newDepth = item.depth + delta;
+      if (newDepth < 0) return arr;
+      // Cap depth so children cannot leapfrog their parent.
+      const prev = idx > 0 ? next[idx - 1]! : null;
+      if (delta > 0 && (!prev || newDepth > prev.depth + 1)) return arr;
+      next[idx] = { ...item, depth: newDepth };
+      return next;
+    });
+  }
+
+  function addAfter(idx: number, depth: number) {
+    setItems((arr) => {
+      const next = arr.slice();
+      const id = counter.current.n++;
+      const insertAt = idx + 1;
+      next.splice(insertAt, 0, { id, title: "New bookmark", page: null, depth });
+      return next;
+    });
+  }
+
+  async function save() {
+    setSaving(true);
+    setErr(null);
+    try {
+      const nodes = unflatten(items);
+      const newPath = await invoke<string>("set_outline", {
+        path: filePath,
+        items: nodes,
+      });
+      onSaved(newPath, nodes);
+    } catch (e: any) {
+      setErr(String(e?.message ?? e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={{ padding: "0 8px 8px", display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={{ display: "flex", gap: 6, padding: "4px 4px 8px" }}>
+        <button
+          onClick={save}
+          disabled={saving}
+          style={{
+            padding: "5px 12px",
+            background: "var(--accent)", color: "var(--accent-text)",
+            border: "none", borderRadius: 6,
+            fontFamily: UI, fontSize: 11.5, fontWeight: 600,
+            cursor: saving ? "wait" : "pointer",
+          }}
+        >
+          {saving ? "Saving…" : "Save outline"}
+        </button>
+        <button
+          onClick={onCancel}
+          disabled={saving}
+          style={{
+            padding: "5px 12px",
+            background: "transparent", color: "var(--viewer-text)",
+            border: "1px solid var(--viewer-border)", borderRadius: 6,
+            fontFamily: UI, fontSize: 11.5,
+            cursor: "pointer",
+          }}
+        >
+          Cancel
+        </button>
+        <button
+          onClick={() => addAfter(items.length - 1, 0)}
+          disabled={saving}
+          style={{
+            marginLeft: "auto",
+            padding: "5px 10px",
+            background: "var(--viewer-elevated)", color: "var(--viewer-text)",
+            border: "1px solid var(--viewer-border)", borderRadius: 6,
+            fontFamily: UI, fontSize: 11.5,
+            cursor: "pointer",
+          }}
+        >
+          + Add
+        </button>
+      </div>
+
+      {err && (
+        <div style={{
+          padding: "6px 10px",
+          background: "var(--v-bad-bg)", border: "1px solid var(--v-bad-border)",
+          borderRadius: 6, color: "var(--v-bad-text)", fontSize: 11.5,
+        }}>{err}</div>
+      )}
+
+      {items.length === 0 ? (
+        <div style={{ padding: "12px", fontSize: 12, color: "var(--viewer-text-muted)" }}>
+          Outline is empty. Use + Add to insert a bookmark.
+        </div>
+      ) : items.map((item, idx) => (
+        <div
+          key={item.id}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 56px auto",
+            gap: 4,
+            paddingLeft: 4 + item.depth * 14,
+            alignItems: "center",
+          }}
+        >
+          <input
+            value={item.title}
+            onChange={(e) => update(idx, { title: e.target.value })}
+            placeholder="Title"
+            style={{
+              padding: "4px 6px",
+              background: "var(--viewer-elevated)",
+              color: "var(--viewer-text)",
+              border: "1px solid var(--viewer-border)",
+              borderRadius: 4,
+              fontSize: 12,
+            }}
+          />
+          <input
+            type="number"
+            min={1}
+            value={item.page ?? ""}
+            onChange={(e) => update(idx, { page: e.target.value === "" ? null : Math.max(1, parseInt(e.target.value) || 1) })}
+            placeholder="Pg"
+            style={{
+              padding: "4px 6px",
+              background: "var(--viewer-elevated)",
+              color: "var(--viewer-text)",
+              border: "1px solid var(--viewer-border)",
+              borderRadius: 4,
+              fontSize: 11,
+              fontFamily: MONO,
+              textAlign: "right",
+            }}
+          />
+          <div style={{ display: "flex", gap: 2 }}>
+            <IconBtn label="Outdent" onClick={() => indent(idx, -1)}>⇤</IconBtn>
+            <IconBtn label="Indent" onClick={() => indent(idx, +1)}>⇥</IconBtn>
+            <IconBtn label="Up" onClick={() => move(idx, -1)}>↑</IconBtn>
+            <IconBtn label="Down" onClick={() => move(idx, +1)}>↓</IconBtn>
+            <IconBtn label="Add below" onClick={() => addAfter(idx, item.depth)}>+</IconBtn>
+            <IconBtn label="Delete" danger onClick={() => remove(idx)}>×</IconBtn>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function IconBtn({ children, label, onClick, danger }: { children: React.ReactNode; label: string; onClick: () => void; danger?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      style={{
+        width: 22, height: 22,
+        background: "var(--viewer-elevated)",
+        color: danger ? "var(--v-bad-text)" : "var(--viewer-text)",
+        border: "1px solid var(--viewer-border)",
+        borderRadius: 4,
+        fontSize: 11, lineHeight: 1,
+        cursor: "pointer",
+        display: "inline-flex", alignItems: "center", justifyContent: "center",
+      }}
+    >{children}</button>
   );
 }
 

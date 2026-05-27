@@ -369,6 +369,7 @@ pub fn run() {
             watermark::add_watermark,
             outline::get_outline,
             outline::detect_outline,
+            outline_edit::set_outline,
             forms::get_form_fields,
             forms::fill_form,
             pdf_annotations::get_page_annotations,
