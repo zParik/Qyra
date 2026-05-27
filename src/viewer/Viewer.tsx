@@ -1642,7 +1642,15 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                             alt={`Page ${page}`}
                             className="w-full rounded shadow-2xl block"
                             draggable={false}
-                            style={{ height: "auto", display: "block", ...(isSelected ? { outline: "3px solid #ef4444", borderRadius: "0.5rem" } : {}) }}
+                            style={{
+                              height: "auto",
+                              display: "block",
+                              userSelect: "none",
+                              WebkitUserSelect: "none",
+                              WebkitUserDrag: "none",
+                              pointerEvents: "none",
+                              ...(isSelected ? { outline: "3px solid #ef4444", borderRadius: "0.5rem" } : {}),
+                            } as React.CSSProperties}
                           />
                         ) : (
                           <div
