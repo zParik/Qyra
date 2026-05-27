@@ -37,3 +37,4 @@ pub mod export_word;
 pub mod tabs;
 pub mod folder_pick;
 pub mod repair;
+pub mod anonymize;
