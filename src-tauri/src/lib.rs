@@ -333,6 +333,7 @@ pub fn run() {
             metadata::get_metadata,
             metadata::set_metadata,
             metadata::get_pdf_info,
+            metadata::get_pdf_permissions,
             files::copy_file,
             files::open_file,
             files::show_in_folder,

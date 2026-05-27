@@ -75,6 +75,105 @@ pub fn get_metadata(path: String) -> AppResult<PdfMetadata> {
     })
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PdfPermissions {
+    pub encrypted: bool,
+    pub print: bool,
+    pub modify_contents: bool,
+    pub copy_extract: bool,
+    pub annotate: bool,
+    pub fill_forms: bool,
+    pub accessibility_extract: bool,
+    pub assemble: bool,
+    pub print_high_quality: bool,
+    pub p_value: Option<i64>,
+    pub revision: Option<i64>,
+    pub algorithm: Option<String>,
+}
+
+impl Default for PdfPermissions {
+    fn default() -> Self {
+        // No /Encrypt dict → all permissions implicit.
+        Self {
+            encrypted: false,
+            print: true,
+            modify_contents: true,
+            copy_extract: true,
+            annotate: true,
+            fill_forms: true,
+            accessibility_extract: true,
+            assemble: true,
+            print_high_quality: true,
+            p_value: None,
+            revision: None,
+            algorithm: None,
+        }
+    }
+}
+
+fn algorithm_name(v: i64) -> &'static str {
+    // PDF spec §7.6.3.1 — /V values.
+    match v {
+        1 => "RC4 40-bit (V1)",
+        2 => "RC4 128-bit (V2)",
+        4 => "AES-128 (V4)",
+        5 => "AES-256 (V5)",
+        _ => "Unknown",
+    }
+}
+
+/// Read the permission flags from /Encrypt /P. Returns defaults (everything
+/// allowed) when the document is not encrypted.
+#[tauri::command]
+pub fn get_pdf_permissions(path: String) -> AppResult<PdfPermissions> {
+    let doc = Document::load(&path)?;
+    let Ok(encrypt_ref) = doc.trailer.get(b"Encrypt") else {
+        return Ok(PdfPermissions::default());
+    };
+    let encrypt_id = match encrypt_ref.as_reference() {
+        Ok(id) => id,
+        Err(_) => return Ok(PdfPermissions::default()),
+    };
+    let Ok(encrypt_obj) = doc.get_object(encrypt_id) else {
+        return Ok(PdfPermissions::default());
+    };
+    let Object::Dictionary(dict) = encrypt_obj else {
+        return Ok(PdfPermissions::default());
+    };
+
+    let p = dict.get(b"P").ok().and_then(|o| o.as_i64().ok()).unwrap_or(-1);
+    let revision = dict.get(b"R").ok().and_then(|o| o.as_i64().ok());
+    let algorithm = dict
+        .get(b"V")
+        .ok()
+        .and_then(|o| o.as_i64().ok())
+        .map(|v| algorithm_name(v).to_string());
+
+    // Spec §7.6.3.2: bits are 1-based. Bit N corresponds to (1 << (N-1)).
+    // P is a signed 32-bit integer; treat unset bits in higher positions as the
+    // "1" defaults (all permissions granted) when revision < 3.
+    let bit = |n: u32| -> bool { (p & (1i64 << (n - 1))) != 0 };
+
+    let rev = revision.unwrap_or(2);
+    let rev3plus = rev >= 3;
+
+    Ok(PdfPermissions {
+        encrypted: true,
+        print: bit(3),
+        modify_contents: bit(4),
+        copy_extract: bit(5),
+        annotate: bit(6),
+        fill_forms: if rev3plus { bit(9) } else { bit(6) },
+        accessibility_extract: if rev3plus { bit(10) } else { bit(5) },
+        assemble: if rev3plus { bit(11) } else { bit(4) },
+        print_high_quality: if rev3plus { bit(12) } else { bit(3) },
+        p_value: Some(p),
+        revision,
+        algorithm,
+    })
+}
+
 #[tauri::command]
 pub fn set_metadata(
     path: String,
