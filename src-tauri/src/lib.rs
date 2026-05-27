@@ -328,6 +328,8 @@ pub fn run() {
             create::images_to_pdf,
             page_numbers::add_page_numbers,
             page_numbers::remove_page_numbers,
+            bates::add_bates_numbers,
+            bates::remove_bates_numbers,
             protect::protect_pdf,
             unlock::unlock_pdf,
             metadata::get_metadata,

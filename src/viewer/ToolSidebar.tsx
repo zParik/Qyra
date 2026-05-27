@@ -20,6 +20,7 @@ import { CropPanel } from "./tools/CropPanel";
 import { FlattenPanel } from "./tools/FlattenPanel";
 import { AnonymizePanel } from "./tools/AnonymizePanel";
 import { FormDataPanel } from "./tools/FormDataPanel";
+import { BatesPanel } from "./tools/BatesPanel";
 import { ExportTextPanel } from "./tools/ExportTextPanel";
 import { StampsPanel } from "./tools/StampsPanel";
 import { ExportWordPanel } from "./tools/ExportWordPanel";
@@ -39,7 +40,7 @@ export type ViewerTool =
   | "rotate" | "remove" | "reorder" | "split"
   | "compress" | "page-numbers" | "protect" | "unlock"
   | "metadata" | "export-images" | "draw" | "comment" | "watermark"
-  | "annotate" | "forms" | "signature" | "crop" | "flatten" | "export-text" | "export-word" | "redact" | "stamps" | "export-annotations" | "compare" | "anonymize" | "form-data";
+  | "annotate" | "forms" | "signature" | "crop" | "flatten" | "export-text" | "export-word" | "redact" | "stamps" | "export-annotations" | "compare" | "anonymize" | "form-data" | "bates";
 
 interface ToolSidebarProps {
   file: LoadedFile;
@@ -75,6 +76,7 @@ const PAGE_TOOLS: ToolDef[] = [
   { id: "reorder",      label: "Reorder Pages",   icon: <IconReorder className={ICON_CLS} /> },
   { id: "split",        label: "Split PDF",       icon: <IconSplit className={ICON_CLS} /> },
   { id: "page-numbers", label: "Page Numbers",    icon: <IconPageNumbers className={ICON_CLS} /> },
+  { id: "bates",        label: "Bates Numbering", icon: <IconPageNumbers className={ICON_CLS} /> },
   { id: "annotate",     label: "Annotate",        icon: <IconStar className={ICON_CLS} /> },
   { id: "forms",        label: "Fill Forms",      icon: <IconForms className={ICON_CLS} /> },
   { id: "signature",    label: "Sign",            icon: <IconPencil className={ICON_CLS} /> },
@@ -138,6 +140,7 @@ export function ToolSidebar({ file, onApplied, activeTool, onToolChange, selecte
     flatten: <FlattenPanel file={file} onApplied={onApplied} />,
     anonymize: <AnonymizePanel file={file} onApplied={onApplied} />,
     "form-data": <FormDataPanel file={file} onApplied={onApplied} />,
+    bates: <BatesPanel file={file} onApplied={onApplied} />,
     "export-text": <ExportTextPanel file={file} />,
     draw: <DrawPanel />,
     stamps: <StampsPanel filePath={file.path} currentPage={currentPage} onApplied={onApplied} />,
