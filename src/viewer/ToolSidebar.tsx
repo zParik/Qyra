@@ -18,6 +18,7 @@ import { WatermarkPanel } from "./tools/WatermarkPanel";
 import { CommentPanel } from "./CommentPanel";
 import { CropPanel } from "./tools/CropPanel";
 import { FlattenPanel } from "./tools/FlattenPanel";
+import { AnonymizePanel } from "./tools/AnonymizePanel";
 import { ExportTextPanel } from "./tools/ExportTextPanel";
 import { StampsPanel } from "./tools/StampsPanel";
 import { ExportWordPanel } from "./tools/ExportWordPanel";
@@ -37,7 +38,7 @@ export type ViewerTool =
   | "rotate" | "remove" | "reorder" | "split"
   | "compress" | "page-numbers" | "protect" | "unlock"
   | "metadata" | "export-images" | "draw" | "comment" | "watermark"
-  | "annotate" | "forms" | "signature" | "crop" | "flatten" | "export-text" | "export-word" | "redact" | "stamps" | "export-annotations" | "compare";
+  | "annotate" | "forms" | "signature" | "crop" | "flatten" | "export-text" | "export-word" | "redact" | "stamps" | "export-annotations" | "compare" | "anonymize";
 
 interface ToolSidebarProps {
   file: LoadedFile;
@@ -89,6 +90,7 @@ const FILE_TOOLS: ToolDef[] = [
   { id: "export-images",       label: "Export to Images",   icon: <IconImage className={ICON_CLS} /> },
   { id: "watermark",           label: "Watermark",          icon: <IconWatermark className={ICON_CLS} /> },
   { id: "flatten",             label: "Flatten PDF",        icon: <IconFlatten className={ICON_CLS} /> },
+  { id: "anonymize",           label: "Anonymize",          icon: <IconUnlock className={ICON_CLS} /> },
   { id: "export-text",         label: "Export Text",        icon: <IconDocText className={ICON_CLS} /> },
   { id: "export-word",         label: "Export to Word",     icon: <IconDocWord className={ICON_CLS} /> },
   { id: "export-annotations",  label: "Export Annotations", icon: <IconList className={ICON_CLS} /> },
@@ -132,6 +134,7 @@ export function ToolSidebar({ file, onApplied, activeTool, onToolChange, selecte
     watermark: <WatermarkPanel file={file} onApplied={onApplied} />,
     crop: <CropPanel file={file} onApplied={onApplied} />,
     flatten: <FlattenPanel file={file} onApplied={onApplied} />,
+    anonymize: <AnonymizePanel file={file} onApplied={onApplied} />,
     "export-text": <ExportTextPanel file={file} />,
     draw: <DrawPanel />,
     stamps: <StampsPanel filePath={file.path} currentPage={currentPage} onApplied={onApplied} />,
