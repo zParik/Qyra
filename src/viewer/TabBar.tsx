@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   DndContext, PointerSensor, useSensor, useSensors,
   closestCenter, DragEndEvent,
@@ -12,11 +12,15 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useAppStore } from "../store/useAppStore";
 import { UI } from "../lib/tokens";
 import { useIsPhone } from "../hooks/useMediaQuery";
+import { renderPage } from "../hooks/usePageThumbnails";
+
+const HOVER_DELAY_MS = 450;
+const PREVIEW_SCALE = 0.35;
 
 function TabPill({
-  id, label, active, dirty, onActivate, onClose, onContextMenu, isPhone,
+  id, label, active, dirty, isPdfPath, onActivate, onClose, onContextMenu, isPhone,
 }: {
-  id: string; label: string; active: boolean; dirty: boolean;
+  id: string; label: string; active: boolean; dirty: boolean; isPdfPath: boolean;
   onActivate: () => void; onClose: () => void;
   onContextMenu: (x: number, y: number) => void;
   isPhone: boolean;
@@ -28,9 +32,57 @@ function TabPill({
   const fontSize = isPhone ? 13 : 12;
   const maxWidth = isPhone ? 160 : 200;
 
+  const pillRef = useRef<HTMLDivElement | null>(null);
+  const timerRef = useRef<number | null>(null);
+  const [previewSrc, setPreviewSrc] = useState<string | null>(null);
+  const [previewPos, setPreviewPos] = useState<{ left: number; top: number } | null>(null);
+  const [previewFailed, setPreviewFailed] = useState(false);
+
+  function setPillRefs(node: HTMLDivElement | null) {
+    setNodeRef(node);
+    pillRef.current = node;
+  }
+
+  function hidePreview() {
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    setPreviewSrc(null);
+    setPreviewPos(null);
+    setPreviewFailed(false);
+  }
+
+  function startPreviewTimer() {
+    if (isPhone || !isPdfPath || isDragging) return;
+    if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    timerRef.current = window.setTimeout(async () => {
+      const rect = pillRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setPreviewPos({ left: rect.left, top: rect.bottom + 6 });
+      try {
+        const src = await renderPage(id, 1, PREVIEW_SCALE);
+        // Race guard — if user left during render the timer was nulled.
+        if (timerRef.current === null && pillRef.current?.matches(":hover") !== true) return;
+        setPreviewSrc(src);
+      } catch {
+        setPreviewFailed(true);
+      }
+    }, HOVER_DELAY_MS);
+  }
+
+  useEffect(() => () => {
+    if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+  }, []);
+
+  // Hide preview when the pill enters drag state.
+  useEffect(() => {
+    if (isDragging) hidePreview();
+  }, [isDragging]);
+
   return (
     <div
-      ref={setNodeRef}
+      ref={setPillRefs}
       style={{
         transform: CSS.Transform.toString(transform),
         transition,
@@ -55,6 +107,8 @@ function TabPill({
       onClick={onActivate}
       onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onClose(); } }}
       onContextMenu={(e) => { e.preventDefault(); onContextMenu(e.clientX, e.clientY); }}
+      onMouseEnter={startPreviewTimer}
+      onMouseLeave={hidePreview}
       {...attributes}
       {...listeners}
     >
@@ -81,6 +135,44 @@ function TabPill({
       >
         ×
       </button>
+
+      {previewPos && (previewSrc || !previewFailed) && (
+        <div
+          role="tooltip"
+          style={{
+            position: "fixed",
+            left: previewPos.left,
+            top: previewPos.top,
+            zIndex: 8500,
+            background: "var(--bg2)",
+            border: "1px solid var(--line)",
+            borderRadius: 6,
+            padding: 4,
+            boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+            pointerEvents: "none",
+            fontFamily: UI,
+            fontSize: 11,
+            color: "var(--fg1)",
+            maxWidth: 240,
+          }}
+        >
+          {previewSrc ? (
+            <img
+              src={previewSrc}
+              alt=""
+              style={{ display: "block", width: 200, height: "auto", borderRadius: 3 }}
+              draggable={false}
+            />
+          ) : (
+            <div style={{ width: 200, height: 120, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--fg2)" }}>
+              Loading…
+            </div>
+          )}
+          <div style={{ marginTop: 4, padding: "2px 4px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {label}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -192,6 +284,7 @@ export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile }: {
               label={tab.name}
               active={i === activeTabIndex}
               dirty={tabDirty[tab.path] ?? false}
+              isPdfPath={tab.type !== "home"}
               onActivate={() => activateTab(i)}
               onClose={() => onCloseTab(i)}
               onContextMenu={(x, y) => setCtxMenu({ x, y, index: i })}
