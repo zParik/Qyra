@@ -87,9 +87,10 @@
     --v-warn-bg: oklch(0.18 0.06 65);  --v-warn-border: oklch(0.30 0.10 65); --v-warn-text: oklch(0.65 0.16 65);
   }
 
+  /* Dark palette block — applied via system pref OR explicit data-theme="dark".
+     Explicit data-theme="light" override appears below to win against system dark. */
   @media (prefers-color-scheme: dark) {
-    :root {
-      /* ── Shell — dark mode ── */
+    :root:not([data-theme="light"]) {
       --bg0:   #0d0d0e;
       --bg1:   #141416;
       --bg2:   #1a1a1d;
@@ -132,6 +133,51 @@
       --bad-bg: var(--v-bad-bg); --bad-border: var(--v-bad-border); --bad-text: var(--v-bad-text);
       --warn-bg: var(--v-warn-bg); --warn-border: var(--v-warn-border); --warn-text: var(--v-warn-text);
     }
+  }
+
+  /* Explicit dark override (light system → forced dark). */
+  :root[data-theme="dark"] {
+    --bg0:   #0d0d0e;
+    --bg1:   #141416;
+    --bg2:   #1a1a1d;
+    --bg3:   #202024;
+    --bg4:   #26262b;
+    --line:  #2a2a2f;
+    --line2: #1f1f23;
+    --fg0:   #ededee;
+    --fg1:   #9fa0a4;
+    --fg2:   #6b6c70;
+    --fg3:   #48494d;
+    --title-bar: #161618;
+    --danger: oklch(0.66 0.18 25);
+
+    --app-bg:            var(--bg0);
+    --app-surface:       var(--bg1);
+    --app-elevated:      var(--bg2);
+    --app-border:        var(--line);
+    --app-border-subtle: var(--line2);
+    --text-primary:      var(--fg0);
+    --text-secondary:    var(--fg1);
+    --text-muted:        var(--fg2);
+
+    --accent:       oklch(0.74 0.16 60);
+    --accent-soft:  oklch(0.74 0.16 60 / 0.14);
+    --accent-line:  oklch(0.74 0.16 60 / 0.45);
+    --accent-text:  #1a1208;
+
+    --brand:        var(--accent);
+    --brand-subtle: oklch(0.20 0.08 60);
+
+    --action:          var(--accent);
+    --action-hover:    oklch(0.70 0.16 60);
+    --action-active:   oklch(0.66 0.16 60);
+    --action-dim:      oklch(0.28 0.08 60);
+    --action-text:     #1a1208;
+    --action-dim-dark: oklch(0.28 0.08 60);
+
+    --ok-bg: var(--v-ok-bg);   --ok-border: var(--v-ok-border);  --ok-text: var(--v-ok-text);
+    --bad-bg: var(--v-bad-bg); --bad-border: var(--v-bad-border); --bad-text: var(--v-bad-text);
+    --warn-bg: var(--v-warn-bg); --warn-border: var(--v-warn-border); --warn-text: var(--v-warn-text);
   }
 
   /* Warm Tailwind grays */

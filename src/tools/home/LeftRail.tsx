@@ -1,5 +1,6 @@
 import { UI, MONO } from "../../lib/tokens";
 import { IconProps, IcHome, IcRecent, IcStar, IcFolder, IcArchive, IcMerge, IcImage } from "../../components/Icons";
+import { ThemeToggle } from "../../components/ThemeToggle";
 import type { DiskSpace } from "../../lib/schemas";
 import { Section, formatBytes } from "./types";
 
@@ -89,6 +90,10 @@ export function LeftRail({ active, onPick, recentCount, storageUsage }: {
             </>
           )}
         </div>
+      </div>
+
+      <div className="px-3 pb-2">
+        <ThemeToggle variant="rail" />
       </div>
 
       <div className="flex items-center gap-2 px-3.5 py-2.5" style={{ borderTop: "1px solid var(--line2)" }}>
