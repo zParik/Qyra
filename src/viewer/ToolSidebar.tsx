@@ -22,6 +22,7 @@ import { AnonymizePanel } from "./tools/AnonymizePanel";
 import { FormDataPanel } from "./tools/FormDataPanel";
 import { BatesPanel } from "./tools/BatesPanel";
 import { LinksPanel } from "./tools/LinksPanel";
+import { HeaderFooterPanel } from "./tools/HeaderFooterPanel";
 import { ExportTextPanel } from "./tools/ExportTextPanel";
 import { StampsPanel } from "./tools/StampsPanel";
 import { ExportWordPanel } from "./tools/ExportWordPanel";
@@ -41,7 +42,7 @@ export type ViewerTool =
   | "rotate" | "remove" | "reorder" | "split"
   | "compress" | "page-numbers" | "protect" | "unlock"
   | "metadata" | "export-images" | "draw" | "comment" | "watermark"
-  | "annotate" | "forms" | "signature" | "crop" | "flatten" | "export-text" | "export-word" | "redact" | "stamps" | "export-annotations" | "compare" | "anonymize" | "form-data" | "bates" | "links";
+  | "annotate" | "forms" | "signature" | "crop" | "flatten" | "export-text" | "export-word" | "redact" | "stamps" | "export-annotations" | "compare" | "anonymize" | "form-data" | "bates" | "links" | "header-footer";
 
 interface ToolSidebarProps {
   file: LoadedFile;
@@ -78,6 +79,7 @@ const PAGE_TOOLS: ToolDef[] = [
   { id: "split",        label: "Split PDF",       icon: <IconSplit className={ICON_CLS} /> },
   { id: "page-numbers", label: "Page Numbers",    icon: <IconPageNumbers className={ICON_CLS} /> },
   { id: "bates",        label: "Bates Numbering", icon: <IconPageNumbers className={ICON_CLS} /> },
+  { id: "header-footer", label: "Header / Footer", icon: <IconPageNumbers className={ICON_CLS} /> },
   { id: "annotate",     label: "Annotate",        icon: <IconStar className={ICON_CLS} /> },
   { id: "links",        label: "Links",           icon: <IconList className={ICON_CLS} /> },
   { id: "forms",        label: "Fill Forms",      icon: <IconForms className={ICON_CLS} /> },
@@ -144,6 +146,7 @@ export function ToolSidebar({ file, onApplied, activeTool, onToolChange, selecte
     "form-data": <FormDataPanel file={file} onApplied={onApplied} />,
     bates: <BatesPanel file={file} onApplied={onApplied} />,
     links: <LinksPanel file={file} onApplied={onApplied} currentPage={currentPage} />,
+    "header-footer": <HeaderFooterPanel file={file} onApplied={onApplied} />,
     "export-text": <ExportTextPanel file={file} />,
     draw: <DrawPanel />,
     stamps: <StampsPanel filePath={file.path} currentPage={currentPage} onApplied={onApplied} />,

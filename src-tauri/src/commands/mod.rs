@@ -43,3 +43,4 @@ pub mod bates;
 pub mod outline_edit;
 pub mod links;
 pub mod crash;
+pub mod header_footer;
