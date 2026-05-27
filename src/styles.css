@@ -641,6 +641,10 @@
 .viewer-scrollbar::-webkit-scrollbar-corner { background: var(--viewer-bg); }
 .viewer-scrollbar { scrollbar-color: var(--brand-dim) var(--viewer-bg); }
 
+/* Invisible scrollbar — scroll still works, no visible track or thumb. */
+.scroll-invisible { scrollbar-width: none; -ms-overflow-style: none; }
+.scroll-invisible::-webkit-scrollbar { width: 0; height: 0; display: none; }
+
 /* ─────────────────────────────────────────────────────────────────────────
    PDF.js text layer
 ───────────────────────────────────────────────────────────────────────── */
