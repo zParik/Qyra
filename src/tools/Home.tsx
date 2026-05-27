@@ -344,6 +344,15 @@ export default function Home({ onOpenPdf }: HomeProps = {}) {
                 gap: isMobile ? 8 : 10,
               }}>
                 <QuickToolCard
+                  Icon={IcFolder}
+                  title="Batch operations"
+                  desc="Apply one operation to many PDFs at once."
+                  shortcut=""
+                  meta="Compress · OCR · Flatten · …"
+                  onClick={() => navigate("/batch")}
+                  isMobile={isMobile}
+                />
+                <QuickToolCard
                   Icon={IcMerge}
                   title="Merge PDFs"
                   desc="Combine multiple PDFs into a single document."

@@ -7,6 +7,7 @@ import Merge from "./tools/Merge";
 import ImagesToPdf from "./tools/ImagesToPdf";
 import Ocr from "./tools/Ocr";
 import RepairPdf from "./tools/RepairPdf";
+import BatchOps from "./tools/BatchOps";
 import ViewerShell from "./viewer/ViewerShell";
 import { useOpenWithFile } from "./hooks/useOpenWithFile";
 import { useUpdater } from "./hooks/useUpdater";
@@ -52,6 +53,7 @@ export default function App() {
         <Route path="/images-to-pdf" element={<ImagesToPdf />} />
         <Route path="/ocr" element={<Ocr />} />
         <Route path="/repair" element={<RepairPdf />} />
+        <Route path="/batch" element={<BatchOps />} />
       </Routes>
     </BrowserRouter>
     </ErrorBoundary>
