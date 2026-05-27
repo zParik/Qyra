@@ -1,4 +1,4 @@
-name: 'Build Windows, Linux, and macOS Apps'
+name: 'Build Linux'
 
 on:
   push:
@@ -10,25 +10,13 @@ jobs:
   build:
     permissions:
       contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: 'ubuntu-24.04'
-            args: ''
-          - platform: 'windows-latest'
-            args: ''
-          - platform: 'macos-latest'
-            args: '--target universal-apple-darwin'
-
-    runs-on: ${{ matrix.platform }}
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-24.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -44,23 +32,6 @@ jobs:
             patchelf \
             rpm \
             libfuse2t64
-
-      - name: Install macOS targets
-        if: matrix.platform == 'macos-latest'
-        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
-
-      - name: Install macOS dependencies
-        if: matrix.platform == 'macos-latest'
-        run: brew install tesseract leptonica
-
-      - name: Set macOS deployment target
-        if: matrix.platform == 'macos-latest'
-        run: |
-          echo "MACOSX_DEPLOYMENT_TARGET=10.15" >> $GITHUB_ENV
-          echo "CFLAGS_aarch64_apple_darwin=-mmacosx-version-min=10.15" >> $GITHUB_ENV
-          echo "CFLAGS_x86_64_apple_darwin=-mmacosx-version-min=10.15" >> $GITHUB_ENV
-          echo "CXXFLAGS_aarch64_apple_darwin=-mmacosx-version-min=10.15" >> $GITHUB_ENV
-          echo "CXXFLAGS_x86_64_apple_darwin=-mmacosx-version-min=10.15" >> $GITHUB_ENV
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -86,7 +57,6 @@ jobs:
           VERSION="${VERSION#v}"
           npm version "$VERSION" --no-git-tag-version
           jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
-        shell: bash
 
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0
@@ -96,16 +66,14 @@ jobs:
         with:
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
           releaseName: ${{ github.ref_type == 'tag' && format('Qyra {0}', github.ref_name) || '' }}
-          releaseBody: 'Cross-platform build for Qyra.'
+          releaseBody: 'Linux build for Qyra.'
           releaseDraft: ${{ github.ref_type == 'tag' }}
           prerelease: false
-          args: ${{ matrix.args }}
 
       # Strip bundled libwayland from AppImage so it uses the system version on Arch/Wayland.
       # The AppImage bundles its own libwayland-client.so which conflicts with the system's
       # newer version, causing EGL_BAD_PARAMETER crashes on Hyprland and other Wayland compositors.
       - name: Strip bundled libwayland from AppImage
-        if: matrix.platform == 'ubuntu-24.04'
         run: |
           APPIMAGE=$(find src-tauri/target/release/bundle/appimage -name "*.AppImage" | head -1)
           [ -z "$APPIMAGE" ] && exit 0
@@ -133,19 +101,7 @@ jobs:
           ARCH=x86_64 ./appimagetool --appimage-extract-and-run squashfs-root "$APPIMAGE"
           rm -rf squashfs-root appimagetool
 
-      - name: Upload build artifacts (Windows)
-        if: matrix.platform == 'windows-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: qyra-windows
-          path: |
-            src-tauri/target/release/bundle/msi/*.msi
-            src-tauri/target/release/bundle/nsis/*.exe
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Upload build artifacts (Linux)
-        if: matrix.platform == 'ubuntu-24.04'
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: qyra-linux
@@ -153,16 +109,5 @@ jobs:
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/rpm/*.rpm
             src-tauri/target/release/bundle/appimage/*.AppImage
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Upload build artifacts (macOS)
-        if: matrix.platform == 'macos-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: qyra-macos
-          path: |
-            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
-            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
           if-no-files-found: error
           retention-days: 30
