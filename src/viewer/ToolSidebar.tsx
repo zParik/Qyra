@@ -19,6 +19,7 @@ import { CommentPanel } from "./CommentPanel";
 import { CropPanel } from "./tools/CropPanel";
 import { FlattenPanel } from "./tools/FlattenPanel";
 import { AnonymizePanel } from "./tools/AnonymizePanel";
+import { FormDataPanel } from "./tools/FormDataPanel";
 import { ExportTextPanel } from "./tools/ExportTextPanel";
 import { StampsPanel } from "./tools/StampsPanel";
 import { ExportWordPanel } from "./tools/ExportWordPanel";
@@ -38,7 +39,7 @@ export type ViewerTool =
   | "rotate" | "remove" | "reorder" | "split"
   | "compress" | "page-numbers" | "protect" | "unlock"
   | "metadata" | "export-images" | "draw" | "comment" | "watermark"
-  | "annotate" | "forms" | "signature" | "crop" | "flatten" | "export-text" | "export-word" | "redact" | "stamps" | "export-annotations" | "compare" | "anonymize";
+  | "annotate" | "forms" | "signature" | "crop" | "flatten" | "export-text" | "export-word" | "redact" | "stamps" | "export-annotations" | "compare" | "anonymize" | "form-data";
 
 interface ToolSidebarProps {
   file: LoadedFile;
@@ -94,6 +95,7 @@ const FILE_TOOLS: ToolDef[] = [
   { id: "export-text",         label: "Export Text",        icon: <IconDocText className={ICON_CLS} /> },
   { id: "export-word",         label: "Export to Word",     icon: <IconDocWord className={ICON_CLS} /> },
   { id: "export-annotations",  label: "Export Annotations", icon: <IconList className={ICON_CLS} /> },
+  { id: "form-data",           label: "Form Data (XFDF)",   icon: <IconForms className={ICON_CLS} /> },
   { id: "compare",             label: "Compare PDFs",       icon: <IconCompare className={ICON_CLS} /> },
 ];
 
@@ -135,6 +137,7 @@ export function ToolSidebar({ file, onApplied, activeTool, onToolChange, selecte
     crop: <CropPanel file={file} onApplied={onApplied} />,
     flatten: <FlattenPanel file={file} onApplied={onApplied} />,
     anonymize: <AnonymizePanel file={file} onApplied={onApplied} />,
+    "form-data": <FormDataPanel file={file} onApplied={onApplied} />,
     "export-text": <ExportTextPanel file={file} />,
     draw: <DrawPanel />,
     stamps: <StampsPanel filePath={file.path} currentPage={currentPage} onApplied={onApplied} />,

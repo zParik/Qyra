@@ -384,6 +384,8 @@ pub fn run() {
             folder_pick::request_saf_folder_picker,
             repair::repair_pdf,
             anonymize::anonymize_pdf,
+            form_data::export_form_xfdf,
+            form_data::import_form_xfdf,
             get_pending_open,
         ])
         .build(tauri::generate_context!())

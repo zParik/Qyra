@@ -38,3 +38,4 @@ pub mod tabs;
 pub mod folder_pick;
 pub mod repair;
 pub mod anonymize;
+pub mod form_data;
