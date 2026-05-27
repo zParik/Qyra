@@ -69,6 +69,24 @@ export const setMetadata = (path: string, metadata: PdfMetadata, output?: string
 export const getPdfInfo = (path: string) =>
   invoke<PdfInfo>("get_pdf_info", { path });
 
+export interface PdfPermissions {
+  encrypted: boolean;
+  print: boolean;
+  modifyContents: boolean;
+  copyExtract: boolean;
+  annotate: boolean;
+  fillForms: boolean;
+  accessibilityExtract: boolean;
+  assemble: boolean;
+  printHighQuality: boolean;
+  pValue: number | null;
+  revision: number | null;
+  algorithm: string | null;
+}
+
+export const getPdfPermissions = (path: string) =>
+  invoke<PdfPermissions>("get_pdf_permissions", { path });
+
 export const readPdfBytes = (path: string) =>
   invoke<string>("read_pdf_bytes", { path });
 
