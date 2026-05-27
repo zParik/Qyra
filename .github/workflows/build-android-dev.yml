@@ -7,11 +7,6 @@ name: 'Build Android (Dev Testing)'
 # available), and on manual workflow_dispatch from the Actions tab.
 
 on:
-  push:
-    tags:
-      - 'android-test-*'
-    branches:
-      - 'android/**'
   workflow_dispatch:
 
 jobs:
