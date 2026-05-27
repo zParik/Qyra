@@ -304,15 +304,33 @@ async function buildOutline(filePath: string): Promise<OutlineNode[]> {
 function OutlineContent({ filePath, onPageSelect }: { filePath: string; onPageSelect: (page: number) => void }) {
   const [nodes, setNodes] = useState<OutlineNode[]>([]);
   const [loading, setLoading] = useState(true);
+  const [autoDetecting, setAutoDetecting] = useState(false);
+  const [isAuto, setIsAuto] = useState(false);
   const pathRef = useRef(filePath);
 
   useEffect(() => {
     pathRef.current = filePath;
     setLoading(true);
+    setIsAuto(false);
     buildOutline(filePath).then((result) => {
       if (pathRef.current === filePath) { setNodes(result); setLoading(false); }
     }).catch(() => { if (pathRef.current === filePath) setLoading(false); });
   }, [filePath]);
+
+  async function runAutoDetect() {
+    setAutoDetecting(true);
+    try {
+      const detected = await invoke<OutlineNode[]>("detect_outline", { path: filePath, maxPages: 500 });
+      if (pathRef.current === filePath) {
+        setNodes(detected);
+        setIsAuto(true);
+      }
+    } catch {
+      /* swallow — keep the existing outline */
+    } finally {
+      setAutoDetecting(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -326,6 +344,25 @@ function OutlineContent({ filePath, onPageSelect }: { filePath: string; onPageSe
     );
   }
 
+  const autoButton = (
+    <button
+      onClick={runAutoDetect}
+      disabled={autoDetecting}
+      style={{
+        marginTop: 8,
+        padding: "6px 10px",
+        background: "var(--viewer-elevated)",
+        color: "var(--viewer-text)",
+        border: "1px solid var(--viewer-border)",
+        borderRadius: 6,
+        fontFamily: UI, fontSize: 11.5,
+        cursor: autoDetecting ? "wait" : "pointer",
+      }}
+    >
+      {autoDetecting ? "Detecting…" : isAuto ? "Re-detect from headings" : "Auto-detect from headings"}
+    </button>
+  );
+
   if (nodes.length === 0) {
     return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, paddingTop: 40 }}>
@@ -335,11 +372,30 @@ function OutlineContent({ filePath, onPageSelect }: { filePath: string; onPageSe
         <p style={{ fontFamily: UI, fontSize: 12, color: "var(--viewer-text-muted)", textAlign: "center", margin: 0 }}>
           No outline in this document
         </p>
+        {autoButton}
       </div>
     );
   }
 
-  return <OutlineTree nodes={nodes} onPageSelect={onPageSelect} depth={0} />;
+  return (
+    <div style={{ display: "flex", flexDirection: "column" }}>
+      {isAuto && (
+        <div
+          style={{
+            padding: "6px 12px",
+            fontSize: 10.5,
+            color: "var(--viewer-text-muted)",
+            fontFamily: UI,
+            borderBottom: "1px solid var(--viewer-border-sub)",
+          }}
+        >
+          Detected from font-size jumps · not saved to document
+        </div>
+      )}
+      <OutlineTree nodes={nodes} onPageSelect={onPageSelect} depth={0} />
+      <div style={{ padding: "0 12px 12px" }}>{autoButton}</div>
+    </div>
+  );
 }
 
 function OutlineTree({ nodes, onPageSelect, depth }: { nodes: OutlineNode[]; onPageSelect: (page: number) => void; depth: number }) {
