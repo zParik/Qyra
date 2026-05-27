@@ -19,10 +19,10 @@
 </p>
 
 <p>
-  <a href="https://github.com/zParik/Qyra/actions/workflows/build-windows.yml"><img src="https://img.shields.io/github/actions/workflow/status/zParik/Qyra/build-windows.yml?style=flat-square&color=e8a14b&labelColor=0d0d0e&label=windows" alt="Windows build"/></a>
-  <a href="https://github.com/zParik/Qyra/actions/workflows/build-linux.yml"><img src="https://img.shields.io/github/actions/workflow/status/zParik/Qyra/build-linux.yml?style=flat-square&color=e8a14b&labelColor=0d0d0e&label=linux" alt="Linux build"/></a>
-  <a href="https://github.com/zParik/Qyra/actions/workflows/build-macos.yml"><img src="https://img.shields.io/github/actions/workflow/status/zParik/Qyra/build-macos.yml?style=flat-square&color=e8a14b&labelColor=0d0d0e&label=macos" alt="macOS build"/></a>
-  <a href="https://github.com/zParik/Qyra/actions/workflows/build-android.yml"><img src="https://img.shields.io/github/actions/workflow/status/zParik/Qyra/build-android.yml?style=flat-square&color=e8a14b&labelColor=0d0d0e&label=android" alt="Android build"/></a>
+  <a href="https://github.com/zParik/Qyra/actions/workflows/build-windows.yml"><img src="https://img.shields.io/github/actions/workflow/status/zParik/Qyra/build-windows.yml?style=flat-square&labelColor=0d0d0e&label=windows" alt="Windows build"/></a>
+  <a href="https://github.com/zParik/Qyra/actions/workflows/build-linux.yml"><img src="https://img.shields.io/github/actions/workflow/status/zParik/Qyra/build-linux.yml?style=flat-square&labelColor=0d0d0e&label=linux" alt="Linux build"/></a>
+  <a href="https://github.com/zParik/Qyra/actions/workflows/build-macos.yml"><img src="https://img.shields.io/github/actions/workflow/status/zParik/Qyra/build-macos.yml?style=flat-square&labelColor=0d0d0e&label=macos" alt="macOS build"/></a>
+  <a href="https://github.com/zParik/Qyra/actions/workflows/build-android.yml"><img src="https://img.shields.io/github/actions/workflow/status/zParik/Qyra/build-android.yml?style=flat-square&labelColor=0d0d0e&label=android" alt="Android build"/></a>
 </p>
 
 <p>
