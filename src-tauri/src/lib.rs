@@ -343,6 +343,8 @@ pub fn run() {
             page_numbers::remove_page_numbers,
             bates::add_bates_numbers,
             bates::remove_bates_numbers,
+            header_footer::add_header_footer,
+            header_footer::remove_header_footer,
             protect::protect_pdf,
             unlock::unlock_pdf,
             metadata::get_metadata,
