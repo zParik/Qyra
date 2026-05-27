@@ -325,6 +325,8 @@ pub fn run() {
             render::render_thumbnail,
             render::pdf_to_images,
             render::get_page_links,
+            links::add_link,
+            links::remove_link,
             create::images_to_pdf,
             page_numbers::add_page_numbers,
             page_numbers::remove_page_numbers,
