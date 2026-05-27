@@ -4,7 +4,6 @@
 
 <p>
   <a href="https://github.com/zParik/Qyra/releases"><img src="https://img.shields.io/github/v/release/zParik/Qyra?style=for-the-badge&color=e8a14b&labelColor=0d0d0e" alt="Release"/></a>
-  <a href="https://github.com/zParik/Qyra/actions"><img src="https://img.shields.io/github/actions/workflow/status/zParik/Qyra/build-cross-platform.yml?style=for-the-badge&color=e8a14b&labelColor=0d0d0e&label=build" alt="Build"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/zParik/Qyra?style=for-the-badge&color=e8a14b&labelColor=0d0d0e" alt="License"/></a>
   <a href="https://github.com/zParik/Qyra/stargazers"><img src="https://img.shields.io/github/stars/zParik/Qyra?style=for-the-badge&color=e8a14b&labelColor=0d0d0e" alt="Stars"/></a>
   <a href="https://github.com/zParik/Qyra/issues"><img src="https://img.shields.io/github/issues/zParik/Qyra?style=for-the-badge&color=e8a14b&labelColor=0d0d0e" alt="Issues"/></a>
@@ -75,12 +74,12 @@ It's a desktop app that does the PDF work you actually do: view, mark up, merge,
 
 Grab a build from [Releases](https://github.com/zParik/Qyra/releases), or nightly artifacts from the latest [Actions run](https://github.com/zParik/Qyra/actions).
 
-| Platform | Formats                       | Status        |
-|----------|-------------------------------|---------------|
-| Windows  | `.msi`, `.exe` (NSIS)         | Stable        |
-| Linux    | `.deb`, `.rpm`, `.AppImage`   | Stable        |
-| Android  | `.apk`                        | Experimental  |
-| macOS    | Build from source             | Untested      |
+| Platform | Formats                       | Build status                                                                                                                                                                                                |
+|----------|-------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Windows  | `.msi`, `.exe` (NSIS)         | [![Windows](https://img.shields.io/github/actions/workflow/status/zParik/Qyra/build-windows.yml?style=flat-square&color=e8a14b&labelColor=0d0d0e&label=windows)](https://github.com/zParik/Qyra/actions/workflows/build-windows.yml) |
+| Linux    | `.deb`, `.rpm`, `.AppImage`   | [![Linux](https://img.shields.io/github/actions/workflow/status/zParik/Qyra/build-linux.yml?style=flat-square&color=e8a14b&labelColor=0d0d0e&label=linux)](https://github.com/zParik/Qyra/actions/workflows/build-linux.yml)         |
+| macOS    | `.dmg`, `.app.tar.gz`         | [![macOS](https://img.shields.io/github/actions/workflow/status/zParik/Qyra/build-macos.yml?style=flat-square&color=e8a14b&labelColor=0d0d0e&label=macos)](https://github.com/zParik/Qyra/actions/workflows/build-macos.yml)         |
+| Android  | `.apk`                        | [![Android](https://img.shields.io/github/actions/workflow/status/zParik/Qyra/build-android.yml?style=flat-square&color=e8a14b&labelColor=0d0d0e&label=android)](https://github.com/zParik/Qyra/actions/workflows/build-android.yml) |
 
 ### Linux on Wayland
 
