@@ -59,16 +59,24 @@ fn obj_to_f64(o: &Object) -> f64 {
 }
 
 fn page_media_box(doc: &Document, page_id: ObjectId) -> (f64, f64, f64, f64) {
-    let try_get = || -> Option<(f64, f64, f64, f64)> {
-        let obj = doc.get_object(page_id).ok()?;
-        let d = obj.as_dict().ok()?;
-        let mb = d.get(b"MediaBox").ok()?.as_array().ok()?;
-        if mb.len() < 4 {
-            return None;
+    let mut cur = page_id;
+    loop {
+        match doc.get_object(cur) {
+            Ok(lopdf::Object::Dictionary(d)) => {
+                if let Ok(lopdf::Object::Array(mb)) = d.get(b"MediaBox") {
+                    if mb.len() >= 4 {
+                        return (obj_to_f64(&mb[0]), obj_to_f64(&mb[1]), obj_to_f64(&mb[2]), obj_to_f64(&mb[3]));
+                    }
+                }
+                match d.get(b"Parent").and_then(|o| o.as_reference()) {
+                    Ok(parent) => cur = parent,
+                    Err(_) => break,
+                }
+            }
+            _ => break,
         }
-        Some((obj_to_f64(&mb[0]), obj_to_f64(&mb[1]), obj_to_f64(&mb[2]), obj_to_f64(&mb[3])))
-    };
-    try_get().unwrap_or((0.0, 0.0, 612.0, 792.0))
+    }
+    (0.0, 0.0, 612.0, 792.0)
 }
 
 /// Resolve inherited field attribute: walk up the /Parent chain until found.

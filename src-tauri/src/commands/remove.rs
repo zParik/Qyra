@@ -14,6 +14,23 @@ pub fn remove_pages(
     }
 
     let mut doc = Document::load(&path)?;
+    let total = doc.get_pages().len() as u32;
+
+    for &p in &pages {
+        if p < 1 || p > total {
+            return Err(AppError::Invalid(format!("Page {} out of range (1-{})", p, total)));
+        }
+    }
+
+    let unique_count = {
+        let mut s = std::collections::HashSet::new();
+        pages.iter().for_each(|&p| { s.insert(p); });
+        s.len() as u32
+    };
+    if unique_count >= total {
+        return Err(AppError::Invalid("Cannot remove all pages from a PDF".to_string()));
+    }
+
     doc.delete_pages(&pages);
 
     let out = output.unwrap_or_else(|| temp_output_path(&path, "removed"));

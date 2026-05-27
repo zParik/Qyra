@@ -2,6 +2,7 @@ use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream, content:
 use tauri::Emitter;
 use crate::utils::paths::temp_output_path;
 use crate::utils::progress::Progress;
+use crate::utils::get_page_dims;
 use crate::error::AppResult;
 
 #[derive(serde::Deserialize)]
@@ -81,24 +82,8 @@ pub async fn add_page_numbers(
 
         // --- Read page geometry ---
         let (page_width, page_height) = {
-            let page = doc.get_object(*page_id)?;
-            if let Object::Dictionary(dict) = page {
-                if let Ok(Object::Array(arr)) = dict.get(b"MediaBox") {
-                    let w = arr.get(2)
-                        .and_then(|o| o.as_i64().ok().map(|v| v as f32)
-                            .or_else(|| o.as_f32().ok()))
-                        .unwrap_or(595.0_f32);
-                    let h = arr.get(3)
-                        .and_then(|o| o.as_i64().ok().map(|v| v as f32)
-                            .or_else(|| o.as_f32().ok()))
-                        .unwrap_or(842.0_f32);
-                    (w, h)
-                } else {
-                    (595.0_f32, 842.0_f32)
-                }
-            } else {
-                (595.0_f32, 842.0_f32)
-            }
+            let (w, h) = get_page_dims(&doc, *page_id);
+            (w as f32, h as f32)
         };
 
         // --- Resolve resource reference chain ---

@@ -32,13 +32,29 @@ pub fn rotate_pages(
             .copied()
             .ok_or_else(|| AppError::NotFound(format!("Page {} not found", page_num)))?;
 
+        // Walk parent chain to read inherited Rotate before mutating.
+        let current: i64 = {
+            let mut inherited = 0i64;
+            let mut cur = page_id;
+            'walk: loop {
+                match doc.get_object(cur) {
+                    Ok(Object::Dictionary(d)) => {
+                        if let Ok(r) = d.get(b"Rotate").and_then(|o| o.as_i64()) {
+                            inherited = r;
+                            break 'walk;
+                        }
+                        match d.get(b"Parent").and_then(|o| o.as_reference()) {
+                            Ok(parent) => cur = parent,
+                            Err(_) => break 'walk,
+                        }
+                    }
+                    _ => break 'walk,
+                }
+            }
+            inherited
+        };
         let page = doc.get_object_mut(page_id)?;
         if let Object::Dictionary(dict) = page {
-            let current: i64 = dict
-                .get(b"Rotate")
-                .ok()
-                .and_then(|o| o.as_i64().ok())
-                .unwrap_or(0);
             let new_rotation = (current + degrees) % 360;
             dict.set("Rotate", Object::Integer(new_rotation));
         }

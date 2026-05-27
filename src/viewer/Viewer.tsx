@@ -647,8 +647,9 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
 
   async function triggerAutoSave() {
     const store = useAppStore.getState();
-    const vf = store.viewerFile;
-    const origPath = store.originalViewerPath;
+    const vf = store.tabFiles[tabPath] ?? store.openTabs.find(t => t.path === tabPath) ?? null;
+    const origPath = store.tabOriginal[tabPath] ?? null;
+    const isDirty = store.tabDirty[tabPath] ?? false;
     if (!vf) return;
     setSaveStatus("saving");
     setSaveError(null);
@@ -658,14 +659,14 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
         if (!chosenPath) { setSaveStatus("idle"); return; }
         await copyFile(vf.path, chosenPath);
         evictPathFromThumbnailCache(chosenPath);
-        store.setViewerFile({ ...vf, path: chosenPath, name: chosenPath.split(/[\\/]/).pop() ?? chosenPath });
-        store.setOriginalViewerPath(chosenPath);
-        store.setIsViewerDirty(false);
-      } else if (store.isViewerDirty) {
+        store.setTabFile(tabPath, { ...vf, path: chosenPath, name: chosenPath.split(/[\\/]/).pop() ?? chosenPath });
+        store.setTabOriginal(tabPath, chosenPath);
+        store.setTabDirty(tabPath, false);
+      } else if (isDirty) {
         await copyFile(vf.path, origPath);
         evictPathFromThumbnailCache(origPath);
-        store.setViewerFile({ ...vf, path: origPath, name: origPath.split(/[\\/]/).pop() ?? origPath });
-        store.setIsViewerDirty(false);
+        store.setTabFile(tabPath, { ...vf, path: origPath, name: origPath.split(/[\\/]/).pop() ?? origPath });
+        store.setTabDirty(tabPath, false);
       }
       markSaved();
     } catch (e) {

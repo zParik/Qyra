@@ -2,6 +2,7 @@ use lopdf::{Dictionary, Document, Object, Stream};
 use tauri::Emitter;
 use crate::utils::paths::temp_output_path;
 use crate::utils::progress::Progress;
+use crate::utils::get_page_dims;
 use crate::error::{AppError, AppResult};
 use std::f64::consts::PI;
 
@@ -59,7 +60,7 @@ pub async fn add_watermark(
                 "operation-progress",
                 Progress::new(idx, total_to_mark + 1, format!("Watermarking page {} / {}", idx + 1, total_to_mark)),
             );
-            let (pw, ph) = page_size(&doc, page_id);
+            let (pw, ph) = get_page_dims(&doc, page_id);
 
             let mut gs = Dictionary::new();
             gs.set("Type", Object::Name(b"ExtGState".to_vec()));
@@ -230,25 +231,6 @@ fn patch_page(
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-fn page_size(doc: &Document, page_id: lopdf::ObjectId) -> (f64, f64) {
-    let try_get = || -> Option<(f64, f64)> {
-        let obj = doc.get_object(page_id).ok()?;
-        let d = obj.as_dict().ok()?;
-        let mb = d.get(b"MediaBox").ok()?.as_array().ok()?;
-        if mb.len() < 4 {
-            return None;
-        }
-        let v = |o: &Object| -> f64 {
-            match o {
-                Object::Integer(i) => *i as f64,
-                Object::Real(f) => *f as f64,
-                _ => 0.0,
-            }
-        };
-        Some((v(&mb[2]) - v(&mb[0]), v(&mb[3]) - v(&mb[1])))
-    };
-    try_get().unwrap_or((612.0, 792.0))
-}
 
 fn hex_to_rgb(hex: &str) -> (f32, f32, f32) {
     let hex = hex.trim_start_matches('#');

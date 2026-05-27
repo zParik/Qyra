@@ -35,6 +35,75 @@ fn drain_pending_open<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     }
 }
 
+/// Android: Tauri command — called by the frontend on mount to retrieve any
+/// PDF path staged by MainActivity (handles both cold-start timing race and
+/// the case where the app was already in the foreground when ACTION_VIEW fired).
+#[cfg(target_os = "android")]
+#[tauri::command]
+fn get_pending_open(app: tauri::AppHandle) -> Option<String> {
+    use std::path::PathBuf;
+    let Ok(files_dir) = app.path().app_local_data_dir() else { return None };
+    let candidates: Vec<PathBuf> = vec![
+        files_dir.join(".pending_open.txt"),
+        files_dir.parent().map(|p| p.join("files/.pending_open.txt")).unwrap_or_default(),
+    ];
+    for marker in candidates {
+        if !marker.exists() { continue; }
+        let Ok(contents) = std::fs::read_to_string(&marker) else { continue };
+        let path = contents.trim().to_string();
+        let _ = std::fs::remove_file(&marker);
+        if !path.is_empty() { return Some(path); }
+        return None;
+    }
+    None
+}
+
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+fn get_pending_open() -> Option<String> { None }
+
+/// Android: drain the SAF folder-picker marker left by MainActivity when the
+/// user grants access to a folder via the system tree picker. Each marker
+/// line is `<treeUri>\t<childUri>\t<displayName>` for one PDF inside the
+/// tree. We group lines by treeUri (currently always one) and emit a
+/// `folder-picked` Tauri event with `{ tree_uri, children: [{ uri, name }] }`.
+#[cfg(target_os = "android")]
+fn drain_pending_folder<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    use serde::Serialize;
+    use std::path::PathBuf;
+
+    #[derive(Serialize, Clone)]
+    struct FolderChild { uri: String, name: String }
+    #[derive(Serialize, Clone)]
+    struct FolderPicked { tree_uri: String, children: Vec<FolderChild> }
+
+    let Ok(files_dir) = app.path().app_local_data_dir() else { return };
+    let candidates: Vec<PathBuf> = vec![
+        files_dir.join(".pending_folder.txt"),
+        files_dir.parent().map(|p| p.join("files/.pending_folder.txt")).unwrap_or_default(),
+    ];
+    for marker in candidates {
+        if !marker.exists() { continue; }
+        let Ok(contents) = std::fs::read_to_string(&marker) else { continue };
+        let _ = std::fs::remove_file(&marker);
+
+        let mut tree_uri = String::new();
+        let mut children: Vec<FolderChild> = Vec::new();
+        for line in contents.lines() {
+            let mut parts = line.splitn(3, '\t');
+            let Some(tree) = parts.next() else { continue };
+            let Some(uri) = parts.next() else { continue };
+            let name = parts.next().unwrap_or("").to_string();
+            if tree_uri.is_empty() { tree_uri = tree.to_string(); }
+            children.push(FolderChild { uri: uri.to_string(), name });
+        }
+        if !children.is_empty() {
+            let _ = app.emit("folder-picked", FolderPicked { tree_uri, children });
+        }
+        return;
+    }
+}
+
 /// Android: initialize ndk_context so our commands (files.rs / render.rs /
 /// page_count.rs) that call `ndk_context::android_context()` don't panic.
 ///
@@ -221,6 +290,7 @@ pub fn run() {
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_millis(800));
                     drain_pending_open(&handle);
+                    drain_pending_folder(&handle);
                 });
             }
 
@@ -310,6 +380,8 @@ pub fn run() {
             tabs::save_tab_ui_state,
             tabs::get_tab_ui_state,
             tabs::clear_tab_session,
+            folder_pick::request_saf_folder_picker,
+            get_pending_open,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
@@ -317,6 +389,7 @@ pub fn run() {
             #[cfg(target_os = "android")]
             if matches!(_event, tauri::RunEvent::Resumed) {
                 drain_pending_open(_app_handle);
+                drain_pending_folder(_app_handle);
             }
         });
 }

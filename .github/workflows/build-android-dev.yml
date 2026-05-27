@@ -2,12 +2,11 @@ name: 'Build Android (Dev Testing)'
 
 # Dev-only workflow: builds a debug APK for sideload testing.
 # Triggers on `android-test-*` tags so it does NOT collide with the production
-# `v*` release flow, and on manual workflow_dispatch from the Actions tab.
+# `v*` release flow, on every push to any `android/**` branch (iterative
+# dev on a feature branch when local cross-compile to Android is not
+# available), and on manual workflow_dispatch from the Actions tab.
 
 on:
-  push:
-    tags:
-      - 'android-test-*'
   workflow_dispatch:
 
 jobs:
@@ -214,10 +213,19 @@ jobs:
           echo "=== APK outputs ==="
           find src-tauri/gen/android/app/build/outputs -name '*.apk' -print
 
+      - name: Sanitize ref name for artifact
+        id: artifact_name
+        run: |
+          # actions/upload-artifact rejects '/', '\', ':' and a handful of other
+          # NTFS-hostile characters in the artifact name. Branch refs like
+          # 'android/foo' would otherwise be invalid, so swap problem chars for '-'.
+          SAFE_REF=$(echo "${{ github.ref_name }}" | tr '/\\:<>|*?"' '-')
+          echo "value=qyra-android-${SAFE_REF}" >> "$GITHUB_OUTPUT"
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: qyra-android-${{ github.ref_name }}
+          name: ${{ steps.artifact_name.outputs.value }}
           path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
           if-no-files-found: error
           retention-days: 14

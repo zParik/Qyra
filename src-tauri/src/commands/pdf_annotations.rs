@@ -1,6 +1,7 @@
 use lopdf::{Dictionary, Document, Object, ObjectId, Stream};
 use lopdf::content::{Content, Operation};
 use crate::utils::paths::temp_output_path;
+use crate::utils::get_page_dims;
 use crate::error::{AppError, AppResult};
 
 #[allow(dead_code)]
@@ -12,27 +13,6 @@ pub struct PdfAnnotation {
     pub color: Option<String>,
     pub contents: Option<String>,
     pub quad_points: Option<Vec<f64>>,
-}
-
-fn get_page_dims_from_doc(doc: &Document, page_id: ObjectId) -> (f64, f64) {
-    let page = match doc.get_object(page_id) {
-        Ok(obj) => obj,
-        Err(_) => return (595.0, 842.0),
-    };
-    if let Object::Dictionary(dict) = page {
-        if let Ok(Object::Array(arr)) = dict.get(b"MediaBox") {
-            let w = arr.get(2)
-                .and_then(|o| o.as_i64().ok().map(|v| v as f64)
-                    .or_else(|| o.as_f32().ok().map(|v| v as f64)))
-                .unwrap_or(595.0);
-            let h = arr.get(3)
-                .and_then(|o| o.as_i64().ok().map(|v| v as f64)
-                    .or_else(|| o.as_f32().ok().map(|v| v as f64)))
-                .unwrap_or(842.0);
-            return (w, h);
-        }
-    }
-    (595.0, 842.0)
 }
 
 fn obj_to_f64(o: &Object) -> f64 {
@@ -61,7 +41,7 @@ fn hex_to_rgb_f32(hex: &str) -> (f32, f32, f32) {
 }
 
 fn parse_page_annots(doc: &Document, page: u32, page_id: ObjectId) -> Vec<PdfAnnotation> {
-    let (pw, ph) = get_page_dims_from_doc(doc, page_id);
+    let (pw, ph) = get_page_dims(doc, page_id);
 
     enum AnnotsKind {
         Inline(Vec<ObjectId>),
@@ -275,7 +255,7 @@ pub async fn add_pdf_annotation(
         let page_id = page_map.get(&annotation.page).copied()
             .ok_or_else(|| AppError::NotFound(format!("Page {} not found", annotation.page)))?;
 
-        let (pw, ph) = get_page_dims_from_doc(&doc, page_id);
+        let (pw, ph) = get_page_dims(&doc, page_id);
 
         // Convert normalized screen coords back to PDF coords (bottom-left origin)
         // annotation.rect = [x0, y0, x1, y1] top-left origin, normalized

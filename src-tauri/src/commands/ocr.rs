@@ -4,6 +4,7 @@ use tauri::Emitter;
 
 use crate::utils::paths::temp_output_path;
 use crate::utils::progress::Progress;
+use crate::utils::get_page_dims;
 use crate::error::{AppError, AppResult};
 
 #[derive(Deserialize)]
@@ -65,7 +66,7 @@ pub async fn make_searchable(
                 continue;
             }
 
-            let (pw, ph) = page_size(&doc, page_id);
+            let (pw, ph) = get_page_dims(&doc, page_id);
             let content = text_content(&ocr_page.words, pw, ph);
             if content.is_empty() {
                 continue;
@@ -104,25 +105,6 @@ pub async fn make_searchable(
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-fn page_size(doc: &Document, page_id: lopdf::ObjectId) -> (f64, f64) {
-    let try_get = || -> Option<(f64, f64)> {
-        let obj = doc.get_object(page_id).ok()?;
-        let d = obj.as_dict().ok()?;
-        let mb = d.get(b"MediaBox").ok()?.as_array().ok()?;
-        if mb.len() < 4 {
-            return None;
-        }
-        let v = |o: &Object| -> f64 {
-            match o {
-                Object::Integer(i) => *i as f64,
-                Object::Real(f) => *f as f64,
-                _ => 0.0,
-            }
-        };
-        Some((v(&mb[2]) - v(&mb[0]), v(&mb[3]) - v(&mb[1])))
-    };
-    try_get().unwrap_or((612.0, 792.0))
-}
 
 /// Build a PDF content stream that places invisible (render mode 3) text at
 /// each word's position so the document becomes searchable / copy-pasteable.
