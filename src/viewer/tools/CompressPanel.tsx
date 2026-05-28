@@ -153,6 +153,30 @@ export function CompressPanel({ file, onApplied }: CompressPanelProps) {
         )}
       </div>
 
+      {/* Ghostscript CPU/time warning. PDF size threshold ~10 MB or 50 pages
+          is where wall-clock starts to feel painful on a typical laptop. */}
+      {engine === "gs" && !gsDisabled && file.info &&
+        (file.info.file_size > 10 * 1024 * 1024 || file.info.page_count > 50) && (
+        <div
+          className="rounded-md p-2.5 text-xs space-y-1"
+          style={{
+            background: "rgba(234, 179, 8, 0.10)",
+            border: "1px solid rgba(234, 179, 8, 0.35)",
+            color: "var(--viewer-text)",
+          }}
+        >
+          <p className="font-semibold" style={{ color: "rgb(234, 179, 8)" }}>
+            CPU-intensive operation
+          </p>
+          <p style={{ opacity: 0.85 }}>
+            Ghostscript runs single-threaded. A {formatSize(file.info.file_size)} /{" "}
+            {file.info.page_count}-page file may take{" "}
+            <strong>30 seconds to several minutes</strong>. Runs at below-normal
+            priority so the UI stays responsive, but your CPU will be busy.
+          </p>
+        </div>
+      )}
+
       {/* Level / preset selector */}
       {engine === "rust" ? (
         <div>
