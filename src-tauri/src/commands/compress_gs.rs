@@ -11,13 +11,43 @@
 //      suffix stripped at bundle time.
 //   2. Dev:     CARGO_MANIFEST_DIR/binaries/gs-<target-triple>(.exe).
 //      Populated by scripts/fetch-gs.{ps1,sh}.
+//
+// Two commands are exposed:
+//   - compress_pdf_gs           — single GS invocation. Lossless on metadata,
+//                                  best compression ratio, slowest wall-clock.
+//   - compress_pdf_gs_parallel  — split into chunks, compress in parallel,
+//                                  merge. Faster wall-clock on multicore at
+//                                  the cost of bookmarks/outline/cross-page
+//                                  image deduplication. Same total CPU work.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
 
+use lopdf::Document;
+use rayon::prelude::*;
 use serde::Serialize;
 use tauri::Emitter;
+
+use crate::commands::merge::merge_documents;
+use crate::error::{AppError, AppResult};
+use crate::utils::paths::{temp_dir_str, temp_output_path};
+use crate::utils::progress::Progress;
+
+#[derive(Serialize)]
+pub struct GsCompressResult {
+    pub path: String,
+    pub original_bytes: u64,
+    pub compressed_bytes: u64,
+    pub preset: String,
+}
+
+const VALID_PRESETS: &[&str] = &["screen", "ebook", "printer", "prepress"];
+
+// ──────────────────────────────────────────────────────────────────────────
+// Process spawning helpers
+// ──────────────────────────────────────────────────────────────────────────
 
 /// Apply OS-specific low-priority scheduling to a Command before spawn so the
 /// Ghostscript process does not starve the UI thread or other apps on the box.
@@ -35,29 +65,13 @@ fn lower_priority(cmd: &mut Command) {
     use std::os::unix::process::CommandExt;
     unsafe {
         cmd.pre_exec(|| {
-            // nice +10 — same as `nice -n 10 gs ...`
             libc::nice(10);
             Ok(())
         });
     }
 }
 
-use crate::error::{AppError, AppResult};
-use crate::utils::paths::temp_output_path;
-use crate::utils::progress::Progress;
-
-#[derive(Serialize)]
-pub struct GsCompressResult {
-    pub path: String,
-    pub original_bytes: u64,
-    pub compressed_bytes: u64,
-    pub preset: String,
-}
-
-const VALID_PRESETS: &[&str] = &["screen", "ebook", "printer", "prepress"];
-
 fn current_target_triple() -> &'static str {
-    // Matches the triples produced by rustup for Tauri build targets.
     if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
         "x86_64-pc-windows-msvc"
     } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
@@ -76,7 +90,6 @@ fn current_target_triple() -> &'static str {
 fn find_gs_binary() -> Option<PathBuf> {
     let ext = if cfg!(windows) { ".exe" } else { "" };
 
-    // 1. Bundled — next to main exe.
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             let bundled = dir.join(format!("gs{ext}"));
@@ -86,7 +99,6 @@ fn find_gs_binary() -> Option<PathBuf> {
         }
     }
 
-    // 2. Dev — src-tauri/binaries/gs-<triple>(.exe).
     let triple = current_target_triple();
     if !triple.is_empty() {
         let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -100,6 +112,44 @@ fn find_gs_binary() -> Option<PathBuf> {
     None
 }
 
+/// Run Ghostscript once on a single input → output pair.
+fn run_gs_on(gs: &Path, input: &Path, output: &Path, preset: &str) -> AppResult<()> {
+    let mut cmd = Command::new(gs);
+    cmd.arg("-sDEVICE=pdfwrite")
+        .arg("-dCompatibilityLevel=1.7")
+        .arg(format!("-dPDFSETTINGS=/{preset}"))
+        .arg("-dNOPAUSE")
+        .arg("-dQUIET")
+        .arg("-dBATCH")
+        .arg("-dSAFER")
+        .arg(format!("-sOutputFile={}", output.display()))
+        .arg(input);
+    lower_priority(&mut cmd);
+    let status = cmd
+        .status()
+        .map_err(|e| AppError::Other(format!("failed to spawn ghostscript: {e}")))?;
+    if !status.success() {
+        return Err(AppError::Other(format!(
+            "ghostscript exited with status {status}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_preset(preset: &str) -> AppResult<()> {
+    if !VALID_PRESETS.contains(&preset) {
+        return Err(AppError::Invalid(format!(
+            "Invalid Ghostscript preset '{preset}'. Allowed: {}",
+            VALID_PRESETS.join(", ")
+        )));
+    }
+    Ok(())
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Single-shot command
+// ──────────────────────────────────────────────────────────────────────────
+
 #[tauri::command]
 pub async fn compress_pdf_gs(
     path: String,
@@ -108,12 +158,7 @@ pub async fn compress_pdf_gs(
     app_handle: tauri::AppHandle,
 ) -> AppResult<GsCompressResult> {
     let preset = preset.unwrap_or_else(|| "ebook".to_string());
-    if !VALID_PRESETS.contains(&preset.as_str()) {
-        return Err(AppError::Invalid(format!(
-            "Invalid Ghostscript preset '{preset}'. Allowed: {}",
-            VALID_PRESETS.join(", ")
-        )));
-    }
+    validate_preset(&preset)?;
 
     tokio::task::spawn_blocking(move || -> AppResult<GsCompressResult> {
         let gs = find_gs_binary().ok_or_else(|| {
@@ -132,30 +177,9 @@ pub async fn compress_pdf_gs(
             Progress::new(0, 1, format!("Ghostscript /{preset} ...")),
         );
 
-        let mut cmd = Command::new(&gs);
-        cmd.arg("-sDEVICE=pdfwrite")
-            .arg("-dCompatibilityLevel=1.7")
-            .arg(format!("-dPDFSETTINGS=/{preset}"))
-            .arg("-dNOPAUSE")
-            .arg("-dQUIET")
-            .arg("-dBATCH")
-            .arg("-dSAFER")
-            .arg(format!("-sOutputFile={out}"))
-            .arg(&path);
-        lower_priority(&mut cmd);
-        let status = cmd
-            .status()
-            .map_err(|e| AppError::Other(format!("failed to spawn ghostscript: {e}")))?;
-
-        if !status.success() {
-            return Err(AppError::Other(format!(
-                "ghostscript exited with status {status}"
-            )));
-        }
+        run_gs_on(&gs, Path::new(&path), Path::new(&out), &preset)?;
 
         let compressed_bytes = fs::metadata(&out)?.len();
-
-        // If GS made it bigger (rare on small native-text PDFs), copy original.
         let compressed_bytes = if compressed_bytes >= original_bytes {
             fs::copy(&path, &out)?;
             original_bytes
@@ -166,6 +190,179 @@ pub async fn compress_pdf_gs(
         let _ = app_handle.emit(
             "operation-progress",
             Progress::new(1, 1, format!("Ghostscript /{preset} done")),
+        );
+
+        Ok(GsCompressResult {
+            path: out,
+            original_bytes,
+            compressed_bytes,
+            preset,
+        })
+    })
+    .await
+    .map_err(|e| AppError::Other(e.to_string()))?
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Chunk-parallel command
+// ──────────────────────────────────────────────────────────────────────────
+
+const DEFAULT_CHUNK_PAGES: u32 = 25;
+/// Cap parallelism so we don't spawn one GS per core and freeze the box.
+fn parallel_workers() -> usize {
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2);
+    (cores / 2).max(2).min(8)
+}
+
+/// Split `doc` into N temp PDFs, each containing `chunk_size` consecutive pages
+/// (last one may be shorter). Returns the on-disk paths of the chunks.
+fn split_into_chunks(doc: &Document, chunk_size: u32, dir: &str) -> AppResult<Vec<PathBuf>> {
+    let total = doc.get_pages().len() as u32;
+    let mut chunks = Vec::new();
+    let mut start = 1u32;
+    let mut idx = 0u32;
+    while start <= total {
+        let end = (start + chunk_size - 1).min(total);
+        let mut part = doc.clone();
+        let to_delete: Vec<u32> = (1..=total).filter(|&p| p < start || p > end).collect();
+        part.delete_pages(&to_delete);
+
+        let out = PathBuf::from(format!("{dir}/qyra-gs-chunk-{idx:04}.pdf"));
+        part.save(&out)?;
+        chunks.push(out);
+
+        idx += 1;
+        start = end + 1;
+    }
+    Ok(chunks)
+}
+
+#[tauri::command]
+pub async fn compress_pdf_gs_parallel(
+    path: String,
+    output: Option<String>,
+    preset: Option<String>,
+    chunk_pages: Option<u32>,
+    app_handle: tauri::AppHandle,
+) -> AppResult<GsCompressResult> {
+    let preset = preset.unwrap_or_else(|| "ebook".to_string());
+    validate_preset(&preset)?;
+    let chunk_size = chunk_pages.unwrap_or(DEFAULT_CHUNK_PAGES).max(1);
+
+    tokio::task::spawn_blocking(move || -> AppResult<GsCompressResult> {
+        let gs = find_gs_binary().ok_or_else(|| {
+            AppError::Other(
+                "Ghostscript binary not found. Run scripts/fetch-gs.ps1 (Windows) \
+                 or scripts/fetch-gs.sh (mac/linux) to vendor it."
+                    .to_string(),
+            )
+        })?;
+
+        let original_bytes = fs::metadata(&path)?.len();
+        let out = output.unwrap_or_else(|| temp_output_path(&path, "gs-compressed"));
+
+        let doc = Document::load(&path)?;
+        let total_pages = doc.get_pages().len() as u32;
+
+        // Below 2× chunk size the overhead beats the parallelism — go single-shot.
+        if total_pages <= chunk_size * 2 {
+            let _ = app_handle.emit(
+                "operation-progress",
+                Progress::new(0, 1, format!("Ghostscript /{preset} (small doc, single pass) ...")),
+            );
+            run_gs_on(&gs, Path::new(&path), Path::new(&out), &preset)?;
+        } else {
+            let _ = app_handle.emit(
+                "operation-progress",
+                Progress::new(0, 3, "Splitting into chunks ...".to_string()),
+            );
+            let dir = temp_dir_str();
+            let chunk_paths = split_into_chunks(&doc, chunk_size, &dir)?;
+            drop(doc);
+            let num_chunks = chunk_paths.len();
+
+            let _ = app_handle.emit(
+                "operation-progress",
+                Progress::new(
+                    1,
+                    3,
+                    format!(
+                        "Compressing {num_chunks} chunks in parallel ({} workers) ...",
+                        parallel_workers()
+                    ),
+                ),
+            );
+
+            // Build a dedicated rayon pool with capped workers so we don't
+            // outrun the global pool's defaults.
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(parallel_workers())
+                .build()
+                .map_err(|e| AppError::Other(format!("rayon pool: {e}")))?;
+
+            let done = Mutex::new(0usize);
+            let app = app_handle.clone();
+            let compressed_chunks: AppResult<Vec<PathBuf>> = pool.install(|| {
+                chunk_paths
+                    .par_iter()
+                    .map(|chunk| -> AppResult<PathBuf> {
+                        let mut out_path = chunk.clone();
+                        let fname = chunk
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("chunk.pdf")
+                            .to_string();
+                        out_path.set_file_name(format!("c-{fname}"));
+                        run_gs_on(&gs, chunk, &out_path, &preset)?;
+
+                        if let Ok(mut g) = done.lock() {
+                            *g += 1;
+                            let _ = app.emit(
+                                "operation-progress",
+                                Progress::new(
+                                    1,
+                                    3,
+                                    format!("Compressed {} of {} chunks", *g, num_chunks),
+                                ),
+                            );
+                        }
+                        Ok(out_path)
+                    })
+                    .collect()
+            });
+            let compressed_chunks = compressed_chunks?;
+
+            let _ = app_handle.emit(
+                "operation-progress",
+                Progress::new(2, 3, "Merging chunks ...".to_string()),
+            );
+
+            let docs: Vec<Document> = compressed_chunks
+                .iter()
+                .map(|p| Document::load(p).map_err(AppError::from))
+                .collect::<AppResult<Vec<_>>>()?;
+            let mut merged = merge_documents(docs)?;
+            merged.save(&out)?;
+
+            // Cleanup intermediate files (input chunks + compressed chunks).
+            for p in chunk_paths.iter().chain(compressed_chunks.iter()) {
+                let _ = fs::remove_file(p);
+            }
+        }
+
+        let compressed_bytes = fs::metadata(&out)?.len();
+        let compressed_bytes = if compressed_bytes >= original_bytes {
+            fs::copy(&path, &out)?;
+            original_bytes
+        } else {
+            compressed_bytes
+        };
+
+        let _ = app_handle.emit(
+            "operation-progress",
+            Progress::new(3, 3, format!("Ghostscript /{preset} done")),
         );
 
         Ok(GsCompressResult {
