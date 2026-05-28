@@ -233,7 +233,7 @@ export function ToolSidebar({ file, onApplied, activeTool, onToolChange, selecte
       {/* Tools tab */}
       {tab === "tools" && (
         activeTool && activeTool !== "comment" ? (
-          <>
+          <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", flexShrink: 0, borderBottom: "1px solid var(--viewer-border)" }}>
               <button
                 onClick={() => setActiveTool(null)}
@@ -250,7 +250,7 @@ export function ToolSidebar({ file, onApplied, activeTool, onToolChange, selecte
             <div className="scroll-invisible" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 12, paddingBottom: "max(12px, env(safe-area-inset-bottom, 0px))" }}>
               {panels[activeTool]}
             </div>
-          </>
+          </div>
         ) : (
           <div className="scroll-invisible" style={{ flex: 1, minHeight: 0, overflowY: "auto", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
             <ToolGroup label="Pages" tools={PAGE_TOOLS} onSelect={setActiveTool} />
