@@ -50,14 +50,21 @@ const VALID_PRESETS: &[&str] = &["screen", "ebook", "printer", "prepress"];
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Apply OS-specific low-priority scheduling to a Command before spawn so the
-/// Ghostscript process does not starve the UI thread or other apps on the box.
-/// Total CPU work is unchanged — only the kernel scheduling priority drops.
+/// Ghostscript process does not starve the UI thread, audio thread, or other
+/// apps on the box. Total CPU work is unchanged — only kernel scheduling
+/// priority drops.
+///
+/// Windows: IDLE_PRIORITY_CLASS so GS only gets CPU when nothing else wants
+/// it. BELOW_NORMAL was still high enough to glitch real-time audio threads
+/// on multicore systems.
+///
+/// Unix: nice +19 (lowest, equivalent to `nice -n 19`).
 #[cfg(windows)]
 fn lower_priority(cmd: &mut Command) {
     use std::os::windows::process::CommandExt;
-    // BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
-    // CREATE_NO_WINDOW            = 0x08000000  (suppress console flash)
-    cmd.creation_flags(0x00004000 | 0x08000000);
+    // IDLE_PRIORITY_CLASS = 0x00000040
+    // CREATE_NO_WINDOW    = 0x08000000  (suppress console flash)
+    cmd.creation_flags(0x00000040 | 0x08000000);
 }
 
 #[cfg(unix)]
@@ -65,10 +72,62 @@ fn lower_priority(cmd: &mut Command) {
     use std::os::unix::process::CommandExt;
     unsafe {
         cmd.pre_exec(|| {
-            libc::nice(10);
+            libc::nice(19);
             Ok(())
         });
     }
+}
+
+/// After spawn, pin the process to all cores EXCEPT the first two so the
+/// audio thread and UI thread on the reserved cores cannot be preempted by
+/// Ghostscript. No-op if fewer than 4 logical processors are available, since
+/// dropping 2 of them would leave too little to run on.
+#[cfg(windows)]
+fn restrict_cpu_affinity(pid: u32) {
+    use std::ffi::c_void;
+    type Handle = *mut c_void;
+    const PROCESS_SET_INFORMATION: u32 = 0x0200;
+    const PROCESS_QUERY_INFORMATION: u32 = 0x0400;
+    extern "system" {
+        fn OpenProcess(desired: u32, inherit: i32, pid: u32) -> Handle;
+        fn CloseHandle(h: Handle) -> i32;
+        fn SetProcessAffinityMask(h: Handle, mask: usize) -> i32;
+    }
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    if cores < 4 {
+        return;
+    }
+    let total_mask: usize = if cores >= usize::BITS as usize {
+        usize::MAX
+    } else {
+        (1usize << cores) - 1
+    };
+    // Mask off the bottom two bits → reserve logical CPUs 0 and 1 for audio/UI.
+    let mask = total_mask & !0b11;
+    if mask == 0 {
+        return;
+    }
+    unsafe {
+        let h = OpenProcess(
+            PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION,
+            0,
+            pid,
+        );
+        if !h.is_null() {
+            let _ = SetProcessAffinityMask(h, mask);
+            CloseHandle(h);
+        }
+    }
+}
+
+#[cfg(unix)]
+fn restrict_cpu_affinity(_pid: u32) {
+    // libc::sched_setaffinity is Linux-only and the cost of getting it right
+    // cross-platform (macOS uses thread_policy_set) is not worth it given
+    // nice 19 already de-prioritises us aggressively enough on Unix audio
+    // stacks (PulseAudio/CoreAudio run their own real-time threads).
 }
 
 fn current_target_triple() -> &'static str {
@@ -112,7 +171,8 @@ fn find_gs_binary() -> Option<PathBuf> {
     None
 }
 
-/// Run Ghostscript once on a single input → output pair.
+/// Run Ghostscript once on a single input → output pair. Spawns at idle
+/// priority and restricts CPU affinity to keep audio/UI threads responsive.
 fn run_gs_on(gs: &Path, input: &Path, output: &Path, preset: &str) -> AppResult<()> {
     let mut cmd = Command::new(gs);
     cmd.arg("-sDEVICE=pdfwrite")
@@ -125,9 +185,13 @@ fn run_gs_on(gs: &Path, input: &Path, output: &Path, preset: &str) -> AppResult<
         .arg(format!("-sOutputFile={}", output.display()))
         .arg(input);
     lower_priority(&mut cmd);
-    let status = cmd
-        .status()
+    let mut child = cmd
+        .spawn()
         .map_err(|e| AppError::Other(format!("failed to spawn ghostscript: {e}")))?;
+    restrict_cpu_affinity(child.id());
+    let status = child
+        .wait()
+        .map_err(|e| AppError::Other(format!("ghostscript wait failed: {e}")))?;
     if !status.success() {
         return Err(AppError::Other(format!(
             "ghostscript exited with status {status}"
