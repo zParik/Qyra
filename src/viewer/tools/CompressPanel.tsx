@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { LoadedFile } from "../../store/useAppStore";
 import { ProgressBar, Spinner } from "../../components/ProgressBar";
-import { compressPdf } from "../../lib/tauri";
+import { compressPdf, compressPdfGs, type GsPreset } from "../../lib/tauri";
 import { sanitizeError, type ProgressData } from "../usePanelCommand";
 import { StatusBox } from "../components/StatusBox";
 
@@ -16,18 +16,33 @@ function savingsPct(original: number, compressed: number) {
   return Math.round((1 - compressed / original) * 100);
 }
 
+type Engine = "rust" | "gs";
+type Level = 0 | 1 | 2;
+
 const LEVELS = [
   { value: 0, label: "Lossless",   desc: "Lossless"      },
   { value: 1, label: "Lossy",      desc: "JPEG 72%"      },
   { value: 2, label: "Aggressive", desc: "Grayscale 50%" },
 ] as const;
 
-type Level = 0 | 1 | 2;
-
 const LEVEL_DETAIL: Record<Level, string> = {
   0: "Re-compresses all streams at maximum zlib level and removes unused objects. No quality loss.",
   1: "Low + strips metadata, converts lossless images to JPEG at 72% quality, and downsamples images over 2048px.",
   2: "High + downsamples images to 1440px and converts them to grayscale at 50% quality.",
+};
+
+const GS_PRESETS: { value: GsPreset; label: string; desc: string }[] = [
+  { value: "screen",   label: "Screen",   desc: "72 dpi"  },
+  { value: "ebook",    label: "eBook",    desc: "150 dpi" },
+  { value: "printer",  label: "Printer",  desc: "300 dpi" },
+  { value: "prepress", label: "Prepress", desc: "300 dpi" },
+];
+
+const GS_PRESET_DETAIL: Record<GsPreset, string> = {
+  screen:   "Smallest file. 72 dpi image downsampling, heavy JPEG compression. Best for email/web.",
+  ebook:    "Balanced. 150 dpi downsampling, moderate JPEG. Default choice for most PDFs.",
+  printer:  "Good print quality. 300 dpi downsampling. Use when output may be printed.",
+  prepress: "Professional print. 300 dpi, color-preserved, embedded fonts. Largest of the four.",
 };
 
 interface CompressPanelProps {
@@ -36,7 +51,9 @@ interface CompressPanelProps {
 }
 
 export function CompressPanel({ file, onApplied }: CompressPanelProps) {
+  const [engine, setEngine] = useState<Engine>("rust");
   const [level, setLevel] = useState<Level>(0);
+  const [preset, setPreset] = useState<GsPreset>("ebook");
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState<ProgressData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -55,7 +72,10 @@ export function CompressPanel({ file, onApplied }: CompressPanelProps) {
     unlistenRef.current = unlisten;
 
     try {
-      const result = await compressPdf(file.path, undefined, level);
+      const result =
+        engine === "gs"
+          ? await compressPdfGs(file.path, undefined, preset)
+          : await compressPdf(file.path, undefined, level);
       setSizes({ original: result.original_bytes, compressed: result.compressed_bytes });
       onApplied(result.path);
     } catch (e) {
@@ -82,39 +102,101 @@ export function CompressPanel({ file, onApplied }: CompressPanelProps) {
         </div>
       )}
 
-      {/* Level selector */}
+      {/* Engine selector */}
       <div>
         <p className="text-xs font-medium mb-2" style={{ color: "var(--viewer-text-sec)" }}>
-          Compression level
+          Engine
         </p>
         <div
           className="flex rounded-lg overflow-hidden"
           style={{ border: "1px solid var(--viewer-border)" }}
         >
-          {LEVELS.map(({ value, label, desc }) => (
+          {(["rust", "gs"] as const).map((e, i) => (
             <button
-              key={value}
-              onClick={() => setLevel(value)}
+              key={e}
+              onClick={() => setEngine(e)}
               className="flex-1 py-2 px-1 text-center text-xs transition-colors"
               style={
-                level === value
+                engine === e
                   ? { background: "var(--viewer-accent)", color: "#fff" }
                   : {
                       background: "var(--viewer-bg)",
                       color: "var(--viewer-text-muted)",
-                      borderLeft: value > 0 ? "1px solid var(--viewer-border)" : undefined,
+                      borderLeft: i > 0 ? "1px solid var(--viewer-border)" : undefined,
                     }
               }
             >
-              <div className="font-semibold">{label}</div>
-              <div style={{ opacity: 0.7 }}>{desc}</div>
+              <div className="font-semibold">{e === "rust" ? "Native" : "Ghostscript"}</div>
+              <div style={{ opacity: 0.7 }}>{e === "rust" ? "fast, text PDFs" : "image-heavy"}</div>
             </button>
           ))}
         </div>
-        <p className="text-xs mt-2" style={{ color: "var(--viewer-text-muted)" }}>
-          {LEVEL_DETAIL[level]}
-        </p>
       </div>
+
+      {/* Level / preset selector */}
+      {engine === "rust" ? (
+        <div>
+          <p className="text-xs font-medium mb-2" style={{ color: "var(--viewer-text-sec)" }}>
+            Compression level
+          </p>
+          <div
+            className="flex rounded-lg overflow-hidden"
+            style={{ border: "1px solid var(--viewer-border)" }}
+          >
+            {LEVELS.map(({ value, label, desc }) => (
+              <button
+                key={value}
+                onClick={() => setLevel(value)}
+                className="flex-1 py-2 px-1 text-center text-xs transition-colors"
+                style={
+                  level === value
+                    ? { background: "var(--viewer-accent)", color: "#fff" }
+                    : {
+                        background: "var(--viewer-bg)",
+                        color: "var(--viewer-text-muted)",
+                        borderLeft: value > 0 ? "1px solid var(--viewer-border)" : undefined,
+                      }
+                }
+              >
+                <div className="font-semibold">{label}</div>
+                <div style={{ opacity: 0.7 }}>{desc}</div>
+              </button>
+            ))}
+          </div>
+          <p className="text-xs mt-2" style={{ color: "var(--viewer-text-muted)" }}>
+            {LEVEL_DETAIL[level]}
+          </p>
+        </div>
+      ) : (
+        <div>
+          <p className="text-xs font-medium mb-2" style={{ color: "var(--viewer-text-sec)" }}>
+            Quality preset
+          </p>
+          <div
+            className="grid grid-cols-2 gap-1 rounded-lg overflow-hidden"
+            style={{ border: "1px solid var(--viewer-border)" }}
+          >
+            {GS_PRESETS.map(({ value, label, desc }) => (
+              <button
+                key={value}
+                onClick={() => setPreset(value)}
+                className="py-2 px-1 text-center text-xs transition-colors"
+                style={
+                  preset === value
+                    ? { background: "var(--viewer-accent)", color: "#fff" }
+                    : { background: "var(--viewer-bg)", color: "var(--viewer-text-muted)" }
+                }
+              >
+                <div className="font-semibold">{label}</div>
+                <div style={{ opacity: 0.7 }}>{desc}</div>
+              </button>
+            ))}
+          </div>
+          <p className="text-xs mt-2" style={{ color: "var(--viewer-text-muted)" }}>
+            {GS_PRESET_DETAIL[preset]}
+          </p>
+        </div>
+      )}
 
       <button
         disabled={isProcessing}

@@ -30,6 +30,16 @@ export const splitPdfByBookmarks = (path: string, outputDir?: string) =>
 export const compressPdf = (path: string, output?: string, level?: number) =>
   invoke<CompressResult>("compress_pdf", { path, output, level });
 
+export type GsPreset = "screen" | "ebook" | "printer" | "prepress";
+export interface GsCompressResult {
+  path: string;
+  original_bytes: number;
+  compressed_bytes: number;
+  preset: GsPreset;
+}
+export const compressPdfGs = (path: string, output?: string, preset?: GsPreset) =>
+  invoke<GsCompressResult>("compress_pdf_gs", { path, output, preset });
+
 export const rotatePages = (path: string, pages: number[], degrees: number, output?: string) =>
   invoke<string>("rotate_pages", { path, pages, degrees, output });
 
