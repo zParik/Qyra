@@ -1,7 +1,9 @@
-mod commands;
+// `pub` so the integration test crate in `src-tauri/tests/` can drive commands
+// and PDF helpers directly (black-box, exactly as the IPC layer calls them).
+pub mod commands;
 mod error;
-mod pdf;
-mod utils;
+pub mod pdf;
+pub mod utils;
 
 pub use error::{AppError, AppResult};
 
