@@ -63,6 +63,11 @@ export function CommandPalette() {
         setOpen((v) => !v);
         return;
       }
+      if ((e.metaKey || e.ctrlKey) && e.key === ",") {
+        e.preventDefault();
+        navigate("/settings");
+        return;
+      }
       if (e.key === "Escape" && open) {
         e.preventDefault();
         setOpen(false);
@@ -73,7 +78,7 @@ export function CommandPalette() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
+  }, [open, navigate]);
 
   useEffect(() => {
     if (open) {
@@ -114,6 +119,8 @@ export function CommandPalette() {
       { id: "nav:merge", label: "Open Merge", group: "Navigate", run: () => navigate("/merge") },
       { id: "nav:images-to-pdf", label: "Open Images to PDF", group: "Navigate", run: () => navigate("/images-to-pdf") },
       { id: "nav:ocr", label: "Open OCR", group: "Navigate", run: () => navigate("/ocr") },
+      { id: "nav:settings", label: "Open Settings", group: "Navigate", hint: "Ctrl+,",
+        run: () => navigate("/settings") },
 
       { id: "file:open", label: "Open PDF…", group: "Tools", hint: "Ctrl+O", run: browseAndOpen },
       { id: "ui:theme", label: "Cycle theme (Light / Dark / System)", group: "Appearance", run: cycleTheme },
