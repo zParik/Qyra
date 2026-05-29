@@ -60,7 +60,9 @@ class MainActivity : TauriActivity() {
     }
     try {
       // Persist the grant so we can re-enumerate on next launch without re-prompting.
-      val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+      val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+        Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+        Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
       contentResolver.takePersistableUriPermission(treeUri, flags)
 
       val children = enumeratePdfChildren(treeUri)
