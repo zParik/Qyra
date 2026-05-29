@@ -1,9 +1,10 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { LoadedFile } from "../../store/useAppStore";
 import { ProgressBar, Spinner } from "../../components/ProgressBar";
 import { compressPdf, compressPdfGs, compressPdfGsParallel, type GsPreset } from "../../lib/tauri";
 import { isAndroid } from "../../lib/androidFileUtils";
+import { loadSetting, Settings } from "../../lib/settings";
 import { sanitizeError, type ProgressData } from "../usePanelCommand";
 import { StatusBox } from "../components/StatusBox";
 
@@ -65,6 +66,22 @@ export function CompressPanel({ file, onApplied }: CompressPanelProps) {
   const [error, setError] = useState<string | null>(null);
   const [sizes, setSizes] = useState<{ original: number; compressed: number } | null>(null);
   const unlistenRef = useRef<(() => void) | null>(null);
+
+  // Seed from saved defaults (Settings → Files). Runs once on mount.
+  useEffect(() => {
+    let alive = true;
+    Promise.all([
+      loadSetting(Settings.defaultCompressEngine),
+      loadSetting(Settings.defaultCompressLevel),
+      loadSetting(Settings.defaultCompressPreset),
+    ]).then(([e, l, p]) => {
+      if (!alive) return;
+      if (!GS_UNAVAILABLE && e === "gs") setEngine("gs");
+      setLevel(l);
+      setPreset(p);
+    });
+    return () => { alive = false; };
+  }, []);
 
   async function handleCompress() {
     setError(null);
