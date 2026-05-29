@@ -359,6 +359,7 @@ pub fn run() {
             files::write_bytes,
             files::get_content_uri_display_name,
             files::share_file,
+            files::save_to_saf_tree,
             annotate::bake_annotations,
             comments::load_comments,
             comments::save_comments,

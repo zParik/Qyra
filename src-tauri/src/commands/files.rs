@@ -333,3 +333,98 @@ pub fn write_bytes(path: String, data: Vec<u8>) -> AppResult<()> {
     fs::write(&path, &data)?;
     Ok(())
 }
+
+/// Android: create a new document inside a persisted SAF tree and copy
+/// `src_path` into it. Returns the created document's content:// URI string.
+/// Desktop: error stub (the frontend only calls this on Android).
+#[tauri::command]
+pub fn save_to_saf_tree(
+    tree_uri: String,
+    src_path: String,
+    display_name: String,
+) -> AppResult<String> {
+    #[cfg(target_os = "android")]
+    {
+        return (|| -> Result<String, String> {
+            use jni::objects::{JObject, JString, JValue};
+
+            let ctx = crate::commands::android_pdf::safe_android_context()?;
+            let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.map_err(|e| e.to_string())?;
+            let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
+            let context = unsafe { JObject::from_raw(ctx.context().cast()) };
+
+            let resolver = env
+                .call_method(&context, "getContentResolver", "()Landroid/content/ContentResolver;", &[])
+                .map_err(|e| e.to_string())?.l().map_err(|e| e.to_string())?;
+
+            // tree = Uri.parse(tree_uri)
+            let j_tree_str = env.new_string(&tree_uri).map_err(|e| e.to_string())?;
+            let tree = env
+                .call_static_method("android/net/Uri", "parse",
+                    "(Ljava/lang/String;)Landroid/net/Uri;", &[JValue::Object(&j_tree_str)])
+                .map_err(|e| e.to_string())?.l().map_err(|e| e.to_string())?;
+
+            // treeDocId = DocumentsContract.getTreeDocumentId(tree)
+            let tree_doc_id = env
+                .call_static_method("android/provider/DocumentsContract", "getTreeDocumentId",
+                    "(Landroid/net/Uri;)Ljava/lang/String;", &[JValue::Object(&tree)])
+                .map_err(|e| e.to_string())?.l().map_err(|e| e.to_string())?;
+
+            // parent = DocumentsContract.buildDocumentUriUsingTree(tree, treeDocId)
+            let parent = env
+                .call_static_method("android/provider/DocumentsContract", "buildDocumentUriUsingTree",
+                    "(Landroid/net/Uri;Ljava/lang/String;)Landroid/net/Uri;",
+                    &[JValue::Object(&tree), JValue::Object(&tree_doc_id)])
+                .map_err(|e| e.to_string())?.l().map_err(|e| e.to_string())?;
+
+            // child = DocumentsContract.createDocument(resolver, parent, "application/pdf", display_name)
+            let j_mime = env.new_string("application/pdf").map_err(|e| e.to_string())?;
+            let j_name = env.new_string(&display_name).map_err(|e| e.to_string())?;
+            let child = env
+                .call_static_method("android/provider/DocumentsContract", "createDocument",
+                    "(Landroid/content/ContentResolver;Landroid/net/Uri;Ljava/lang/String;Ljava/lang/String;)Landroid/net/Uri;",
+                    &[JValue::Object(&resolver), JValue::Object(&parent),
+                      JValue::Object(&j_mime), JValue::Object(&j_name)])
+                .map_err(|e| e.to_string())?.l().map_err(|e| e.to_string())?;
+            if child.is_null() {
+                return Err("createDocument returned null (folder removed or read-only)".into());
+            }
+
+            // os = resolver.openOutputStream(child)
+            let os = env
+                .call_method(&resolver, "openOutputStream",
+                    "(Landroid/net/Uri;)Ljava/io/OutputStream;", &[JValue::Object(&child)])
+                .map_err(|e| e.to_string())?.l().map_err(|e| e.to_string())?;
+            if os.is_null() {
+                return Err("openOutputStream returned null".into());
+            }
+
+            // Files.copy(Path.of(src_path), os)
+            let j_src_str = env.new_string(&src_path).map_err(|e| e.to_string())?;
+            let j_file = env
+                .new_object("java/io/File", "(Ljava/lang/String;)V", &[JValue::Object(&j_src_str)])
+                .map_err(|e| e.to_string())?;
+            let j_path = env
+                .call_method(&j_file, "toPath", "()Ljava/nio/file/Path;", &[])
+                .map_err(|e| e.to_string())?.l().map_err(|e| e.to_string())?;
+            env.call_static_method("java/nio/file/Files", "copy",
+                "(Ljava/nio/file/Path;Ljava/io/OutputStream;)J",
+                &[JValue::Object(&j_path), JValue::Object(&os)])
+                .map_err(|e| e.to_string())?;
+            env.call_method(&os, "close", "()V", &[]).map_err(|e| e.to_string())?;
+
+            // return child.toString()
+            let s = env
+                .call_method(&child, "toString", "()Ljava/lang/String;", &[])
+                .map_err(|e| e.to_string())?.l().map_err(|e| e.to_string())?;
+            let out: String = env.get_string(&JString::from(s)).map_err(|e| e.to_string())?.into();
+            Ok(out)
+        })().map_err(AppError::Other);
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (tree_uri, src_path, display_name);
+        Err(AppError::Other("save_to_saf_tree is Android-only".into()))
+    }
+}
