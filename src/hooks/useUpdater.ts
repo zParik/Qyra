@@ -69,5 +69,5 @@ export function useUpdater() {
     setState({ status: "idle" });
   }
 
-  return { state, installUpdate, restartApp, dismiss };
+  return { state, installUpdate, restartApp, dismiss, checkForUpdates };
 }
