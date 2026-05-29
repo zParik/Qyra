@@ -293,6 +293,12 @@ const FIXTURES = {
   "scanned.pdf": scanned,
 };
 
+// A 1x1 red PNG — input for the images_to_pdf command.
+const SAMPLE_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  "base64",
+);
+
 function main() {
   mkdirSync(OUT, { recursive: true });
   for (const [name, fn] of Object.entries(FIXTURES)) {
@@ -300,7 +306,9 @@ function main() {
     writeFileSync(join(OUT, name), buf);
     console.log(`  ${name.padEnd(16)} ${buf.length} bytes`);
   }
-  console.log(`Generated ${Object.keys(FIXTURES).length} fixtures into ${OUT}`);
+  writeFileSync(join(OUT, "sample.png"), SAMPLE_PNG);
+  console.log(`  ${"sample.png".padEnd(16)} ${SAMPLE_PNG.length} bytes`);
+  console.log(`Generated ${Object.keys(FIXTURES).length + 1} fixtures into ${OUT}`);
 }
 
 main();
