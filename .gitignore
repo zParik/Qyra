@@ -42,6 +42,12 @@ src-tauri/nul
 target/
 *.jks
 
+# Generated test fixtures (built by `npm run fixtures`) and test artifacts
+tests/fixtures/pdf/generated/
+coverage/
+playwright-report/
+test-results/
+
 # Vendored sidecar binaries — fetched by scripts/fetch-gs.{ps1,sh}
 src-tauri/binaries/gs-*
 src-tauri/binaries/gsdll64.dll

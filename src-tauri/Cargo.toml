@@ -12,6 +12,15 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+# Integration tests (src-tauri/tests/) are a separate crate, so they need their
+# own copies of anything they touch. Versions MUST match the [dependencies]
+# entries so types shared across the boundary (e.g. lopdf::Document) line up.
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+tempfile = "3"
+lopdf = "0.40"
+mupdf = "0.6"
+
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-process = "2"

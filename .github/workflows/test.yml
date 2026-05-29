@@ -1,0 +1,98 @@
+name: 'Tests'
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Layer 1: Rust command / PDF engine integration tests ──────────────────
+  rust:
+    name: Rust integration
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Generate PDF fixtures
+        run: node tests/fixtures/generate.mjs
+
+      # tauri-build verifies the bundled Ghostscript sidecar exists. The real
+      # binary is fetched only for release builds; the GS-dependent tests are
+      # #[ignore]-gated, so empty placeholders are enough to satisfy the build.
+      - name: Stub Ghostscript sidecar
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force src-tauri/binaries | Out-Null
+          foreach ($f in @('gs-x86_64-pc-windows-msvc.exe', 'gsdll64.dll')) {
+            $p = "src-tauri/binaries/$f"
+            if (-not (Test-Path $p)) { New-Item -ItemType File -Path $p | Out-Null }
+          }
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: cargo test
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  # ── Layer 2: Frontend component / integration (Vitest + RTL, jsdom) ───────
+  web:
+    name: Web unit
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Vitest
+        run: npm run test:unit
+
+  # ── Layer 3: Frontend E2E flows (Playwright, mocked IPC) ──────────────────
+  e2e:
+    name: Playwright E2E
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browser
+        run: npx playwright install chromium
+
+      - name: Playwright test
+        run: npm run test:e2e
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
