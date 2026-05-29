@@ -22,6 +22,7 @@ async fn add_annotation_then_read_it_back() {
             contents: Some("box".into()),
             quad_points: None,
             author: None,
+            stamp_name: None,
         },
         Some(out.clone()),
     )
