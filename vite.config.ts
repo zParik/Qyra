@@ -15,10 +15,14 @@ export default defineConfig(async () => ({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          "vendor-react": ["react", "react-dom", "react-router-dom"],
-          "vendor-dnd": ["@dnd-kit/core", "@dnd-kit/sortable", "@dnd-kit/utilities"],
-          "vendor-tesseract": ["tesseract.js"],
+        // Rolldown (Vite 8) only accepts manualChunks as a function, not the
+        // object form. Match against module id paths under node_modules.
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return;
+          if (/[\\/](react|react-dom|react-router|react-router-dom|scheduler)[\\/]/.test(id))
+            return "vendor-react";
+          if (id.includes("@dnd-kit")) return "vendor-dnd";
+          if (id.includes("tesseract.js")) return "vendor-tesseract";
         },
       },
     },
