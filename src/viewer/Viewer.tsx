@@ -10,6 +10,7 @@ import { ZoomFab } from "./ZoomFab";
 import { ToolSidebar, ViewerTool } from "./ToolSidebar";
 import { invoke } from "@tauri-apps/api/core";
 import { copyFile, showSaveDialog, bakeAnnotations, setActiveDocument } from "../lib/tauri";
+import { loadSetting, Settings } from "../lib/settings";
 import { triggerPrint } from "./tools/PrintPanel";
 import { DrawingCanvas } from "./DrawingCanvas";
 import { VirtualPageBackground } from "./VirtualPageBackground";
@@ -779,6 +780,11 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
           strokes: (byVirtualId.get(vp.id) ?? []).filter(s => s.tool !== 'eraser').map(toStroke),
         }));
         savePath = await bakeAnnotations(viewerFile.path, annotations, virtualPageData);
+      }
+      const needConfirm = await loadSetting(Settings.confirmBeforeOverwrite);
+      if (needConfirm && !confirm(`Overwrite "${viewerFile.name}" with your changes?`)) {
+        setSaveStatus("idle");
+        return;
       }
       await copyFile(savePath, originalViewerPath);
       evictPathFromThumbnailCache(originalViewerPath);
