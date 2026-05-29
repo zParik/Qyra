@@ -50,7 +50,7 @@ export const Settings = {
   defaultCompressPreset: oneOf<GsPreset>(
     "default_compress_preset", "ebook", ["screen", "ebook", "printer", "prepress"], (r) => r as GsPreset,
   ),
-  confirmBeforeOverwrite: bool("confirm_before_overwrite", false),
+  confirmBeforeOverwrite: bool("confirm_before_overwrite", true),
   defaultSaveFolder: str("default_save_folder", ""),
   reopenTabsOnLaunch: bool("reopen_tabs_on_launch", true),
 } as const;
