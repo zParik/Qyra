@@ -1,3 +1,5 @@
+#![allow(dead_code)] // path helpers kept as a utility API; not all are wired yet
+
 use std::path::Path;
 use tempfile::TempDir;
 

@@ -15,6 +15,7 @@ pub struct OcrWord {
     /// Normalized vertical position [0, 1] from top edge (image coords)
     pub y: f64,
     /// Normalized width [0, 1]
+    #[allow(dead_code)] // part of the deserialized JS contract
     pub w: f64,
     /// Normalized height [0, 1]
     pub h: f64,

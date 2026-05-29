@@ -20,6 +20,7 @@ pub struct PageAnnotationData {
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VirtualPageData {
+    #[allow(dead_code)] // part of the deserialized JS contract
     pub id: String,
     pub template: String,       // "blank" | "ruled" | "grid" | "dotted"
     pub after_real_page: u32,   // 0 = before all, N = after page N, 9999 = after all

@@ -2,6 +2,7 @@ use std::fs;
 use tauri_plugin_opener::OpenerExt;
 use crate::error::{AppError, AppResult};
 
+#[allow(dead_code)] // used only by the Android share_file path
 fn mime_from_path(path: &str) -> &'static str {
     match path.rsplit('.').next().map(|e| e.to_lowercase()).as_deref() {
         Some("pdf")  => "application/pdf",

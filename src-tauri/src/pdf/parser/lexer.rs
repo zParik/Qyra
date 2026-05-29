@@ -51,6 +51,7 @@ impl<'a> Lexer<'a> {
         self.pos = pos;
     }
 
+    #[allow(dead_code)]
     pub fn remaining(&self) -> &[u8] {
         &self.data[self.pos..]
     }
@@ -374,6 +375,7 @@ impl<'a> Lexer<'a> {
     // -----------------------------------------------------------------------
 
     /// Skip an exact byte sequence, returning an error if it doesn't match.
+    #[allow(dead_code)]
     pub fn expect_bytes(&mut self, expected: &[u8]) -> Result<(), PdfError> {
         if self.data.get(self.pos..self.pos + expected.len()) == Some(expected) {
             self.pos += expected.len();

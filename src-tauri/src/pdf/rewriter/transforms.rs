@@ -234,6 +234,7 @@ pub fn is_metadata_stream(dict: &PdfDict) -> bool {
 }
 
 /// Return `true` if `id` is the /Info dictionary referenced in the trailer.
+#[allow(dead_code)]
 pub fn is_info_dict(id: ObjectId, trailer: &PdfDict) -> bool {
     trailer
         .get(b"Info")

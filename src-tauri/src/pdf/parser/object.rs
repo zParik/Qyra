@@ -10,6 +10,7 @@ use crate::pdf::types::{ObjectId, PdfDict, PdfObject, PdfStream};
 /// Parse a single PDF object from `data` starting at `offset`.
 ///
 /// Returns `(object, bytes_consumed)`.
+#[allow(dead_code)]
 pub fn parse_object_at(data: &[u8], offset: usize) -> Result<(PdfObject, usize), PdfError> {
     let mut lex = Lexer::new(data);
     lex.seek(offset);

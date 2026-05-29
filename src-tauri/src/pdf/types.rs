@@ -62,6 +62,7 @@ impl PdfObject {
     }
 
     /// Return a mutable reference to the dictionary.
+    #[allow(dead_code)]
     pub fn as_dict_mut(&mut self) -> Option<&mut PdfDict> {
         match self {
             PdfObject::Dictionary(d) => Some(d),
@@ -79,6 +80,7 @@ impl PdfObject {
     }
 
     /// Return the string bytes regardless of literal vs hex variant.
+    #[allow(dead_code)]
     pub fn as_string_bytes(&self) -> Option<&[u8]> {
         match self {
             PdfObject::StringLiteral(b) | PdfObject::HexString(b) => Some(b),
@@ -109,6 +111,7 @@ impl PdfDict {
         self.0.iter().find(|(k, _)| k == key).map(|(_, v)| v)
     }
 
+    #[allow(dead_code)]
     pub fn get_mut(&mut self, key: &[u8]) -> Option<&mut PdfObject> {
         self.0.iter_mut().find(|(k, _)| k == key).map(|(_, v)| v)
     }
@@ -134,6 +137,7 @@ impl PdfDict {
         self.0.iter().map(|(k, v)| (k, v))
     }
 
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.0.len()
     }

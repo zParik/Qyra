@@ -3,6 +3,7 @@ use crate::pdf::types::ObjectId;
 #[derive(Debug)]
 pub enum PdfError {
     Io(std::io::Error),
+    #[allow(dead_code)]
     InvalidHeader,
     XrefNotFound,
     MalformedXref(String),
