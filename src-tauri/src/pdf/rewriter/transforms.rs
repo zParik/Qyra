@@ -312,7 +312,7 @@ mod tests {
         // Use highly compressible data to guarantee shrinkage
         let data = vec![0u8; 1000];
         let stream = make_uncompressed_stream(&data);
-        let result = recompress_stream(stream).unwrap();
+        let result = recompress_stream(stream, 6).unwrap();
         // Should be FlateDecode now and smaller
         assert_eq!(result.filter_name(), Some(b"FlateDecode".as_ref()));
         assert!(result.raw_bytes.len() < 1000);
@@ -327,7 +327,7 @@ mod tests {
             dict,
             raw_bytes: b"abcde".to_vec(),
         };
-        let result = recompress_stream(stream.clone()).unwrap();
+        let result = recompress_stream(stream.clone(), 6).unwrap();
         // DCT streams must not be touched
         assert_eq!(result.filter_name(), Some(b"DCTDecode".as_ref()));
         assert_eq!(result.raw_bytes, b"abcde");
