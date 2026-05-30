@@ -79,13 +79,25 @@ pub async fn add_bates_numbers(
     output: Option<String>,
     app_handle: tauri::AppHandle,
 ) -> AppResult<BatesResult> {
-    let opts = options.unwrap_or_default();
-    let path_for_blocking = path.clone();
-    let output_for_blocking = output.clone();
-    let opts_clone = opts.clone();
-
     tokio::task::spawn_blocking(move || -> AppResult<BatesResult> {
-        let mut doc = Document::load(&path_for_blocking)?;
+        bates_core(path, options, output, |p| {
+            let _ = app_handle.emit("operation-progress", p);
+        })
+    })
+    .await
+    .map_err(|e| crate::error::AppError::Other(e.to_string()))?
+}
+
+/// Pure Bates-numbering core (no Tauri runtime). `progress` receives each step
+/// so the command wrapper can forward it; tests pass a no-op.
+pub fn bates_core(
+    path: String,
+    options: Option<BatesOptions>,
+    output: Option<String>,
+    progress: impl Fn(Progress),
+) -> AppResult<BatesResult> {
+        let opts = options.unwrap_or_default();
+        let mut doc = Document::load(&path)?;
 
         let font_id = doc.add_object(dictionary! {
             "Type" => "Font",
@@ -96,20 +108,17 @@ pub async fn add_bates_numbers(
 
         let page_ids: Vec<(u32, (u32, u16))> = doc.get_pages().into_iter().collect();
         let total_pages = page_ids.len();
-        let increment = opts_clone.increment.max(1);
-        let start_at = opts_clone.start_at;
+        let increment = opts.increment.max(1);
+        let start_at = opts.start_at;
 
         let mut first_label = String::new();
         let mut last_label = String::new();
 
         for (i, (_page_num, page_id)) in page_ids.iter().enumerate() {
-            let _ = app_handle.emit(
-                "operation-progress",
-                Progress::new(i + 1, total_pages, format!("Page {} of {}", i + 1, total_pages)),
-            );
+            progress(Progress::new(i + 1, total_pages, format!("Page {} of {}", i + 1, total_pages)));
 
             let seq = start_at + (i as u64) * increment;
-            let label = build_label(&opts_clone, seq);
+            let label = build_label(&opts, seq);
             if i == 0 { first_label = label.clone(); }
             if i + 1 == total_pages { last_label = label.clone(); }
 
@@ -157,21 +166,21 @@ pub async fn add_bates_numbers(
                 maybe_font_dict.as_ref().map(pick_font_name).unwrap_or_else(|| b"BN".to_vec())
             };
 
-            let text_w = label.len() as f32 * opts_clone.font_size * 0.6;
-            let (x, y) = match opts_clone.position.as_str() {
-                "bottom-left"   => (opts_clone.margin,                            opts_clone.margin),
-                "bottom-center" => (page_width / 2.0 - text_w / 2.0,              opts_clone.margin),
-                "bottom-right"  => (page_width - opts_clone.margin - text_w,      opts_clone.margin),
-                "top-left"      => (opts_clone.margin,                            page_height - opts_clone.margin),
-                "top-center"    => (page_width / 2.0 - text_w / 2.0,              page_height - opts_clone.margin),
-                "top-right"     => (page_width - opts_clone.margin - text_w,      page_height - opts_clone.margin),
-                _               => (page_width - opts_clone.margin - text_w,      opts_clone.margin),
+            let text_w = label.len() as f32 * opts.font_size * 0.6;
+            let (x, y) = match opts.position.as_str() {
+                "bottom-left"   => (opts.margin,                            opts.margin),
+                "bottom-center" => (page_width / 2.0 - text_w / 2.0,              opts.margin),
+                "bottom-right"  => (page_width - opts.margin - text_w,      opts.margin),
+                "top-left"      => (opts.margin,                            page_height - opts.margin),
+                "top-center"    => (page_width / 2.0 - text_w / 2.0,              page_height - opts.margin),
+                "top-right"     => (page_width - opts.margin - text_w,      page_height - opts.margin),
+                _               => (page_width - opts.margin - text_w,      opts.margin),
             };
 
             let ops = vec![
                 Operation::new("q", vec![]),
                 Operation::new("BT", vec![]),
-                Operation::new("Tf", vec![Object::Name(font_name.clone()), Object::Real(opts_clone.font_size)]),
+                Operation::new("Tf", vec![Object::Name(font_name.clone()), Object::Real(opts.font_size)]),
                 Operation::new("Td", vec![Object::Real(x), Object::Real(y)]),
                 Operation::new("Tj", vec![Object::string_literal(label.clone())]),
                 Operation::new("ET", vec![]),
@@ -241,8 +250,7 @@ pub async fn add_bates_numbers(
             }
         }
 
-        let out = output_for_blocking
-            .unwrap_or_else(|| temp_output_path(&path_for_blocking, "bates"));
+        let out = output.unwrap_or_else(|| temp_output_path(&path, "bates"));
         doc.save(&out)?;
 
         Ok(BatesResult {
@@ -251,9 +259,6 @@ pub async fn add_bates_numbers(
             last_label,
             page_count: total_pages,
         })
-    })
-    .await
-    .map_err(|e| crate::error::AppError::Other(e.to_string()))?
 }
 
 /// Remove BatesOverlay streams added by `add_bates_numbers`.
