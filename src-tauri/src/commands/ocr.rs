@@ -36,6 +36,22 @@ pub async fn make_searchable(
     app_handle: tauri::AppHandle,
 ) -> AppResult<String> {
     tokio::task::spawn_blocking(move || -> AppResult<String> {
+        make_searchable_core(path, pages, output, |p| {
+            let _ = app_handle.emit("operation-progress", p);
+        })
+    })
+    .await
+    .map_err(|e| AppError::Other(e.to_string()))?
+}
+
+/// Pure OCR text-layer core (no Tauri runtime). `progress` receives each step
+/// so the command wrapper can forward it as an event; tests pass a no-op.
+pub fn make_searchable_core(
+    path: String,
+    pages: Vec<OcrPage>,
+    output: Option<String>,
+    progress: impl Fn(Progress),
+) -> AppResult<String> {
         let out = output.unwrap_or_else(|| temp_output_path(&path, "searchable"));
 
         let mut doc = Document::load(&path)?;
@@ -54,10 +70,7 @@ pub async fn make_searchable(
         let mut patches: Vec<PagePatch> = Vec::new();
 
         for (idx, &page_id) in page_ids.iter().enumerate() {
-            let _ = app_handle.emit(
-                "operation-progress",
-                Progress::new(idx, total + 1, format!("OCR page {} / {}", idx + 1, total)),
-            );
+            progress(Progress::new(idx, total + 1, format!("OCR page {} / {}", idx + 1, total)));
 
             let ocr_page = match pages.get(idx) {
                 Some(p) => p,
@@ -87,10 +100,7 @@ pub async fn make_searchable(
         }
 
         // Phase 2: patch page dictionaries
-        let _ = app_handle.emit(
-            "operation-progress",
-            Progress::new(total, total + 1, "Saving PDF"),
-        );
+        progress(Progress::new(total, total + 1, "Saving PDF"));
 
         for patch in patches {
             patch_page(&mut doc, patch.page_id, patch.font_id, patch.content_id)
@@ -99,9 +109,6 @@ pub async fn make_searchable(
 
         doc.save(&out)?;
         Ok(out)
-    })
-    .await
-    .map_err(|e| AppError::Other(e.to_string()))?
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
