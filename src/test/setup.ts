@@ -2,6 +2,21 @@ import "@testing-library/jest-dom/vitest";
 import { afterEach, vi } from "vitest";
 import { cleanup } from "@testing-library/react";
 
+// jsdom doesn't implement matchMedia; components use it via useMediaQuery.
+if (!window.matchMedia) {
+  window.matchMedia = (query: string) =>
+    ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }) as unknown as MediaQueryList;
+}
+
 // Shared command registry + call log, created hoisted so the vi.mock factories
 // below (also hoisted) can close over them. Tests drive these via src/test/mockTauri.ts.
 const handlers = vi.hoisted(() => new Map<string, (args: Record<string, unknown>) => unknown>());
