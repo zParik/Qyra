@@ -27,43 +27,49 @@ pub async fn compress_pdf(
     app_handle: tauri::AppHandle,
 ) -> AppResult<CompressResult> {
     tokio::task::spawn_blocking(move || -> AppResult<CompressResult> {
-        let input_bytes = fs::read(&path)?;
-        let original_bytes = input_bytes.len() as u64;
-
-        let rewriter = Rewriter::new(level.unwrap_or(0));
-
-        let output_bytes = rewriter
-            .run(input_bytes, |current, total, msg| {
-                let _ = app_handle.emit(
-                    "operation-progress",
-                    Progress::new(current, total, msg),
-                );
-            })
-            .map_err(|e| match e {
-                PdfError::EncryptedDocument => {
-                    AppError::Invalid("Cannot compress encrypted PDF. Please unlock it first.".to_string())
-                }
-                other => AppError::Pdf(other.to_string()),
-            })?;
-
-        let out = output.unwrap_or_else(|| temp_output_path(&path, "compressed"));
-
-        let compressed_bytes = if output_bytes.len() as u64 >= original_bytes {
-            // Output is larger — copy the original unchanged
-            fs::copy(&path, &out)?;
-            original_bytes
-        } else {
-            let len = output_bytes.len() as u64;
-            fs::write(&out, &output_bytes)?;
-            len
-        };
-
-        Ok(CompressResult {
-            path: out,
-            original_bytes,
-            compressed_bytes,
+        compress_core(path, output, level, |p| {
+            let _ = app_handle.emit("operation-progress", p);
         })
     })
     .await
     .map_err(|e| AppError::Other(e.to_string()))?
+}
+
+/// Pure compression core (no Tauri runtime). `progress` receives each step so
+/// the command wrapper can forward it as an event; tests pass a no-op.
+pub fn compress_core(
+    path: String,
+    output: Option<String>,
+    level: Option<u8>,
+    progress: impl Fn(Progress),
+) -> AppResult<CompressResult> {
+    let input_bytes = fs::read(&path)?;
+    let original_bytes = input_bytes.len() as u64;
+
+    let rewriter = Rewriter::new(level.unwrap_or(0));
+
+    let output_bytes = rewriter
+        .run(input_bytes, |current, total, msg| {
+            progress(Progress::new(current, total, msg));
+        })
+        .map_err(|e| match e {
+            PdfError::EncryptedDocument => {
+                AppError::Invalid("Cannot compress encrypted PDF. Please unlock it first.".to_string())
+            }
+            other => AppError::Pdf(other.to_string()),
+        })?;
+
+    let out = output.unwrap_or_else(|| temp_output_path(&path, "compressed"));
+
+    let compressed_bytes = if output_bytes.len() as u64 >= original_bytes {
+        // Output is larger — copy the original unchanged
+        fs::copy(&path, &out)?;
+        original_bytes
+    } else {
+        let len = output_bytes.len() as u64;
+        fs::write(&out, &output_bytes)?;
+        len
+    };
+
+    Ok(CompressResult { path: out, original_bytes, compressed_bytes })
 }
