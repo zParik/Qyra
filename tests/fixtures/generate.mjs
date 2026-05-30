@@ -335,6 +335,16 @@ function repeatedObjects() {
   return buildPdf(o, `/Root 1 0 R`);
 }
 
+// ── orphaned.pdf — a bulky object referenced by nobody (GC should drop it) ──
+function orphaned() {
+  const o = new Map();
+  o.set(1, enc(`<< /Type /Catalog /Pages 2 0 R >>`));
+  o.set(2, enc(`<< /Type /Pages /Kids [3 0 R] /Count 1 >>`));
+  o.set(3, enc(`<< /Type /Page /Parent 2 0 R /MediaBox ${LETTER} >>`));
+  o.set(4, enc(`<< /Junk (${"x".repeat(3000)}) >>`)); // unreferenced bulk
+  return buildPdf(o, `/Root 1 0 R`);
+}
+
 const FIXTURES = {
   "simple.pdf": simple,
   "text.pdf": text,
@@ -346,6 +356,7 @@ const FIXTURES = {
   "scanned.pdf": scanned,
   "many-objects.pdf": manyObjects,
   "repeated-objects.pdf": repeatedObjects,
+  "orphaned.pdf": orphaned,
 };
 
 // A valid 1x1 red PNG, built with correct chunk CRCs — input for images_to_pdf.
