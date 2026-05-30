@@ -283,6 +283,33 @@ function scanned() {
   return buildPdf(o, `/Root 1 0 R`);
 }
 
+// ── many-objects.pdf — one page with 60 link annotations (object-heavy) ─────
+// Exercises object-stream packing: lots of tiny indirect dicts where classic
+// xref overhead dominates.
+function manyObjects() {
+  const o = new Map();
+  o.set(1, enc(`<< /Type /Catalog /Pages 2 0 R >>`));
+  const annotRefs = [];
+  let id = 10;
+  for (let i = 0; i < 60; i++) {
+    const aid = id++;
+    annotRefs.push(`${aid} 0 R`);
+    o.set(
+      aid,
+      enc(
+        `<< /Type /Annot /Subtype /Link /Rect [10 ${10 + i} 50 ${30 + i}] ` +
+          `/Border [0 0 0] /A << /S /URI /URI (https://example.com/${i}) >> >>`,
+      ),
+    );
+  }
+  o.set(
+    3,
+    enc(`<< /Type /Page /Parent 2 0 R /MediaBox ${LETTER} /Annots [${annotRefs.join(" ")}] >>`),
+  );
+  o.set(2, enc(`<< /Type /Pages /Kids [3 0 R] /Count 1 >>`));
+  return buildPdf(o, `/Root 1 0 R`);
+}
+
 const FIXTURES = {
   "simple.pdf": simple,
   "text.pdf": text,
@@ -292,6 +319,7 @@ const FIXTURES = {
   "acroform.pdf": acroform,
   "annotated.pdf": annotated,
   "scanned.pdf": scanned,
+  "many-objects.pdf": manyObjects,
 };
 
 // A valid 1x1 red PNG, built with correct chunk CRCs — input for images_to_pdf.
