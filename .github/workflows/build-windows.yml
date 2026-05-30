@@ -42,6 +42,10 @@ jobs:
           jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
         shell: bash
 
+      - name: Fetch Ghostscript sidecar
+        shell: pwsh
+        run: ./scripts/fetch-gs.ps1
+
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0
         env:

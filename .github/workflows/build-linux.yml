@@ -58,6 +58,9 @@ jobs:
           npm version "$VERSION" --no-git-tag-version
           jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
 
+      - name: Fetch Ghostscript sidecar
+        run: bash scripts/fetch-gs.sh
+
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0
         env:
