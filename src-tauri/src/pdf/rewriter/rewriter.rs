@@ -42,6 +42,7 @@ impl Rewriter {
         // ---------------------------------------------------------------
         #[cfg(debug_assertions)]
         eprintln!("[compress] Pass 1: parsing xref + unpacking ObjStm streams…");
+        progress_cb(0, 1, "Reading PDF");
         let mut reader = PdfReader::new(input_bytes)?;
         let trailer = reader.trailer().clone();
         let expected_pages = reader.pages().map(|p| p.len()).unwrap_or(0);
@@ -117,6 +118,8 @@ impl Rewriter {
         let trailer_ref = &trailer;
         let data_ref: &[u8] = &data;
         let done_count = Arc::new(AtomicUsize::new(0));
+        // Show the bar at 0 immediately so a slow first object doesn't look stuck.
+        progress_cb(0, work_total, "Compressing");
 
         let transformed: Vec<(ObjectId, Result<PdfObject, PdfError>)> = work
             .into_par_iter()
@@ -158,8 +161,8 @@ impl Rewriter {
 
                 let result = transform_object(config, obj, trailer_ref);
                 let done = done_count.fetch_add(1, Ordering::Relaxed) + 1;
-                // Throttle: emit every 50 objects to avoid flooding the event bus
-                if done % 50 == 0 || done == work_total {
+                // Throttle: emit on the first + every 50 to avoid flooding the bus.
+                if done == 1 || done % 50 == 0 || done == work_total {
                     progress_cb(done, work_total, "Compressing");
                 }
                 (id, result)
@@ -184,6 +187,7 @@ impl Rewriter {
         progress_cb(work_total, work_total, "Writing objects");
 
         // Collapse byte-identical objects (repeated images/fonts/resources).
+        progress_cb(0, 1, "Deduplicating objects");
         let (live, remap) = crate::pdf::rewriter::dedup::dedup(live);
 
         let mut out_trailer = trailer;
@@ -201,9 +205,11 @@ impl Rewriter {
         }
 
         // Drop objects unreachable from the trailer (orphaned fonts/images/etc.).
+        progress_cb(0, 1, "Removing unused objects");
         let live = crate::pdf::rewriter::gc::gc(live, &out_trailer);
 
         // Preferred path: object streams + xref stream.
+        progress_cb(0, 1, "Writing compressed PDF");
         let objstm_bytes = {
             let mut w = PdfWriter::new();
             w.write_header();
