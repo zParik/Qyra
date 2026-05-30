@@ -48,6 +48,19 @@ pub async fn add_page_numbers(
     output: Option<String>,
     app_handle: tauri::AppHandle,
 ) -> AppResult<String> {
+    add_page_numbers_core(path, options, output, |p| {
+        let _ = app_handle.emit("operation-progress", p);
+    })
+}
+
+/// Pure page-numbering core (no Tauri runtime). `progress` receives each step
+/// so the command wrapper can forward it; tests pass a no-op.
+pub fn add_page_numbers_core(
+    path: String,
+    options: Option<PageNumberOptions>,
+    output: Option<String>,
+    progress: impl Fn(Progress),
+) -> AppResult<String> {
     let opts = options.unwrap_or(PageNumberOptions {
         start_at: Some(1),
         position: Some("bottom-center".into()),
@@ -73,10 +86,7 @@ pub async fn add_page_numbers(
     let total_pages = page_ids.len();
 
     for (i, (_page_num, page_id)) in page_ids.iter().enumerate() {
-        let _ = app_handle.emit(
-            "operation-progress",
-            Progress::new(i + 1, total_pages, format!("Page {} of {}", i + 1, total_pages)),
-        );
+        progress(Progress::new(i + 1, total_pages, format!("Page {} of {}", i + 1, total_pages)));
         let display_num = start_at as usize + i;
         let label = format!("{}", display_num);
 
