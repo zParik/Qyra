@@ -197,6 +197,24 @@ export function CompressPanel({ file, onApplied }: CompressPanelProps) {
         </div>
       )}
 
+      {/* Native large-file notice */}
+      {engine === "rust" && file.info &&
+        (file.info.file_size > 10 * 1024 * 1024 || file.info.page_count > 50) && (
+        <div
+          className="rounded-md p-2.5 text-xs"
+          style={{
+            background: "rgba(96, 165, 250, 0.10)",
+            border: "1px solid rgba(96, 165, 250, 0.30)",
+            color: "var(--viewer-text)",
+          }}
+        >
+          <p style={{ opacity: 0.85 }}>
+            Large file — Native compression uses all CPU cores but may still take
+            a while. The panel shows live progress for each stage.
+          </p>
+        </div>
+      )}
+
       {/* Level / preset selector */}
       {engine === "rust" ? (
         <div>
