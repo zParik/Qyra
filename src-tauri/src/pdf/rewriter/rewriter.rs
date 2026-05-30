@@ -183,6 +183,9 @@ impl Rewriter {
             .collect::<Result<Vec<_>, PdfError>>()?;
         progress_cb(work_total, work_total, "Writing objects");
 
+        // Collapse byte-identical objects (repeated images/fonts/resources).
+        let (live, remap) = crate::pdf::rewriter::dedup::dedup(live);
+
         let mut out_trailer = trailer;
         out_trailer.remove(b"Encrypt");
         out_trailer.remove(b"XRefStm");
@@ -190,6 +193,11 @@ impl Rewriter {
         if self.config.strip_metadata {
             out_trailer.remove(b"Info");
             out_trailer.remove(b"Metadata");
+        }
+        if !remap.is_empty() {
+            for (_, v) in out_trailer.0.iter_mut() {
+                crate::pdf::rewriter::dedup::remap_refs(v, &remap);
+            }
         }
 
         // Preferred path: object streams + xref stream.
