@@ -11,6 +11,9 @@ pub struct CompressConfig {
     pub strip_metadata: bool,
     /// Recompress all FlateDecode streams at zlib best.
     pub recompress_streams: bool,
+    /// zlib compression level for stream re-encoding (6 = fast/near-best,
+    /// 9 = max but markedly slower on object-heavy PDFs).
+    pub zlib_level: u32,
 }
 
 impl CompressConfig {
@@ -23,6 +26,7 @@ impl CompressConfig {
                 max_image_dimension: None,
                 strip_metadata: false,
                 recompress_streams: true,
+                zlib_level: 6,
             },
             1 => Self {
                 jpeg_quality: 72,
@@ -30,6 +34,7 @@ impl CompressConfig {
                 max_image_dimension: Some(2048),
                 strip_metadata: true,
                 recompress_streams: true,
+                zlib_level: 6,
             },
             _ => Self {
                 jpeg_quality: 50,
@@ -37,6 +42,7 @@ impl CompressConfig {
                 max_image_dimension: Some(1440),
                 strip_metadata: true,
                 recompress_streams: true,
+                zlib_level: 9,
             },
         }
     }

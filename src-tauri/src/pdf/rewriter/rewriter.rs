@@ -279,7 +279,7 @@ fn transform_object(
             }
 
             if config.recompress_streams {
-                let recompressed = recompress_stream(stream)?;
+                let recompressed = recompress_stream(stream, config.zlib_level)?;
                 return Ok(PdfObject::Stream(recompressed));
             }
 

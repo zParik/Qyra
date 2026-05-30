@@ -15,8 +15,23 @@ use crate::pdf::types::{ObjectId, PdfDict, PdfObject, PdfStream};
 ///
 /// If the result is not smaller than the original `raw_bytes`, the original
 /// stream is returned unchanged.
-pub fn recompress_stream(stream: PdfStream) -> Result<PdfStream, PdfError> {
+pub fn recompress_stream(stream: PdfStream, zlib_level: u32) -> Result<PdfStream, PdfError> {
     let filter = stream.dict.get(b"Filter").cloned();
+
+    // Skip the decode+re-encode for tiny streams already in Flate — the cost
+    // outweighs the negligible gain (matters a lot on object-heavy PDFs).
+    let already_flate = match &filter {
+        Some(PdfObject::Name(n)) => n == b"FlateDecode" || n == b"Fl",
+        Some(PdfObject::Array(a)) => a
+            .first()
+            .and_then(|o| o.as_name())
+            .map(|n| n == b"FlateDecode" || n == b"Fl")
+            .unwrap_or(false),
+        _ => false,
+    };
+    if already_flate && stream.raw_bytes.len() < 1024 {
+        return Ok(stream);
+    }
 
     let raw_decoded = match &filter {
         None => stream.raw_bytes.clone(),
@@ -37,7 +52,7 @@ pub fn recompress_stream(stream: PdfStream) -> Result<PdfStream, PdfError> {
         _ => return Ok(stream), // DCT, JBIG2, LZW, etc — leave alone
     };
 
-    let compressed = zlib_compress_best(&raw_decoded)?;
+    let compressed = zlib_compress(&raw_decoded, zlib_level)?;
     if compressed.len() >= stream.raw_bytes.len() {
         return Ok(stream); // no benefit
     }
@@ -247,8 +262,8 @@ pub fn is_info_dict(id: ObjectId, trailer: &PdfDict) -> bool {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-fn zlib_compress_best(data: &[u8]) -> Result<Vec<u8>, PdfError> {
-    let mut enc = ZlibEncoder::new(Vec::new(), Compression::best());
+fn zlib_compress(data: &[u8], level: u32) -> Result<Vec<u8>, PdfError> {
+    let mut enc = ZlibEncoder::new(Vec::new(), Compression::new(level));
     enc.write_all(data)
         .map_err(|e| PdfError::WriteError(format!("zlib write: {}", e)))?;
     enc.finish()
