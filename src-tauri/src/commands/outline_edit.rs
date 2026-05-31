@@ -84,46 +84,32 @@ pub async fn set_outline(
             })
             .collect();
 
-        // Track the last seen index per depth so we can wire prev/next.
-        let mut stack: Vec<Vec<usize>> = vec![Vec::new()]; // children at depth 0 = root's
-        for (idx, (depth, _)) in flat.iter().enumerate() {
-            while stack.len() <= *depth { stack.push(Vec::new()); }
-            // Truncate any deeper levels — entering a shallower depth closes them.
-            stack.truncate(depth + 1);
-            stack.push(Vec::new());
-            stack[*depth].push(idx);
-        }
-
-        // Reset and walk again, this time recording parent + sibling chain.
-        let mut depth_parent_idx: Vec<Option<usize>> = vec![None];
-        for (idx, (depth, _)) in flat.iter().enumerate() {
-            while depth_parent_idx.len() <= *depth { depth_parent_idx.push(None); }
-            depth_parent_idx.truncate(depth + 1);
-
-            let parent_id = if *depth == 0 {
-                root_id
-            } else {
-                let pidx = depth_parent_idx[*depth - 1]
-                    .expect("nested item should have a parent at the previous depth");
-                item_ids[pidx]
-            };
-            metas[idx].parent = parent_id;
-
-            depth_parent_idx.push(Some(idx));
-        }
-
-        // Sibling chains: group children by parent index (None = root).
-        use std::collections::HashMap;
-        let mut groups: HashMap<Option<usize>, Vec<usize>> = HashMap::new();
-        // Recompute parent index per item to feed the group map.
+        // Compute each item's parent index (None = root) with a depth→last-index
+        // map: `depth_to_idx[d]` holds the most recent item index seen at depth d,
+        // so a node's parent is the last item one level shallower. The slot is
+        // assigned (not pushed) so `depth_to_idx[d]` always lines up with depth d.
         let mut parent_of: Vec<Option<usize>> = vec![None; flat.len()];
         let mut depth_to_idx: Vec<Option<usize>> = Vec::new();
         for (idx, (depth, _)) in flat.iter().enumerate() {
             while depth_to_idx.len() <= *depth { depth_to_idx.push(None); }
+            // Entering a shallower depth closes deeper levels.
             depth_to_idx.truncate(depth + 1);
             parent_of[idx] = if *depth == 0 { None } else { depth_to_idx[*depth - 1] };
-            depth_to_idx.push(Some(idx));
+            depth_to_idx[*depth] = Some(idx);
         }
+
+        // Resolve parent ObjectIds (root for top-level items).
+        for (idx, parent) in parent_of.iter().enumerate() {
+            metas[idx].parent = match parent {
+                Some(pidx) => item_ids[*pidx],
+                None => root_id,
+            };
+        }
+
+        // Sibling chains: group children by parent index (None = root). DFS order
+        // of `flat` keeps each group's siblings in document order.
+        use std::collections::HashMap;
+        let mut groups: HashMap<Option<usize>, Vec<usize>> = HashMap::new();
         for (idx, parent) in parent_of.iter().enumerate() {
             groups.entry(*parent).or_default().push(idx);
         }
