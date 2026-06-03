@@ -1,5 +1,6 @@
 pub mod paths;
 pub mod progress;
+pub mod timing;
 
 /// Return the effective (width, height) of a PDF page in user-space units.
 ///

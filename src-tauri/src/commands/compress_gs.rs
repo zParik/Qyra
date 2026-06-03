@@ -225,6 +225,7 @@ pub async fn compress_pdf_gs(
     validate_preset(&preset)?;
 
     tokio::task::spawn_blocking(move || -> AppResult<GsCompressResult> {
+        let _t = crate::utils::timing::Timer::start("compress_pdf_gs", format!("/{preset}"));
         let gs = find_gs_binary().ok_or_else(|| {
             AppError::Other(
                 "Ghostscript binary not found. Run scripts/fetch-gs.ps1 (Windows) \
@@ -316,6 +317,7 @@ pub async fn compress_pdf_gs_parallel(
     let chunk_size = chunk_pages.unwrap_or(DEFAULT_CHUNK_PAGES).max(1);
 
     tokio::task::spawn_blocking(move || -> AppResult<GsCompressResult> {
+        let _t = crate::utils::timing::Timer::start("compress_pdf_gs_parallel", format!("/{preset}"));
         let gs = find_gs_binary().ok_or_else(|| {
             AppError::Other(
                 "Ghostscript binary not found. Run scripts/fetch-gs.ps1 (Windows) \

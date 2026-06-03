@@ -74,6 +74,7 @@ pub async fn render_page(
     let path_clone = path.clone();
 
     tokio::task::spawn_blocking(move || -> AppResult<String> {
+        let _t = crate::utils::timing::Timer::start("render_page", format!("p{page} s{scale}"));
         // Check 1: before opening document
         if state_clone.path.lock().map_err(|e| AppError::Lock(e.to_string()))?.as_deref() != Some(&path_clone) {
             return Err(AppError::Other("Cancelled".to_string()));
@@ -138,6 +139,7 @@ pub async fn render_page_uncached(
     scale: f32,
 ) -> AppResult<String> {
     tokio::task::spawn_blocking(move || -> AppResult<String> {
+        let _t = crate::utils::timing::Timer::start("render_page_uncached", format!("p{page} s{scale}"));
         let doc = mupdf::Document::open(&path)?;
         let p = doc.load_page(page as i32 - 1)?;
         let matrix = mupdf::Matrix::new_scale(scale, scale);
@@ -429,6 +431,7 @@ pub async fn get_text_page(
     let path_clone = path.clone();
 
     tokio::task::spawn_blocking(move || -> AppResult<Vec<TextLine>> {
+        let _t = crate::utils::timing::Timer::start("get_text_page", format!("p{page}"));
         // Check 1: before opening document
         if state_clone.path.lock().map_err(|e| AppError::Lock(e.to_string()))?.as_deref() != Some(&path_clone) {
             return Err(AppError::Other("Cancelled".to_string()));
@@ -640,6 +643,7 @@ pub async fn pdf_to_images(
     output_dir: Option<String>,
 ) -> AppResult<Vec<String>> {
     tokio::task::spawn_blocking(move || -> AppResult<Vec<String>> {
+        let _t = crate::utils::timing::Timer::start("pdf_to_images", String::new());
         let doc = mupdf::Document::open(&path)?;
         let page_count = doc.page_count()?;
         let fmt = format.unwrap_or_else(|| "png".to_string()).to_lowercase();

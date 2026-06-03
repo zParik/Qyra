@@ -57,6 +57,7 @@ pub fn compress_core(
     // Fresh run — clear any stale cancel signal.
     COMPRESS_CANCEL.store(false, Ordering::Relaxed);
 
+    let _t = crate::utils::timing::Timer::start("compress_pdf", format!("lvl{}", level.unwrap_or(0)));
     let input_bytes = fs::read(&path)?;
     let original_bytes = input_bytes.len() as u64;
 
