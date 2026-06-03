@@ -41,20 +41,22 @@ export interface GsCompressResult {
   compressed_bytes: number;
   preset: GsPreset;
 }
-export const compressPdfGs = (path: string, output?: string, preset?: GsPreset) =>
-  invoke<GsCompressResult>("compress_pdf_gs", { path, output, preset });
+export const compressPdfGs = (path: string, output?: string, preset?: GsPreset, turbo?: boolean) =>
+  invoke<GsCompressResult>("compress_pdf_gs", { path, output, preset, turbo });
 
 export const compressPdfGsParallel = (
   path: string,
   output?: string,
   preset?: GsPreset,
   chunkPages?: number,
+  turbo?: boolean,
 ) =>
   invoke<GsCompressResult>("compress_pdf_gs_parallel", {
     path,
     output,
     preset,
     chunkPages,
+    turbo,
   });
 
 export const rotatePages = (path: string, pages: number[], degrees: number, output?: string) =>

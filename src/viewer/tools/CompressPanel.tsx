@@ -61,6 +61,7 @@ export function CompressPanel({ file, onApplied }: CompressPanelProps) {
   const [level, setLevel] = useState<Level>(0);
   const [preset, setPreset] = useState<GsPreset>("ebook");
   const [fastMode, setFastMode] = useState(false);
+  const [turbo, setTurbo] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState<ProgressData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -98,8 +99,8 @@ export function CompressPanel({ file, onApplied }: CompressPanelProps) {
       const result =
         engine === "gs"
           ? fastMode
-            ? await compressPdfGsParallel(file.path, undefined, preset)
-            : await compressPdfGs(file.path, undefined, preset)
+            ? await compressPdfGsParallel(file.path, undefined, preset, undefined, turbo)
+            : await compressPdfGs(file.path, undefined, preset, turbo)
           : await compressPdf(file.path, undefined, level);
       setSizes({ original: result.original_bytes, compressed: result.compressed_bytes });
       onApplied(result.path);
@@ -305,6 +306,30 @@ export function CompressPanel({ file, onApplied }: CompressPanelProps) {
                 cross-page image deduplication</strong> — output may even be
                 slightly larger than single-pass on PDFs that share images
                 across pages.
+              </span>
+            </span>
+          </label>
+
+          {/* Turbo toggle — run Ghostscript at full speed (all cores, normal
+              priority) instead of the default UI-friendly throttle. */}
+          <label
+            className="flex items-start gap-2 mt-3 cursor-pointer"
+            style={{ color: "var(--viewer-text-sec)" }}
+          >
+            <input
+              type="checkbox"
+              checked={turbo}
+              onChange={(e) => setTurbo(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span className="text-xs">
+              <span className="font-semibold" style={{ color: "var(--viewer-text)" }}>
+                Turbo (maximum speed)
+              </span>
+              <span className="block" style={{ opacity: 0.75 }}>
+                Runs Ghostscript at normal priority across all CPU cores instead
+                of the default low-priority throttle. Noticeably faster, but the
+                app and the rest of your machine will feel busy while it runs.
               </span>
             </span>
           </label>

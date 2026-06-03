@@ -59,16 +59,24 @@ const VALID_PRESETS: &[&str] = &["screen", "ebook", "printer", "prepress"];
 /// on multicore systems.
 ///
 /// Unix: nice +19 (lowest, equivalent to `nice -n 19`).
+/// `turbo = false` (default): run GS de-prioritised so the UI/audio stay smooth
+/// while it works. `turbo = true`: run at normal priority on all cores — much
+/// faster wall-clock, but the box will feel busy. The console window is always
+/// suppressed on Windows regardless of mode.
 #[cfg(windows)]
-fn lower_priority(cmd: &mut Command) {
+fn configure_scheduling(cmd: &mut Command, turbo: bool) {
     use std::os::windows::process::CommandExt;
-    // IDLE_PRIORITY_CLASS = 0x00000040
-    // CREATE_NO_WINDOW    = 0x08000000  (suppress console flash)
-    cmd.creation_flags(0x00000040 | 0x08000000);
+    const IDLE_PRIORITY_CLASS: u32 = 0x00000040;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    let flags = if turbo { CREATE_NO_WINDOW } else { IDLE_PRIORITY_CLASS | CREATE_NO_WINDOW };
+    cmd.creation_flags(flags);
 }
 
 #[cfg(unix)]
-fn lower_priority(cmd: &mut Command) {
+fn configure_scheduling(cmd: &mut Command, turbo: bool) {
+    if turbo {
+        return; // normal priority
+    }
     use std::os::unix::process::CommandExt;
     unsafe {
         cmd.pre_exec(|| {
@@ -171,9 +179,11 @@ fn find_gs_binary() -> Option<PathBuf> {
     None
 }
 
-/// Run Ghostscript once on a single input → output pair. Spawns at idle
-/// priority and restricts CPU affinity to keep audio/UI threads responsive.
-fn run_gs_on(gs: &Path, input: &Path, output: &Path, preset: &str) -> AppResult<()> {
+/// Run Ghostscript once on a single input → output pair. In the default
+/// (non-turbo) mode it spawns at idle priority and restricts CPU affinity to
+/// keep audio/UI threads responsive; `turbo` runs at normal priority on all
+/// cores for maximum speed.
+fn run_gs_on(gs: &Path, input: &Path, output: &Path, preset: &str, turbo: bool) -> AppResult<()> {
     let mut cmd = Command::new(gs);
     cmd.arg("-sDEVICE=pdfwrite")
         .arg("-dCompatibilityLevel=1.7")
@@ -184,11 +194,13 @@ fn run_gs_on(gs: &Path, input: &Path, output: &Path, preset: &str) -> AppResult<
         .arg("-dSAFER")
         .arg(format!("-sOutputFile={}", output.display()))
         .arg(input);
-    lower_priority(&mut cmd);
+    configure_scheduling(&mut cmd, turbo);
     let mut child = cmd
         .spawn()
         .map_err(|e| AppError::Other(format!("failed to spawn ghostscript: {e}")))?;
-    restrict_cpu_affinity(child.id());
+    if !turbo {
+        restrict_cpu_affinity(child.id());
+    }
     let status = child
         .wait()
         .map_err(|e| AppError::Other(format!("ghostscript wait failed: {e}")))?;
@@ -219,13 +231,15 @@ pub async fn compress_pdf_gs(
     path: String,
     output: Option<String>,
     preset: Option<String>,
+    turbo: Option<bool>,
     app_handle: tauri::AppHandle,
 ) -> AppResult<GsCompressResult> {
     let preset = preset.unwrap_or_else(|| "ebook".to_string());
     validate_preset(&preset)?;
+    let turbo = turbo.unwrap_or(false);
 
     tokio::task::spawn_blocking(move || -> AppResult<GsCompressResult> {
-        let _t = crate::utils::timing::Timer::start("compress_pdf_gs", format!("/{preset}"));
+        let _t = crate::utils::timing::Timer::start("compress_pdf_gs", format!("/{preset}{}", if turbo { " turbo" } else { "" }));
         let gs = find_gs_binary().ok_or_else(|| {
             AppError::Other(
                 "Ghostscript binary not found. Run scripts/fetch-gs.ps1 (Windows) \
@@ -242,7 +256,7 @@ pub async fn compress_pdf_gs(
             Progress::new(0, 1, format!("Ghostscript /{preset} ...")),
         );
 
-        run_gs_on(&gs, Path::new(&path), Path::new(&out), &preset)?;
+        run_gs_on(&gs, Path::new(&path), Path::new(&out), &preset, turbo)?;
 
         let compressed_bytes = fs::metadata(&out)?.len();
         let compressed_bytes = if compressed_bytes >= original_bytes {
@@ -273,12 +287,18 @@ pub async fn compress_pdf_gs(
 // ──────────────────────────────────────────────────────────────────────────
 
 const DEFAULT_CHUNK_PAGES: u32 = 25;
-/// Cap parallelism so we don't spawn one GS per core and freeze the box.
-fn parallel_workers() -> usize {
+/// Worker count for the parallel path. Default caps at half the cores (min 2,
+/// max 8) so the box stays usable; `turbo` uses all-but-one core for maximum
+/// throughput at the cost of responsiveness.
+fn parallel_workers(turbo: bool) -> usize {
     let cores = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(2);
-    (cores / 2).max(2).min(8)
+    if turbo {
+        cores.saturating_sub(1).max(1)
+    } else {
+        (cores / 2).max(2).min(8)
+    }
 }
 
 /// Split `doc` into N temp PDFs, each containing `chunk_size` consecutive pages
@@ -310,14 +330,16 @@ pub async fn compress_pdf_gs_parallel(
     output: Option<String>,
     preset: Option<String>,
     chunk_pages: Option<u32>,
+    turbo: Option<bool>,
     app_handle: tauri::AppHandle,
 ) -> AppResult<GsCompressResult> {
     let preset = preset.unwrap_or_else(|| "ebook".to_string());
     validate_preset(&preset)?;
     let chunk_size = chunk_pages.unwrap_or(DEFAULT_CHUNK_PAGES).max(1);
+    let turbo = turbo.unwrap_or(false);
 
     tokio::task::spawn_blocking(move || -> AppResult<GsCompressResult> {
-        let _t = crate::utils::timing::Timer::start("compress_pdf_gs_parallel", format!("/{preset}"));
+        let _t = crate::utils::timing::Timer::start("compress_pdf_gs_parallel", format!("/{preset}{}", if turbo { " turbo" } else { "" }));
         let gs = find_gs_binary().ok_or_else(|| {
             AppError::Other(
                 "Ghostscript binary not found. Run scripts/fetch-gs.ps1 (Windows) \
@@ -338,7 +360,7 @@ pub async fn compress_pdf_gs_parallel(
                 "operation-progress",
                 Progress::new(0, 1, format!("Ghostscript /{preset} (small doc, single pass) ...")),
             );
-            run_gs_on(&gs, Path::new(&path), Path::new(&out), &preset)?;
+            run_gs_on(&gs, Path::new(&path), Path::new(&out), &preset, turbo)?;
         } else {
             let _ = app_handle.emit(
                 "operation-progress",
@@ -356,7 +378,7 @@ pub async fn compress_pdf_gs_parallel(
                     3,
                     format!(
                         "Compressing {num_chunks} chunks in parallel ({} workers) ...",
-                        parallel_workers()
+                        parallel_workers(turbo)
                     ),
                 ),
             );
@@ -364,7 +386,7 @@ pub async fn compress_pdf_gs_parallel(
             // Build a dedicated rayon pool with capped workers so we don't
             // outrun the global pool's defaults.
             let pool = rayon::ThreadPoolBuilder::new()
-                .num_threads(parallel_workers())
+                .num_threads(parallel_workers(turbo))
                 .build()
                 .map_err(|e| AppError::Other(format!("rayon pool: {e}")))?;
 
@@ -381,7 +403,7 @@ pub async fn compress_pdf_gs_parallel(
                             .unwrap_or("chunk.pdf")
                             .to_string();
                         out_path.set_file_name(format!("c-{fname}"));
-                        run_gs_on(&gs, chunk, &out_path, &preset)?;
+                        run_gs_on(&gs, chunk, &out_path, &preset, turbo)?;
 
                         if let Ok(mut g) = done.lock() {
                             *g += 1;
