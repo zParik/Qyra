@@ -61,3 +61,27 @@ libc = "0.2"
 [target.'cfg(all(unix, not(target_os = "android")))'.dependencies]
 libc = "0.2"
 
+# ── Build profiles ────────────────────────────────────────────────────────────
+# Release: maximize runtime speed of the Rust+C hot paths — MuPDF render, image
+# JPEG encode, the pdf parser/rewriter, lopdf split/merge. thin-LTO + a single
+# codegen unit trade compile time for ~10-25% faster binaries; strip shrinks it.
+# NOTE: panic = "abort" is deliberately NOT set — command handlers rely on
+# spawn_blocking catching task panics and returning them as AppError (JoinError).
+# panic=abort would turn a caught render panic into a whole-app crash.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+
+# Dev: keep OUR crate fast to compile and fully debuggable (opt-level 1 retains
+# line info), but compile every DEPENDENCY at opt-level 3 so the heavy stack
+# (MuPDF C via cc, image, flate2, lopdf, mupdf) runs release-grade under
+# `cargo tauri dev`. This is the single biggest fix for "everything is sluggish
+# in dev" — debug-mode MuPDF/image is 10-50x slower than optimized.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
