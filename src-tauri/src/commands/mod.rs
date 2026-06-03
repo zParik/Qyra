@@ -7,6 +7,8 @@ pub mod rotate;
 pub mod remove;
 pub mod reorder;
 pub mod render;
+#[cfg(not(target_os = "android"))]
+pub mod render_worker;
 pub mod create;
 pub mod page_numbers;
 pub mod protect;

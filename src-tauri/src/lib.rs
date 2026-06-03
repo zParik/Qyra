@@ -245,9 +245,16 @@ pub fn run() {
         std::env::set_var("RUST_MIN_STACK", "8388608"); // 8 MiB
     }
 
+    // The render worker shares this exact ActiveDocument handle (Arc inside), so
+    // set_active_document still cancels in-flight renders for a doc the user
+    // navigated away from. Desktop only — Android renders via JNI PdfRenderer.
+    let active_document = commands::render::ActiveDocument::new();
+    #[cfg(not(target_os = "android"))]
+    let render_worker = commands::render_worker::RenderWorker::new(active_document.clone());
+
     let builder = tauri::Builder::default()
         .manage(commands::cache::SessionCacheState::new())
-        .manage(commands::render::ActiveDocument::new())
+        .manage(active_document)
         .manage(commands::crash::CrashLogDir::new())
         .setup(|app| {
             #[cfg(not(target_os = "android"))]
@@ -309,6 +316,10 @@ pub fn run() {
 
             Ok(())
         });
+
+    // Register the dedicated MuPDF render worker (owns the open-document cache).
+    #[cfg(not(target_os = "android"))]
+    let builder = builder.manage(render_worker);
 
     // Updater not applicable on Android (Play Store handles updates)
     #[cfg(not(target_os = "android"))]
