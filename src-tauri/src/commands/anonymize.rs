@@ -42,6 +42,7 @@ pub fn anonymize_pdf(
     options: AnonymizeOptions,
     output: Option<String>,
 ) -> AppResult<AnonymizeReport> {
+    let _t = crate::utils::timing::Timer::start("anonymize_pdf", String::new());
     let mut doc = Document::load(&path)?;
 
     let mut report = AnonymizeReport {

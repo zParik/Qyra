@@ -457,6 +457,7 @@ fn fill_form_sync(
     output: Option<String>,
 ) -> AppResult<String> {
     let out = output.unwrap_or_else(|| temp_output_path(path, "filled"));
+    let _t = crate::utils::timing::Timer::start("fill_form", String::new());
     let mut doc = Document::load(path)?;
 
     let field_obj_ids = acroform_field_ids(&doc)?;

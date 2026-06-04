@@ -42,6 +42,7 @@ pub fn watermark_core(
     progress: impl Fn(Progress),
 ) -> AppResult<String> {
         let out = output.unwrap_or_else(|| temp_output_path(&path, "watermarked"));
+        let _t = crate::utils::timing::Timer::start("add_watermark", String::new());
         let mut doc = Document::load(&path)?;
 
         let font_size = options.font_size.unwrap_or(48.0).max(4.0);

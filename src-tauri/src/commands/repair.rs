@@ -151,6 +151,7 @@ pub async fn repair_pdf(
     let bytes_before = file_size(&path);
 
     tokio::task::spawn_blocking(move || -> AppResult<RepairReport> {
+        let _t = crate::utils::timing::Timer::start("repair_pdf", String::new());
         // Strict path: lopdf load auto-repairs xref + we rewrite cleanly.
         let strict_err: Option<AppError> = match Document::load(&path) {
             Ok(doc) => {

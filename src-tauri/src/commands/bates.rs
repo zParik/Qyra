@@ -97,6 +97,7 @@ pub fn bates_core(
     progress: impl Fn(Progress),
 ) -> AppResult<BatesResult> {
         let opts = options.unwrap_or_default();
+        let _t = crate::utils::timing::Timer::start("add_bates_numbers", String::new());
         let mut doc = Document::load(&path)?;
 
         let font_id = doc.add_object(dictionary! {

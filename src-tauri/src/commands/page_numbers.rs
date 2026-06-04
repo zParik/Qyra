@@ -73,6 +73,7 @@ pub fn add_page_numbers_core(
     let margin = opts.margin.unwrap_or(20.0);
     let position = opts.position.unwrap_or_else(|| "bottom-center".into());
 
+    let _t = crate::utils::timing::Timer::start("add_page_numbers", String::new());
     let mut doc = Document::load(&path)?;
 
     let font_id = doc.add_object(dictionary! {

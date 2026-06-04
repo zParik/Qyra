@@ -130,6 +130,7 @@ pub async fn export_pdf_to_word(
     output: Option<String>,
 ) -> AppResult<String> {
     tokio::task::spawn_blocking(move || -> AppResult<String> {
+        let _t = crate::utils::timing::Timer::start("export_pdf_to_word", String::new());
         let doc = mupdf::Document::open(&path)?;
         let page_count = doc.page_count()?;
 

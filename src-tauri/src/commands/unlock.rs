@@ -9,6 +9,7 @@ pub fn unlock_pdf(
     password: String,
     output: Option<String>,
 ) -> AppResult<String> {
+    let _t = crate::utils::timing::Timer::start("unlock_pdf", String::new());
     let mut doc = Document::load_with_password(&path, &password)
         .map_err(|e| AppError::Pdf(format!("Failed to unlock (wrong password?): {}", e)))?;
 

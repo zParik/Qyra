@@ -9,6 +9,7 @@ pub fn reorder_pages(
     order: Vec<u32>,
     output: Option<String>,
 ) -> AppResult<String> {
+    let _t = crate::utils::timing::Timer::start("reorder_pages", String::new());
     let mut doc = Document::load(&path)?;
     let total = doc.get_pages().len() as u32;
 

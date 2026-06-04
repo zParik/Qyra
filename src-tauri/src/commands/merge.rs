@@ -17,6 +17,7 @@ pub async fn merge_pdfs(
     }
 
     let total = paths.len();
+    let _t = crate::utils::timing::Timer::start("merge_pdfs", format!("{total} files"));
     let mut documents = Vec::with_capacity(total);
     for (i, p) in paths.iter().enumerate() {
         let doc = Document::load(p).map_err(|e| AppError::Pdf(format!("Failed to load {}: {}", p, e)))?;

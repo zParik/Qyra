@@ -7,6 +7,7 @@ use crate::error::{AppError, AppResult};
 /// Returns the list of output paths.
 #[tauri::command]
 pub fn split_pdf_by_bookmarks(path: String, output_dir: Option<String>) -> AppResult<Vec<String>> {
+    let _t = crate::utils::timing::Timer::start("split_pdf_by_bookmarks", String::new());
     let doc = Document::load(&path)?;
     let total = doc.get_pages().len() as u32;
     if total == 0 {
@@ -156,6 +157,7 @@ pub fn split_pdf(
     ranges: Vec<PageRange>,
     output_dir: Option<String>,
 ) -> AppResult<Vec<String>> {
+    let _t = crate::utils::timing::Timer::start("split_pdf", format!("{} ranges", ranges.len()));
     let doc = Document::load(&path)?;
     let total = doc.get_pages().len() as u32;
 
@@ -195,6 +197,7 @@ pub fn split_pdf(
 /// page tree (other page objects are technically unreferenced but PDF viewers ignore them).
 #[tauri::command]
 pub fn split_pdf_per_page(path: String, output_dir: Option<String>) -> AppResult<Vec<String>> {
+    let _t = crate::utils::timing::Timer::start("split_pdf_per_page", String::new());
     let mut doc = Document::load(&path)?;
     let total = doc.get_pages().len() as u32;
 

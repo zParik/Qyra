@@ -182,6 +182,7 @@ pub fn set_metadata(
     metadata: PdfMetadata,
     output: Option<String>,
 ) -> AppResult<String> {
+    let _t = crate::utils::timing::Timer::start("set_metadata", String::new());
     let mut doc = Document::load(&path)?;
 
     // Get or create Info dictionary
