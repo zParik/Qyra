@@ -221,7 +221,7 @@ impl Rewriter {
         let objstm_bytes = {
             let mut w = PdfWriter::new();
             w.write_header();
-            match w.write_with_object_streams(live.clone(), out_trailer.clone()) {
+            match w.write_with_object_streams(&live, out_trailer.clone()) {
                 Ok(()) => Some(w.finish()),
                 Err(_e) => {
                     #[cfg(debug_assertions)]

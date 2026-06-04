@@ -61,24 +61,29 @@ impl PdfWriter {
     /// into `/ObjStm` batches. Emits the `/XRef` stream + `startxref`/`%%EOF`.
     pub fn write_with_object_streams(
         &mut self,
-        mut objects: Vec<(ObjectId, PdfObject)>,
+        objects: &[(ObjectId, PdfObject)],
         trailer: PdfDict,
     ) -> Result<(), PdfError> {
         const BATCH: usize = 100;
 
-        objects.sort_by_key(|(id, _)| id.0);
         let max_obj = objects.iter().map(|(id, _)| id.0).max().unwrap_or(0);
 
         // Partition: stream objects (or non-gen-0) → regular; else → packable.
+        // Sorting each partition by object number is equivalent to sorting the
+        // whole input first (as before) and gives the same deterministic
+        // numbering — while letting us borrow `objects` instead of owning a
+        // full clone of every object (streams included) from the caller.
         let mut regular: Vec<(ObjectId, &PdfObject)> = Vec::new();
         let mut packable: Vec<(ObjectId, &PdfObject)> = Vec::new();
-        for (id, obj) in &objects {
+        for (id, obj) in objects {
             if matches!(obj, PdfObject::Stream(_)) || id.1 != 0 {
                 regular.push((*id, obj));
             } else {
                 packable.push((*id, obj));
             }
         }
+        regular.sort_by_key(|(id, _)| id.0);
+        packable.sort_by_key(|(id, _)| id.0);
 
         // Allocate new object numbers for the ObjStm objects + the xref stream.
         let n_batches = packable.len().div_ceil(BATCH);
@@ -323,7 +328,7 @@ mod tests {
 
         let mut w = PdfWriter::new();
         w.write_header();
-        w.write_with_object_streams(objects, trailer).unwrap();
+        w.write_with_object_streams(&objects, trailer).unwrap();
         let bytes = w.finish();
 
         let mut reader = PdfReader::new(bytes).expect("reader parses object-stream output");
