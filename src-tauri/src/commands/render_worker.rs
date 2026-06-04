@@ -18,7 +18,7 @@
 
 use std::collections::HashMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
 
 use base64::Engine;
@@ -58,6 +58,15 @@ enum Job {
         mtime: u64,
         reply: Sender<AppResult<f64>>,
     },
+    /// Generic short read-only task against the cached document. The closure
+    /// owns its own reply channel and receives the open result (or the open
+    /// error) so failures still reach the caller. Only use for *fast* reads
+    /// (page count, outline) — long page-walking work would stall renders.
+    Run {
+        path: String,
+        mtime: u64,
+        run: Box<dyn for<'a> FnOnce(AppResult<&'a mupdf::Document>) + Send>,
+    },
 }
 
 /// Cloneable handle to the worker thread. Stored as Tauri managed state.
@@ -69,6 +78,24 @@ enum Job {
 #[derive(Clone)]
 pub struct RenderWorker {
     tx: Arc<Mutex<Sender<Job>>>,
+}
+
+/// Process-global handle, set once at app startup. Lets plain command functions
+/// (get_page_count, get_outline) reuse the cached document without threading a
+/// `tauri::State` param — which also keeps them callable from the integration
+/// tests, where no worker exists and `global()` returns None (callers then fall
+/// back to opening the document directly).
+static GLOBAL: OnceLock<RenderWorker> = OnceLock::new();
+
+/// Register the global worker. Idempotent; later calls are ignored.
+pub fn set_global(worker: RenderWorker) {
+    let _ = GLOBAL.set(worker);
+}
+
+/// The global worker handle if one was registered (always present in the running
+/// app, absent in unit/integration tests).
+pub fn global() -> Option<RenderWorker> {
+    GLOBAL.get().cloned()
 }
 
 impl RenderWorker {
@@ -122,6 +149,26 @@ impl RenderWorker {
         let mtime = file_mtime(&path);
         let (reply, rx) = channel();
         self.enqueue(Job::Aspect { path, mtime, reply })?;
+        rx.recv()
+            .map_err(|_| AppError::Other("render worker dropped reply".to_string()))?
+    }
+
+    /// Run a short read-only closure against the cached document and return its
+    /// result. Reuses the worker's open-document cache (no reparse). Only use
+    /// for fast reads — anything that walks every page belongs on its own
+    /// spawn_blocking so it does not stall interactive renders.
+    pub fn with<R, F>(&self, path: String, f: F) -> AppResult<R>
+    where
+        R: Send + 'static,
+        F: FnOnce(&mupdf::Document) -> AppResult<R> + Send + 'static,
+    {
+        let mtime = file_mtime(&path);
+        let (reply, rx) = channel::<AppResult<R>>();
+        let run: Box<dyn for<'a> FnOnce(AppResult<&'a mupdf::Document>) + Send> =
+            Box::new(move |doc: AppResult<&mupdf::Document>| {
+                let _ = reply.send(doc.and_then(f));
+            });
+        self.enqueue(Job::Run { path, mtime, run })?;
         rx.recv()
             .map_err(|_| AppError::Other("render worker dropped reply".to_string()))?
     }
@@ -203,6 +250,13 @@ fn worker_loop(rx: Receiver<Job>, active: ActiveDocument) {
             Job::Aspect { path, mtime, reply } => {
                 let _ = reply.send(do_aspect(&mut cache, &path, mtime));
             }
+            Job::Run { path, mtime, run } => match cache.ensure(&path, mtime) {
+                Ok(()) => {
+                    let (_, doc) = cache.docs.get(&path).expect("ensure inserted the doc");
+                    run(Ok(doc));
+                }
+                Err(e) => run(Err(e)),
+            },
         }
     }
 }

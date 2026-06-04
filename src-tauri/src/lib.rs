@@ -251,6 +251,10 @@ pub fn run() {
     let active_document = commands::render::ActiveDocument::new();
     #[cfg(not(target_os = "android"))]
     let render_worker = commands::render_worker::RenderWorker::new(active_document.clone());
+    // Publish a global handle so plain command fns (get_page_count, get_outline)
+    // can reuse the same cached documents without a tauri::State parameter.
+    #[cfg(not(target_os = "android"))]
+    commands::render_worker::set_global(render_worker.clone());
 
     let builder = tauri::Builder::default()
         .manage(commands::cache::SessionCacheState::new())
