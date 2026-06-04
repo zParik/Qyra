@@ -31,7 +31,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 lopdf = "0.40"
 rand = "0.10"
-flate2 = "1"
+# zlib-rs backend: a pure-Rust deflate implementation that is markedly faster
+# than the default miniz_oxide, with no C/cmake build dependency (keeps the
+# Windows + Android builds simple). The native compressor recompresses every
+# Flate stream, so this speeds the hot path 2-3x. Output stays standard zlib.
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 printpdf = "0.7"
 image = { version = "0.25", features = ["png", "jpeg", "webp"] }
 tokio = { version = "1", features = ["sync", "rt", "macros"] }
