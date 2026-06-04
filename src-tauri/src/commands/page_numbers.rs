@@ -48,9 +48,15 @@ pub async fn add_page_numbers(
     output: Option<String>,
     app_handle: tauri::AppHandle,
 ) -> AppResult<String> {
-    add_page_numbers_core(path, options, output, |p| {
-        let _ = app_handle.emit("operation-progress", p);
+    // Run the blocking lopdf work off the async executor so the UI stays
+    // responsive on large documents.
+    tokio::task::spawn_blocking(move || {
+        add_page_numbers_core(path, options, output, |p| {
+            let _ = app_handle.emit("operation-progress", p);
+        })
     })
+    .await
+    .map_err(|e| crate::error::AppError::Other(e.to_string()))?
 }
 
 /// Pure page-numbering core (no Tauri runtime). `progress` receives each step
