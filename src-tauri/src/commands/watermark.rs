@@ -72,21 +72,26 @@ pub fn watermark_core(
         let mut patches: Vec<Patch> = Vec::new();
         let total_to_mark = pages_to_mark.len();
 
+        // The ExtGState (opacity only) and font (constant Helvetica-Bold) are
+        // identical for every page, so create them once and share the object
+        // ids across all pages instead of emitting a duplicate pair per page —
+        // on a large document that is thousands of redundant objects removed
+        // from the output, shrinking the file and the final save.
+        let mut gs = Dictionary::new();
+        gs.set("Type", Object::Name(b"ExtGState".to_vec()));
+        gs.set("ca", Object::Real(opacity as f32));
+        gs.set("CA", Object::Real(opacity as f32));
+        let gs_id = doc.add_object(Object::Dictionary(gs));
+
+        let mut font = Dictionary::new();
+        font.set("Type", Object::Name(b"Font".to_vec()));
+        font.set("Subtype", Object::Name(b"Type1".to_vec()));
+        font.set("BaseFont", Object::Name(b"Helvetica-Bold".to_vec()));
+        let font_id = doc.add_object(Object::Dictionary(font));
+
         for (idx, &page_id) in pages_to_mark.iter().enumerate() {
             progress(Progress::new(idx, total_to_mark + 1, format!("Watermarking page {} / {}", idx + 1, total_to_mark)));
             let (pw, ph) = get_page_dims(&doc, page_id);
-
-            let mut gs = Dictionary::new();
-            gs.set("Type", Object::Name(b"ExtGState".to_vec()));
-            gs.set("ca", Object::Real(opacity as f32));
-            gs.set("CA", Object::Real(opacity as f32));
-            let gs_id = doc.add_object(Object::Dictionary(gs));
-
-            let mut font = Dictionary::new();
-            font.set("Type", Object::Name(b"Font".to_vec()));
-            font.set("Subtype", Object::Name(b"Type1".to_vec()));
-            font.set("BaseFont", Object::Name(b"Helvetica-Bold".to_vec()));
-            let font_id = doc.add_object(Object::Dictionary(font));
 
             let content = build_content(
                 &options.text, pw, ph, font_size, r, g, b, cos_a, sin_a, &mode,
