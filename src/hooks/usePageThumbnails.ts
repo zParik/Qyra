@@ -12,6 +12,15 @@ import { LruCache } from "../lib/lruCache";
 const THUMB_CACHE_CAP = 64;
 const thumbCache = new LruCache<string>(THUMB_CACHE_CAP);
 
+// Wait this long after the visible window stops changing before kicking off Rust
+// renders. Fast/fling scrolling churns the window every frame; without this we'd
+// dispatch a render for every page that flashes past, and even though each is
+// cancelled the moment it leaves view, the ones that slip through flood the heap
+// with multi-MB base64 (each crosses the Tauri IPC ~3x) faster than GC reclaims
+// it — memory balloons mid-scroll and only settles once scrolling stops. Debouncing
+// means a page must actually come to rest in the window before it costs anything.
+const RENDER_DEBOUNCE_MS = 90;
+
 /** Evict all cache entries for a given path so the next render reads fresh data from disk. */
 export function evictPathFromThumbnailCache(path: string) {
   for (const key of thumbCache.keys()) {
@@ -175,6 +184,9 @@ export function usePageThumbnails(
   // Latest visible window, read by the cancel predicate so a queued render bails
   // (before it ever calls into Rust) once its page scrolls outside render distance.
   const visibleRef = useRef<Set<number>>(new Set());
+  // Debounce timer for the render dispatch — reset on every window change so renders
+  // only fire once scrolling settles.
+  const renderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Stable key for visible pages to avoid re-runs when Set object changes but pages are the same
   const visibleKey = visiblePageNums
     ? Array.from(visiblePageNums).sort((a, b) => a - b).join(',')
@@ -187,6 +199,7 @@ export function usePageThumbnails(
     inFlightRef.current.clear();
     requestedRef.current.clear();
     visibleRef.current = new Set();
+    if (renderTimerRef.current) { clearTimeout(renderTimerRef.current); renderTimerRef.current = null; }
     return () => {
       activeRef.current = false;
     };
@@ -229,48 +242,57 @@ export function usePageThumbnails(
       if (!visiblePageNums.has(page)) requestedRef.current.delete(page);
     }
 
-    // Queue visible pages that aren't cached yet (the semaphore serializes the work).
-    for (const page of visible) {
-      if (requestedRef.current.has(page)) continue;
+    // Dispatch Rust renders for uncached visible pages — but only after the window
+    // stops moving. Restart the timer on every window change so flinging past a
+    // page never renders it; a page must come to rest in view to cost anything.
+    if (renderTimerRef.current) clearTimeout(renderTimerRef.current);
+    renderTimerRef.current = setTimeout(() => {
+      renderTimerRef.current = null;
+      if (!activeRef.current) return;
+      // Read the settled window (the cancel predicate uses the same ref).
+      for (const page of visibleRef.current) {
+        if (page < 1 || page > pageCount) continue;
+        if (requestedRef.current.has(page)) continue;
 
-      const key = `${path}:${page}:${scale}`;
-      if (thumbCache.has(key)) {
-        // Already placed into state synchronously above.
-        requestedRef.current.add(page);
-        continue;
+        const key = `${path}:${page}:${scale}`;
+        if (thumbCache.has(key)) {
+          // Already placed into state synchronously above.
+          requestedRef.current.add(page);
+          continue;
+        }
+
+        if (inFlightRef.current.has(page)) continue;
+
+        inFlightRef.current.add(page);
+        requestedRef.current.add(page); // Checklist entry: registered so we never request it twice
+
+        // Cancel if the document changed OR the page scrolled outside the current
+        // render window — checked inside renderPage before each cache layer and,
+        // crucially, after the concurrency semaphore but before the Rust render, so
+        // a render still rasterizes nothing once its page leaves view.
+        const isCancelled = () => !activeRef.current || !visibleRef.current.has(page);
+
+        renderPage(path!, page, scale, isCancelled)
+          .then((dataUrl) => {
+            // Only commit if still active AND still visible — avoids re-adding a
+            // page that scrolled away while its render was in flight.
+            if (activeRef.current && visibleRef.current.has(page)) {
+              setThumbnails((prev) => ({ ...prev, [page]: dataUrl }));
+            }
+          })
+          .catch((e) => {
+            // Cancellation is expected (page scrolled away) — not an error. Drop it
+            // from the checklist so it re-renders if it scrolls back into view.
+            requestedRef.current.delete(page);
+            if (activeRef.current && String(e?.message ?? e) !== "Cancelled") {
+              console.error(`Page ${page} render failed:`, e);
+            }
+          })
+          .finally(() => {
+            inFlightRef.current.delete(page);
+          });
       }
-
-      if (inFlightRef.current.has(page)) continue;
-
-      inFlightRef.current.add(page);
-      requestedRef.current.add(page); // Checklist entry: registered as requested so we never request it again
-
-      // Cancel if the document changed OR the page scrolled outside the current
-      // render window — checked inside renderPage before each cache layer and,
-      // crucially, after the concurrency semaphore but before the Rust render, so
-      // a backlog from fast scrolling never rasterizes pages no one is looking at.
-      const isCancelled = () => !activeRef.current || !visibleRef.current.has(page);
-
-      renderPage(path!, page, scale, isCancelled)
-        .then((dataUrl) => {
-          // Only commit if still active AND still visible — avoids re-adding a
-          // page that scrolled away while its render was in flight.
-          if (activeRef.current && visibleRef.current.has(page)) {
-            setThumbnails((prev) => ({ ...prev, [page]: dataUrl }));
-          }
-        })
-        .catch((e) => {
-          // Cancellation is expected (page scrolled away) — not an error. Drop it
-          // from the checklist so it re-renders if it scrolls back into view.
-          requestedRef.current.delete(page);
-          if (activeRef.current && String(e?.message ?? e) !== "Cancelled") {
-            console.error(`Page ${page} render failed:`, e);
-          }
-        })
-        .finally(() => {
-          inFlightRef.current.delete(page);
-        });
-    }
+    }, RENDER_DEBOUNCE_MS);
   // visibleKey is the stable string proxy for visiblePageNums — depending on the
   // Set itself would re-run on every identity change even when the pages are equal.
   // eslint-disable-next-line react-hooks/exhaustive-deps
