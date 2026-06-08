@@ -317,8 +317,12 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
   // Fixed render scale — independent of zoom. Browser CSS scales the <img> to the
   // current displayed width, so zoom never triggers a re-render. Crisp up to
   // ~1.3x zoom on HiDPI; slightly soft beyond. Eliminates flicker entirely.
+  // `scale` is a multiplier on 72-DPI, so it's capped at 3.0 (216 DPI): beyond
+  // that each page bitmap balloons (an A4 page at 4.0 is ~8 MP / ~32 MB decoded)
+  // for no visible gain on screen, and many such pages are live at once when
+  // zoomed out.
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const centerRenderScale = 2.0 * dpr;
+  const centerRenderScale = Math.min(2.0 * dpr, 3.0);
   const centerThumbnails = usePageThumbnails(viewerFile?.path ?? null, pageCount, centerRenderScale, visiblePageNums);
 
   // Re-anchor scroll position when zoom changes so the current page stays in view

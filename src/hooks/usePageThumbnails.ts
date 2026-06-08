@@ -1,9 +1,16 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { sessionCache, thumbKey, thumbPrefix, thumbStoreGet, thumbStorePut, thumbStoreEvict } from "../lib/sessionCache";
+import { LruCache } from "../lib/lruCache";
 
-// Cache rendered thumbnails: "path:page:scale" -> data URL
-const thumbCache = new Map<string, string>();
+// Cache rendered thumbnails: "path:page:scale" -> data URL.
+// LRU-bounded: a base64 page bitmap at the center render scale is multiple MB,
+// so an unbounded map let browsing/zooming a large document climb to 100% RAM.
+// The session/persistent disk caches still back re-renders, so eviction here
+// only costs a fast IPC read, never a re-render. The cap comfortably exceeds the
+// center virtual-scroll window plus the page strip's visible range.
+const THUMB_CACHE_CAP = 64;
+const thumbCache = new LruCache<string>(THUMB_CACHE_CAP);
 
 /** Evict all cache entries for a given path so the next render reads fresh data from disk. */
 export function evictPathFromThumbnailCache(path: string) {
@@ -12,6 +19,18 @@ export function evictPathFromThumbnailCache(path: string) {
   }
   sessionCache.evictPrefix(thumbPrefix(path));
   thumbStoreEvict(path); // also purge persistent cache
+}
+
+/**
+ * Free ONLY the in-memory rendered bitmaps for a path (the big base64 data URLs
+ * held in the WebView heap). Keeps the session/disk caches so reopening the file
+ * stays fast. Call this when swapping AWAY from a document after an edit so the
+ * superseded file's bitmaps don't linger in memory.
+ */
+export function freePathMemoryThumbnails(path: string) {
+  for (const key of thumbCache.keys()) {
+    if (key.startsWith(`${path}:`)) thumbCache.delete(key);
+  }
 }
 
 /**
@@ -169,28 +188,48 @@ export function usePageThumbnails(
     };
   }, [path, pageCount, scale]);
 
-  // Render visible pages on demand
+  // Render visible pages on demand, and keep state pruned to the visible window.
   useEffect(() => {
     if (!path || pageCount === 0 || !visiblePageNums || visiblePageNums.size === 0) return;
 
-    const pagesRequested = Array.from(visiblePageNums!)
+    const visible = Array.from(visiblePageNums)
+      .filter((p) => p >= 1 && p <= pageCount)
       .sort((a, b) => a - b); // Prioritize top-to-bottom
 
-    // Queue all visible pages for rendering (render slot serializes the actual rendering)
-    for (const page of pagesRequested) {
-      if (page < 1 || page > pageCount) continue;
+    // Rebuild state to hold ONLY currently-visible pages — pages that scrolled
+    // out of the virtual-scroll window drop their (multi-MB) base64 here so the
+    // WebView heap stays bounded no matter how far you scroll or zoom out. Cache
+    // hits are pulled in synchronously so re-entering a still-cached page never
+    // flashes a spinner. `get` also refreshes LRU recency, keeping the visible
+    // window hot and safe from eviction.
+    setThumbnails((prev) => {
+      const next: Record<number, string> = {};
+      for (const page of visible) {
+        const val = thumbCache.get(`${path}:${page}:${scale}`) ?? prev[page];
+        if (val !== undefined) next[page] = val;
+      }
+      const prevKeys = Object.keys(prev);
+      if (prevKeys.length === Object.keys(next).length &&
+          prevKeys.every((k) => prev[+k] === next[+k])) {
+        return prev; // unchanged — avoid a needless re-render
+      }
+      return next;
+    });
 
-      // Skip instantly if this page has already been requested/rendered
+    // Forget bookkeeping for pages no longer visible so they re-request (and hit
+    // the cache) if scrolled back to.
+    for (const page of Array.from(requestedRef.current)) {
+      if (!visiblePageNums.has(page)) requestedRef.current.delete(page);
+    }
+
+    // Queue visible pages that aren't cached yet (the semaphore serializes the work).
+    for (const page of visible) {
       if (requestedRef.current.has(page)) continue;
 
       const key = `${path}:${page}:${scale}`;
-      // If already in memory cache, update state synchronously and mark as requested
       if (thumbCache.has(key)) {
+        // Already placed into state synchronously above.
         requestedRef.current.add(page);
-        setThumbnails((prev) => {
-          if (prev[page] === thumbCache.get(key)) return prev;
-          return { ...prev, [page]: thumbCache.get(key)! };
-        });
         continue;
       }
 
@@ -201,7 +240,9 @@ export function usePageThumbnails(
 
       renderPage(path!, page, scale, () => !activeRef.current)
         .then((dataUrl) => {
-          if (activeRef.current) {
+          // Only commit if still active AND still visible — avoids re-adding a
+          // page that scrolled away while its render was in flight.
+          if (activeRef.current && visiblePageNums.has(page)) {
             setThumbnails((prev) => ({ ...prev, [page]: dataUrl }));
           }
         })
@@ -216,6 +257,9 @@ export function usePageThumbnails(
           inFlightRef.current.delete(page);
         });
     }
+  // visibleKey is the stable string proxy for visiblePageNums — depending on the
+  // Set itself would re-run on every identity change even when the pages are equal.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, pageCount, scale, visibleKey]);
 
   return thumbnails;
