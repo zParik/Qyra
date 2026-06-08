@@ -314,15 +314,18 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
   }, [stripVisibleRange, pageCount]);
 
   const stripThumbnails = usePageThumbnails(viewerFile?.path ?? null, pageCount, 0.3, stripVisibleNums);
-  // Fixed render scale — independent of zoom. Browser CSS scales the <img> to the
-  // current displayed width, so zoom never triggers a re-render. Crisp up to
-  // ~1.3x zoom on HiDPI; slightly soft beyond. Eliminates flicker entirely.
-  // `scale` is a multiplier on 72-DPI, so it's capped at 3.0 (216 DPI): beyond
-  // that each page bitmap balloons (an A4 page at 4.0 is ~8 MP / ~32 MB decoded)
-  // for no visible gain on screen, and many such pages are live at once when
-  // zoomed out.
+  // Fixed render scale — independent of zoom, so changing zoom never re-decodes a
+  // page (the displayed <img> is CSS-scaled instead). `scale` multiplies 72-DPI.
+  //
+  // Kept deliberately small. Zoom changes the <img>'s layout WIDTH, so the WebView
+  // re-rasterizes the decoded bitmap at the new display size and caches that raster
+  // per (image, size). Scrolling a large image-heavy document and then zooming
+  // spams the WebView's image cache (whose budget scales with system RAM) with many
+  // big rasters. A smaller source bitmap makes every one of those rasters smaller.
+  // 1.5*dpr is crisp at 100% (~108–144 DPI) with a little zoom-in headroom; capped
+  // at 2.0 so a 200% display doesn't quadruple the footprint for no on-screen gain.
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const centerRenderScale = Math.min(2.0 * dpr, 3.0);
+  const centerRenderScale = Math.min(1.5 * dpr, 2.0);
   const centerThumbnails = usePageThumbnails(viewerFile?.path ?? null, pageCount, centerRenderScale, visiblePageNums);
 
   // Re-anchor scroll position when zoom changes so the current page stays in view
