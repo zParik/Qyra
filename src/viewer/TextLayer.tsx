@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo, memo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 interface CharRect {
@@ -28,8 +28,6 @@ interface Highlight {
 interface TextLayerProps {
   pdfPath: string;
   pageNum: number;
-  /** Kept for API compatibility — not used in positioning since coords are normalised. */
-  zoom: number;
   findQuery?: string;
   findActiveMatchOrdinal?: number;
   isDrawingMode?: boolean;
@@ -134,10 +132,9 @@ interface LineMeta {
  *
  * Must live inside a `position: relative` element sized to the page image.
  */
-export function TextLayer({
+function TextLayerInner({
   pdfPath,
   pageNum,
-  zoom: _zoom,
   findQuery,
   findActiveMatchOrdinal = -1,
   isDrawingMode,
@@ -327,3 +324,11 @@ export function TextLayer({
     </div>
   );
 }
+
+// Memoized: props are all primitives (path/page/find state/flags). Crucially the
+// live zoom value is NOT passed in — coords are normalised (CSS %) and the layer
+// resizes with its parent, so zoom needs no prop here. Threading zoom would change
+// the prop on every wheel tick and bust this memo, re-running the heavy per-line
+// span layout + text measurement for every visible page during a zoom gesture.
+// Without it, scroll/zoom/thumbnail-arrival re-renders of the Viewer skip this tree.
+export const TextLayer = memo(TextLayerInner);

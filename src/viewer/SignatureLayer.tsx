@@ -13,7 +13,6 @@ export interface Signature {
 interface Props {
   pdfPath: string;
   pageNum: number;
-  zoom: number;
   isEnabled: boolean;
   pendingSignature: string | null;
   onSignaturePlaced: (sig: Signature) => void;
@@ -32,7 +31,6 @@ interface DragState {
 export function SignatureLayer({
   pdfPath: _pdfPath,
   pageNum,
-  zoom: _zoom,
   isEnabled,
   pendingSignature,
   onSignaturePlaced,

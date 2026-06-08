@@ -3,13 +3,13 @@ import { useNavigate } from "react-router-dom";
 import { useAppStore } from "../store/useAppStore";
 import { useNotesStore, PageTemplate, VirtualPage } from "../store/useNotesStore";
 
-import { usePageThumbnails, evictPathFromThumbnailCache } from "../hooks/usePageThumbnails";
+import { usePageThumbnails, evictPathFromThumbnailCache, freePathMemoryThumbnails } from "../hooks/usePageThumbnails";
 import { PageStrip } from "./PageStrip";
 import { ScrollPageIndicator } from "./ScrollPageIndicator";
 import { ZoomFab } from "./ZoomFab";
 import { ToolSidebar, ViewerTool } from "./ToolSidebar";
 import { invoke } from "@tauri-apps/api/core";
-import { copyFile, showSaveDialog, bakeAnnotations, setActiveDocument } from "../lib/tauri";
+import { copyFile, showSaveDialog, bakeAnnotations, setActiveDocument, saveCompressedCopy } from "../lib/tauri";
 import { loadSetting, Settings } from "../lib/settings";
 import { triggerPrint } from "./tools/PrintPanel";
 import { DrawingCanvas } from "./DrawingCanvas";
@@ -27,6 +27,7 @@ import { AnnotationToolbar } from "./AnnotationToolbar";
 import { SignaturePanel } from "./tools/SignaturePanel";
 import { useFormFilling } from "./useFormFilling";
 import { PresentationMode } from "./PresentationMode";
+import { nextZoomFromWheel } from "./zoom";
 import { useComments } from "./hooks/useComments";
 import { useViewerUI } from "./hooks/useViewerUI";
 import { useToolMode } from "./hooks/useToolMode";
@@ -39,6 +40,7 @@ import { useAutoSave } from "./hooks/useAutoSave";
 // import { getPageOcrText } from "../lib/ocrEngine";
 
 const EMPTY_VIRTUAL_PAGES: VirtualPage[] = [];
+const EMPTY_SIGS: never[] = [];
 
 /** 0-based index of the current find hit among hits on `page`, or -1 if none. */
 function findActiveMatchOrdinalOnPage(
@@ -134,6 +136,18 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
     pendingSignature, setPendingSignature,
     showSignaturePanel, setShowSignaturePanel,
   } = useSignatures();
+
+  // Group signatures by page once per change instead of running
+  // signatures.filter() for every visible page on every render.
+  const sigsByPage = useMemo(() => {
+    const m = new Map<number, typeof signatures>();
+    for (const s of signatures) {
+      const arr = m.get(s.pageNum);
+      if (arr) arr.push(s);
+      else m.set(s.pageNum, [s]);
+    }
+    return m;
+  }, [signatures]);
 
   // Form filling
   const { fieldValues, setFieldValue, saveFormFields: _saveFormFields, isDirty: _isFormDirty } = useFormFilling();
@@ -403,27 +417,39 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
     }
   }, []);
 
-  // Ctrl+wheel / pinch-to-zoom (non-passive, attached to window so WebView2 native zoom is blocked)
+  // Ctrl+wheel / pinch-to-zoom (non-passive, attached to window so WebView2 native zoom is blocked).
+  // Wheel events fire far faster than the screen refreshes (60–120+/sec on a trackpad). Calling
+  // setZoom on every one floods React with full re-renders of the whole viewer tree, faster than the
+  // WebView can drain them — the event queue backs up, CPU pins, and the renderer eventually hangs or
+  // OOMs. We accumulate deltaY and apply a single setZoom per animation frame. Because the zoom factor
+  // is multiplicative (0.999^deltaY), summing a frame's deltas is exactly equivalent to applying each
+  // event in turn (see nextZoomFromWheel), so the result is identical — just bounded to the refresh rate.
   useEffect(() => {
+    let accumDelta = 0;
+    let raf: number | null = null;
+    function flush() {
+      raf = null;
+      const delta = accumDelta;
+      accumDelta = 0;
+      if (delta === 0) return;
+      const container = scrollContainerRef.current;
+      const cw = container ? container.clientWidth : window.innerWidth;
+      // fitZoom = zoom at which page exactly fills container (accounting for 32px horizontal padding)
+      const fitZoom = (cw - 32) / 768;
+      setZoom((prev) => nextZoomFromWheel(prev, delta, fitZoom));
+    }
     function onWheel(e: WheelEvent) {
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
-        const container = scrollContainerRef.current;
-        const containerWidth = container ? container.clientWidth : window.innerWidth;
-        // fitZoom = zoom at which page exactly fills container (accounting for 32px horizontal padding)
-        const fitZoom = (containerWidth - 32) / 768;
-        setZoom((prev) => {
-          const factor = Math.pow(0.999, e.deltaY);
-          const next = Math.min(3.0, Math.max(0.25, prev * factor));
-          // Magnet: snap to fit-width only when crossing into the zone (not when already there)
-          const inZone = (z: number) => Math.abs(z - fitZoom) < fitZoom * 0.04;
-          if (!inZone(prev) && inZone(next)) return fitZoom;
-          return next;
-        });
+        accumDelta += e.deltaY;
+        if (raf == null) raf = requestAnimationFrame(flush);
       }
     }
     window.addEventListener("wheel", onWheel, { passive: false });
-    return () => window.removeEventListener("wheel", onWheel);
+    return () => {
+      window.removeEventListener("wheel", onWheel);
+      if (raf != null) cancelAnimationFrame(raf);
+    };
   }, []);
 
   // Pinch-to-zoom via touch (two-finger gesture on Android / iOS)
@@ -676,10 +702,37 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
     }
   }
 
-  async function handleApplied(path: string) {
+  async function handleApplied(path: string, opts?: { saveAsNew?: boolean }) {
+    const prevPath = viewerFile?.path;
+
+    // Compress: save the result as a NEW file beside the original (never
+    // overwrite), then open it as a clean, saved document — no "unsaved" limbo.
+    if (opts?.saveAsNew) {
+      const base = originalViewerPath ?? prevPath ?? path;
+      try {
+        const dest = await saveCompressedCopy(path, base);
+        setUndoViewerFile(viewerFile); // Ctrl+Z → back to the pre-compress doc
+        handleOpenFile(dest);
+        setOriginalViewerPath(dest); // the new file is its own document
+        setIsViewerDirty(false);
+        markSaved();
+        if (prevPath && prevPath !== dest) freePathMemoryThumbnails(prevPath);
+        return;
+      } catch (e) {
+        // Couldn't place the file (e.g. no real path on Android) — fall back to
+        // opening the result as an unsaved edit so it isn't lost.
+        setSaveStatus("error");
+        setSaveError(friendlySaveError(e));
+      }
+    }
+
     setUndoViewerFile(viewerFile); // snapshot for Ctrl+Z
     handleOpenFile(path);
     setIsViewerDirty(true);
+    // Free the superseded document's in-memory bitmaps now — the viewer has
+    // moved to `path`, so the old file's rendered pages just waste WebView heap.
+    // (Undo re-renders them lazily; disk/session caches keep that cheap.)
+    if (prevPath && prevPath !== path) freePathMemoryThumbnails(prevPath);
     if (autoSaveRef.current) {
       clearTimeout(autoSaveTimerRef.current);
       autoSaveTimerRef.current = window.setTimeout(triggerAutoSave, 1500);
@@ -1687,7 +1740,6 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                         <TextLayer
                           pdfPath={viewerFile.path}
                           pageNum={page}
-                          zoom={zoom}
                           findQuery={findOpen ? findQuery : undefined}
                           findActiveMatchOrdinal={
                             findOpen && findQuery.trim()
@@ -1718,7 +1770,6 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                         <FormLayer
                           pdfPath={viewerFile.path}
                           pageNum={page}
-                          zoom={zoom}
                           isEnabled={activeTool === "forms"}
                           onFieldChanged={setFieldValue}
                           filledFields={fieldValues}
@@ -1726,7 +1777,6 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                         <AnnotationLayer
                           pdfPath={viewerFile.path}
                           pageNum={page}
-                          zoom={zoom}
                           isEnabled={activeTool === "annotate"}
                           activeAnnotTool={activeAnnotTool}
                           onAnnotationAdded={() => setAnnotRefreshKey(k => k + 1)}
@@ -1735,7 +1785,6 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                         <SignatureLayer
                           pdfPath={viewerFile.path}
                           pageNum={page}
-                          zoom={zoom}
                           isEnabled={activeTool === "signature"}
                           pendingSignature={pendingSignature}
                           onSignaturePlaced={(sig) => {
@@ -1743,7 +1792,7 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                             setPendingSignature(null);
                           }}
                           onSignatureRemoved={(id) => setSignatures(prev => prev.filter(s => s.id !== id))}
-                          signatures={signatures.filter(s => s.pageNum === page)}
+                          signatures={sigsByPage.get(page) ?? EMPTY_SIGS}
                         />
                         <RedactLayer
                           pageNum={page}
