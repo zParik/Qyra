@@ -172,6 +172,9 @@ export function usePageThumbnails(
   const inFlightRef = useRef<Set<number>>(new Set());
   // Checklist tracker to remember what has already been requested/finished to avoid duplicate processing
   const requestedRef = useRef<Set<number>>(new Set());
+  // Latest visible window, read by the cancel predicate so a queued render bails
+  // (before it ever calls into Rust) once its page scrolls outside render distance.
+  const visibleRef = useRef<Set<number>>(new Set());
   // Stable key for visible pages to avoid re-runs when Set object changes but pages are the same
   const visibleKey = visiblePageNums
     ? Array.from(visiblePageNums).sort((a, b) => a - b).join(',')
@@ -183,6 +186,7 @@ export function usePageThumbnails(
     setThumbnails({});
     inFlightRef.current.clear();
     requestedRef.current.clear();
+    visibleRef.current = new Set();
     return () => {
       activeRef.current = false;
     };
@@ -191,6 +195,9 @@ export function usePageThumbnails(
   // Render visible pages on demand, and keep state pruned to the visible window.
   useEffect(() => {
     if (!path || pageCount === 0 || !visiblePageNums || visiblePageNums.size === 0) return;
+
+    // Publish the current window for the cancel predicate of in-flight renders.
+    visibleRef.current = visiblePageNums;
 
     const visible = Array.from(visiblePageNums)
       .filter((p) => p >= 1 && p <= pageCount)
@@ -238,19 +245,26 @@ export function usePageThumbnails(
       inFlightRef.current.add(page);
       requestedRef.current.add(page); // Checklist entry: registered as requested so we never request it again
 
-      renderPage(path!, page, scale, () => !activeRef.current)
+      // Cancel if the document changed OR the page scrolled outside the current
+      // render window — checked inside renderPage before each cache layer and,
+      // crucially, after the concurrency semaphore but before the Rust render, so
+      // a backlog from fast scrolling never rasterizes pages no one is looking at.
+      const isCancelled = () => !activeRef.current || !visibleRef.current.has(page);
+
+      renderPage(path!, page, scale, isCancelled)
         .then((dataUrl) => {
           // Only commit if still active AND still visible — avoids re-adding a
           // page that scrolled away while its render was in flight.
-          if (activeRef.current && visiblePageNums.has(page)) {
+          if (activeRef.current && visibleRef.current.has(page)) {
             setThumbnails((prev) => ({ ...prev, [page]: dataUrl }));
           }
         })
         .catch((e) => {
-          if (activeRef.current) {
+          // Cancellation is expected (page scrolled away) — not an error. Drop it
+          // from the checklist so it re-renders if it scrolls back into view.
+          requestedRef.current.delete(page);
+          if (activeRef.current && String(e?.message ?? e) !== "Cancelled") {
             console.error(`Page ${page} render failed:`, e);
-            // On failure, remove from requested list so it can be retried if it becomes visible again
-            requestedRef.current.delete(page);
           }
         })
         .finally(() => {
