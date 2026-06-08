@@ -279,6 +279,11 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
   const TOP_PAD    = 32;    // sm:py-8
   const SIDE_PAD   = 32;    // sm:px-8
   const BUFFER_SLOTS = 2;   // small buffer to avoid gaps when scrolling
+  // Unscaled page-content width in CSS px. Each page renders its overlays + image
+  // at this fixed size and zoom is applied as a GPU `transform: scale()` on top —
+  // so changing zoom never resizes the <img> and the WebView never re-rasterizes
+  // the decoded bitmap (the thing that ballooned its image cache during zooming).
+  const BASE_PAGE_W = 768;
 
   const basePageW = zoom * 768;
   const actualPageW = basePageW;
@@ -1678,6 +1683,7 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
               if (slot.type === 'pdf') {
                 const page = slot.pdfPage;
                 const pageW = Math.round(zoom * 768);
+                const pageH = Math.round(pageW * docAspectRatio);
                 const isSelected = activeTool === "remove" && selectedPages.has(page);
                 const shouldRenderTextLayer = true; // all visible pages (virtual scroll limits active pages)
                 return (
@@ -1692,12 +1698,17 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                         paddingRight: SIDE_PAD,
                       }}
                     >
+                      {/* Sizer reserves the SCALED layout box so the scroll container can
+                          still pan horizontally when zoomed in. The inner box stays a fixed
+                          BASE_PAGE_W and is GPU-scaled to fill it — no <img> resize on zoom. */}
+                      <div style={{ width: `${pageW}px`, height: `${pageH}px`, margin: "0 auto" }}>
                       <div
                         className="relative"
                         data-page-index={page}
                         style={{
-                          width: `${pageW}px`,
-                          margin: "0 auto",
+                          width: `${BASE_PAGE_W}px`,
+                          transform: `scale(${zoom})`,
+                          transformOrigin: "top left",
                           cursor: activeTool === "remove" ? "pointer" : undefined,
                         }}
                         onClick={activeTool === "remove" ? () => handlePageToggle(page) : undefined}
@@ -1767,7 +1778,6 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                           pageSlotId={slot.slotId}
                           docPath={viewerFile.path}
                           isDrawingMode={activeTool === "draw"}
-                          zoom={zoom}
                         />
                         <CommentLayer
                           pageIndex={page}
@@ -1811,6 +1821,7 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                           onRemoveRegion={(idx) => setRedactRegions(prev => prev.filter((_, i) => i !== idx))}
                         />
                       </div>
+                      </div>
                     </div>
                     {/* Add-page bar after this page (draw mode) */}
                     {activeTool === "draw" && (
@@ -1825,6 +1836,7 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                 const vp = slot.vp;
                 const pageW = Math.round(zoom * 768);
                 const pageH = Math.round(pageW * docAspectRatio);
+                const baseH = Math.round(BASE_PAGE_W * docAspectRatio);
                 return (
                   <div
                     key={slot.slotId}
@@ -1837,16 +1849,22 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                       paddingRight: SIDE_PAD,
                     }}
                   >
+                    {/* Sizer reserves scaled layout; inner box is fixed-size + GPU-scaled. */}
+                    <div style={{ width: `${pageW}px`, height: `${pageH}px`, margin: "0 auto" }}>
                     <div
                       className="relative rounded shadow-2xl overflow-hidden"
-                      style={{ width: `${pageW}px`, aspectRatio: `${pageW}/${pageH}`, margin: "0 auto" }}
+                      style={{
+                        width: `${BASE_PAGE_W}px`,
+                        height: `${baseH}px`,
+                        transform: `scale(${zoom})`,
+                        transformOrigin: "top left",
+                      }}
                     >
-                      <VirtualPageBackground template={vp.template} width={pageW} height={pageH} />
+                      <VirtualPageBackground template={vp.template} width={BASE_PAGE_W} height={baseH} />
                       <DrawingCanvas
                         pageSlotId={slot.slotId}
                         docPath={viewerFile.path}
                         isDrawingMode={activeTool === "draw"}
-                        zoom={zoom}
                       />
                       <div
                         className="absolute top-2 right-2 text-xs px-1.5 py-0.5 rounded pointer-events-none"
@@ -1854,6 +1872,7 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                       >
                         {vp.template}
                       </div>
+                    </div>
                     </div>
                   </div>
                 );
