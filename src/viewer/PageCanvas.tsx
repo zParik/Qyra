@@ -42,7 +42,15 @@ function PageCanvasInner({ src, cssWidth, aspect, pageLabel, isSelected }: Props
     (async () => {
       try {
         const blob = base64ToBlob(src);
-        bitmap = await createImageBitmap(blob);
+        // Decode DIRECTLY to the on-screen size. Decoding the full clamped raster
+        // (up to MAX_RENDER_DIM) and scaling down on draw allocates a much larger
+        // native RGBA bitmap; resizing during decode keeps each decode bounded to
+        // what's actually shown, so a burst of decodes can't spike native RAM.
+        bitmap = await createImageBitmap(blob, {
+          resizeWidth: width,
+          resizeHeight: height,
+          resizeQuality: "high",
+        });
         if (cancelled || !canvasRef.current) {
           bitmap.close();
           return;
