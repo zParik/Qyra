@@ -28,7 +28,7 @@ import { AnnotationToolbar } from "./AnnotationToolbar";
 import { SignaturePanel } from "./tools/SignaturePanel";
 import { useFormFilling } from "./useFormFilling";
 import { PresentationMode } from "./PresentationMode";
-import { nextZoomFromWheel } from "./zoom";
+import { nextZoomFromWheel, snapZoom, clampZoom } from "./zoom";
 import { useComments } from "./hooks/useComments";
 import { useViewerUI } from "./hooks/useViewerUI";
 import { useToolMode } from "./hooks/useToolMode";
@@ -449,7 +449,13 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
       const cw = container ? container.clientWidth : window.innerWidth;
       // fitZoom = zoom at which page exactly fills container (accounting for 32px horizontal padding)
       const fitZoom = (cw - 32) / 768;
-      setZoom((prev) => nextZoomFromWheel(prev, delta, fitZoom));
+      setZoom((prev) => {
+        const next = nextZoomFromWheel(prev, delta, fitZoom);
+        // Snap to the zoom ladder so spam can't emit unbounded distinct scales
+        // (the software compositor caches a raster per scale → 18 GB RAM climb).
+        // The fit-width magnet value is exempt so it stays exactly landable.
+        return Math.abs(next - fitZoom) < 1e-6 ? next : snapZoom(next);
+      });
     }
     function onWheel(e: WheelEvent) {
       if (e.ctrlKey || e.metaKey) {
@@ -487,7 +493,9 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
       const dist = pinchDist(e);
       const factor = dist / lastDist;
       lastDist = dist;
-      setZoom((prev) => Math.min(3.0, Math.max(0.25, prev * factor)));
+      // Snap pinch zoom to the same ladder as wheel zoom — same unbounded-scale
+      // RAM problem otherwise (see snapZoom).
+      setZoom((prev) => snapZoom(clampZoom(prev * factor)));
     }
 
     function onTouchEnd() { lastDist = 0; }

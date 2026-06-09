@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ZOOM_MIN, ZOOM_MAX, clampZoom, nextZoomFromWheel } from "./zoom";
+import { ZOOM_MIN, ZOOM_MAX, ZOOM_STEP, clampZoom, nextZoomFromWheel, snapZoom } from "./zoom";
 
 describe("clampZoom", () => {
   it("clamps below the minimum", () => {
@@ -54,5 +54,31 @@ describe("nextZoomFromWheel", () => {
     const fitZoom = 1.3;
     const next = nextZoomFromWheel(fitZoom, -1, fitZoom);
     expect(next).not.toBe(fitZoom);
+  });
+});
+
+describe("snapZoom", () => {
+  it("snaps to the nearest ladder step", () => {
+    expect(snapZoom(1.04)).toBeCloseTo(1.0, 10);
+    expect(snapZoom(1.06)).toBeCloseTo(1.1, 10);
+  });
+
+  it("clamps to the zoom range", () => {
+    expect(snapZoom(0.01)).toBe(ZOOM_MIN);
+    expect(snapZoom(99)).toBe(ZOOM_MAX);
+  });
+
+  it("produces only a bounded set of distinct values across the range", () => {
+    // The whole point: continuous input → a small, fixed set of outputs, so the
+    // compositor caches a bounded number of per-scale rasters.
+    const seen = new Set<number>();
+    for (let z = ZOOM_MIN; z <= ZOOM_MAX; z += 0.001) {
+      seen.add(Math.round(snapZoom(z) * 1000)); // round to kill float noise
+    }
+    expect(seen.size).toBeLessThanOrEqual(Math.ceil((ZOOM_MAX - ZOOM_MIN) / ZOOM_STEP) + 2);
+  });
+
+  it("is idempotent on values already on the ladder", () => {
+    expect(snapZoom(snapZoom(1.37))).toBeCloseTo(snapZoom(1.37), 10);
   });
 });
