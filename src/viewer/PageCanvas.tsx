@@ -70,19 +70,16 @@ function PageCanvasInner({ src, cssWidth, aspect, pageLabel, isSelected }: Props
     return () => {
       cancelled = true;
       bitmap?.close();
+      // Free the backing store immediately. Zoom re-anchors scroll every step,
+      // churning the virtual-scroll window, so pages unmount/remount rapidly;
+      // relying on GC of the detached <canvas> let native bitmap memory pile
+      // into the gigabytes. `canvas` here is the live element (this effect only
+      // runs once src/canvas exist), unlike a mount-time [] effect that captures
+      // null because the canvas isn't created until src arrives.
+      canvas.width = 0;
+      canvas.height = 0;
     };
   }, [src, cssWidth, aspect]);
-
-  // Release the backing store the moment this page leaves the scroll window.
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    return () => {
-      if (canvas) {
-        canvas.width = 0;
-        canvas.height = 0;
-      }
-    };
-  }, []);
 
   if (!src) {
     return (
