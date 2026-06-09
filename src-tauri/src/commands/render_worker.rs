@@ -30,6 +30,18 @@ use crate::error::{AppError, AppResult};
 /// handful of tabs; beyond this the least-recently-inserted doc is dropped.
 const CACHE_CAP: usize = 6;
 
+/// Hard upper bound, in device pixels, on the longest edge of any rendered page
+/// raster. The requested `scale` multiplies the page's native 72-DPI point size,
+/// so an oversized page (e.g. issue #63's 2378×3072 pt, ~3× a normal page) at the
+/// viewer's normal scale produces a many-megapixel pixmap. The WebView decodes
+/// that JPEG back into a raw RGBA bitmap on screen — at ~3072 pt × scale that is
+/// hundreds of MB per page, and scrolling/zooming a document full of them exhausts
+/// RAM and crashes. Clamping the effective scale so the longest edge never exceeds
+/// this bound keeps every page's raster (and thus its decoded footprint) bounded
+/// regardless of the page's native size. Normal Letter/A4 pages stay well under it
+/// and are unaffected.
+const MAX_RENDER_DIM: f32 = 2600.0;
+
 /// Work items handed to the worker thread. Each carries its own typed reply
 /// channel so results stay strongly typed across the boundary.
 enum Job {
@@ -281,7 +293,20 @@ fn do_render(
     }
     cache.with_doc(path, mtime, |doc| {
         let p = doc.load_page(page as i32 - 1)?;
-        let matrix = mupdf::Matrix::new_scale(scale, scale);
+        // Clamp the effective scale so the longest raster edge stays within
+        // MAX_RENDER_DIM (see the constant's docs). bounds() is in points; an
+        // oversized page would otherwise rasterize to a multi-hundred-MB bitmap
+        // once the WebView decodes it, OOM-crashing on scroll/zoom (issue #63).
+        let eff_scale = {
+            let b = p.bounds()?;
+            let longest = (b.x1 - b.x0).abs().max((b.y1 - b.y0).abs());
+            if longest > 0.0 && longest * scale > MAX_RENDER_DIM {
+                MAX_RENDER_DIM / longest
+            } else {
+                scale
+            }
+        };
+        let matrix = mupdf::Matrix::new_scale(eff_scale, eff_scale);
         let cs = mupdf::Colorspace::device_rgb();
         if check_active && !active.is(path) {
             return Err(cancelled());
