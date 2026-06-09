@@ -14,6 +14,7 @@ import { loadSetting, Settings } from "../lib/settings";
 import { triggerPrint } from "./tools/PrintPanel";
 import { DrawingCanvas } from "./DrawingCanvas";
 import { VirtualPageBackground } from "./VirtualPageBackground";
+import { PageCanvas } from "./PageCanvas";
 import { DrawToolbar } from "./tools/DrawToolbar";
 import { TextLayer } from "./TextLayer";
 import { LinkLayer } from "./LinkLayer";
@@ -1713,38 +1714,13 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                         }}
                         onClick={activeTool === "remove" ? () => handlePageToggle(page) : undefined}
                       >
-                        {centerThumbnails[page] ? (
-                          <img
-                            src={centerThumbnails[page]}
-                            alt={`Page ${page}`}
-                            className="w-full rounded shadow-2xl block"
-                            draggable={false}
-                            style={{
-                              height: "auto",
-                              display: "block",
-                              userSelect: "none",
-                              WebkitUserSelect: "none",
-                              WebkitUserDrag: "none",
-                              pointerEvents: "none",
-                              ...(isSelected ? { outline: "3px solid #ef4444", borderRadius: "0.5rem" } : {}),
-                            } as React.CSSProperties}
-                          />
-                        ) : (
-                          <div
-                            className="rounded flex flex-col items-center justify-center gap-2"
-                            style={{
-                              aspectRatio: `1/${docAspectRatio}`,
-                              background: "color-mix(in oklch, var(--viewer-elevated) 60%, transparent)",
-                              border: isSelected ? "3px solid #ef4444" : "1px solid var(--viewer-border-sub)",
-                            }}
-                          >
-                            <svg className="w-6 h-6 animate-spin" style={{ color: "var(--viewer-text-muted)" }} fill="none" viewBox="0 0 24 24">
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-                            </svg>
-                            <span className="text-xs" style={{ color: "var(--viewer-text-muted)" }}>Page {page}</span>
-                          </div>
-                        )}
+                        <PageCanvas
+                          src={centerThumbnails[page]}
+                          cssWidth={BASE_PAGE_W}
+                          aspect={docAspectRatio}
+                          pageLabel={page}
+                          isSelected={isSelected}
+                        />
                         {isSelected && (
                           <div className="absolute inset-0 rounded flex items-center justify-center pointer-events-none"
                             style={{ background: "rgba(239, 68, 68, 0.25)" }}>
