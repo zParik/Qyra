@@ -93,6 +93,10 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
 
   const [docAspectRatio, setDocAspectRatio] = useState(1.4142);
   const [zoom, setZoom] = useState(1.0);
+  // Always-fresh mirror of `zoom` for the wheel handler, which accumulates a
+  // gesture's zoom in a ref and commits to React state only once it settles.
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
 
   // Viewer UI: chrome visibility, reading/presentation modes, back-confirm overlay
   const {
@@ -440,6 +444,14 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
   useEffect(() => {
     let accumDelta = 0;
     let raf: number | null = null;
+    let settleTimer: ReturnType<typeof setTimeout> | null = null;
+    // Gesture-local zoom, accumulated across frames WITHOUT touching React state.
+    let pending: number | null = null;
+
+    function commit() {
+      settleTimer = null;
+      if (pending != null) { setZoom(pending); pending = null; }
+    }
     function flush() {
       raf = null;
       const delta = accumDelta;
@@ -449,13 +461,19 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
       const cw = container ? container.clientWidth : window.innerWidth;
       // fitZoom = zoom at which page exactly fills container (accounting for 32px horizontal padding)
       const fitZoom = (cw - 32) / 768;
-      setZoom((prev) => {
-        const next = nextZoomFromWheel(prev, delta, fitZoom);
-        // Snap to the zoom ladder so spam can't emit unbounded distinct scales
-        // (the software compositor caches a raster per scale → 18 GB RAM climb).
-        // The fit-width magnet value is exempt so it stays exactly landable.
-        return Math.abs(next - fitZoom) < 1e-6 ? next : snapZoom(next);
-      });
+      const base = pending ?? zoomRef.current;
+      const next = nextZoomFromWheel(base, delta, fitZoom);
+      // Snap to the zoom ladder; the fit-width magnet value is exempt so it stays
+      // exactly landable.
+      pending = Math.abs(next - fitZoom) < 1e-6 ? next : snapZoom(next);
+      // Commit to React state only once the wheel SETTLES. Applying zoom on every
+      // wheel frame re-anchored scroll and recomputed the virtual-scroll window,
+      // remounting page subtrees ~40x/sec; each remount re-fired get_text_page +
+      // get_page_links and re-rastered the page, flooding the WebView with async
+      // tasks + IPC loads and climbing native RAM (oscillating zoom never let it
+      // settle). One commit per gesture removes the churn entirely.
+      if (settleTimer) clearTimeout(settleTimer);
+      settleTimer = setTimeout(commit, 80);
     }
     function onWheel(e: WheelEvent) {
       if (e.ctrlKey || e.metaKey) {
@@ -468,6 +486,7 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
     return () => {
       window.removeEventListener("wheel", onWheel);
       if (raf != null) cancelAnimationFrame(raf);
+      if (settleTimer) clearTimeout(settleTimer);
     };
   }, []);
 
