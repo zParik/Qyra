@@ -1718,13 +1718,6 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                           width: `${BASE_PAGE_W}px`,
                           transform: `scale(${zoom})`,
                           transformOrigin: "top left",
-                          // Promote to a GPU layer while zoomed so changing the scale
-                          // resamples the base-size raster instead of re-rastering the
-                          // whole page (canvas + text + shadow) at every distinct zoom
-                          // value — the latter floods the compositor tile cache and
-                          // drove RAM to ~18 GB on zoom-spam. `auto` at 1× avoids the
-                          // standing layer cost when not zoomed.
-                          willChange: zoom !== 1 ? "transform" : "auto",
                           cursor: activeTool === "remove" ? "pointer" : undefined,
                         }}
                         onClick={activeTool === "remove" ? () => handlePageToggle(page) : undefined}
@@ -1849,9 +1842,6 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                         height: `${baseH}px`,
                         transform: `scale(${zoom})`,
                         transformOrigin: "top left",
-                        // See the PDF-page box above: GPU-layer promotion while zoomed
-                        // keeps scale changes a cheap resample instead of a re-raster.
-                        willChange: zoom !== 1 ? "transform" : "auto",
                       }}
                     >
                       <VirtualPageBackground template={vp.template} width={BASE_PAGE_W} height={baseH} />
