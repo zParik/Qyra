@@ -1,9 +1,28 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { sessionCache, thumbKey, thumbPrefix, thumbStoreGet, thumbStorePut, thumbStoreEvict } from "../lib/sessionCache";
+import { LruCache } from "../lib/lruCache";
+import { evictTextPageCache } from "../viewer/TextLayer";
+import { evictLinkPageCache } from "../viewer/LinkLayer";
 
-// Cache rendered thumbnails: "path:page:scale" -> data URL
-const thumbCache = new Map<string, string>();
+// Cache rendered thumbnails: "path:page:scale" -> data URL.
+// LRU-bounded: a base64 page bitmap at the center render scale is multiple MB,
+// so an unbounded map let browsing/zooming a large document climb to 100% RAM.
+// The session/persistent disk caches still back re-renders, so eviction here
+// only costs a fast IPC read, never a re-render. The cap comfortably exceeds the
+// center virtual-scroll window plus the page strip's visible range.
+const THUMB_CACHE_CAP = 64;
+const thumbCache = new LruCache<string>(THUMB_CACHE_CAP);
+
+// Wait this long after the visible window stops changing before kicking off Rust
+// renders. Fast/fling scrolling churns the window every frame; without this we'd
+// dispatch a render for every page that flashes past, and even though each is
+// cancelled the moment it leaves view, the ones that slip through flood the heap
+// with multi-MB base64 (each crosses the Tauri IPC ~3x) faster than GC reclaims
+// it — memory balloons mid-scroll and only settles once scrolling stops. Debouncing
+// means a page must actually come to rest in the window before it costs anything.
+// Kept generous: at insane scroll speeds nothing should render until you stop.
+const RENDER_DEBOUNCE_MS = 200;
 
 /** Evict all cache entries for a given path so the next render reads fresh data from disk. */
 export function evictPathFromThumbnailCache(path: string) {
@@ -12,6 +31,20 @@ export function evictPathFromThumbnailCache(path: string) {
   }
   sessionCache.evictPrefix(thumbPrefix(path));
   thumbStoreEvict(path); // also purge persistent cache
+  evictTextPageCache(path); // text layer caches per page too — same staleness rules
+  evictLinkPageCache(path); // ditto links
+}
+
+/**
+ * Free ONLY the in-memory rendered bitmaps for a path (the big base64 data URLs
+ * held in the WebView heap). Keeps the session/disk caches so reopening the file
+ * stays fast. Call this when swapping AWAY from a document after an edit so the
+ * superseded file's bitmaps don't linger in memory.
+ */
+export function freePathMemoryThumbnails(path: string) {
+  for (const key of thumbCache.keys()) {
+    if (key.startsWith(`${path}:`)) thumbCache.delete(key);
+  }
 }
 
 /**
@@ -153,6 +186,18 @@ export function usePageThumbnails(
   const inFlightRef = useRef<Set<number>>(new Set());
   // Checklist tracker to remember what has already been requested/finished to avoid duplicate processing
   const requestedRef = useRef<Set<number>>(new Set());
+  // Latest visible window, read by the cancel predicate so a queued render bails
+  // (before it ever calls into Rust) once its page scrolls outside render distance.
+  const visibleRef = useRef<Set<number>>(new Set());
+  // Latest render scale. Zoom changes `scale`; any render still queued/in-flight for a
+  // SUPERSEDED scale must bail (its result is for the wrong zoom and only clogs the
+  // single render worker). Rapid zoom would otherwise enqueue a render per intermediate
+  // scale and run them all to completion.
+  const scaleRef = useRef(scale);
+  scaleRef.current = scale;
+  // Debounce timer for the render dispatch — reset on every window change so renders
+  // only fire once scrolling settles.
+  const renderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Stable key for visible pages to avoid re-runs when Set object changes but pages are the same
   const visibleKey = visiblePageNums
     ? Array.from(visiblePageNums).sort((a, b) => a - b).join(',')
@@ -164,58 +209,105 @@ export function usePageThumbnails(
     setThumbnails({});
     inFlightRef.current.clear();
     requestedRef.current.clear();
+    visibleRef.current = new Set();
+    if (renderTimerRef.current) { clearTimeout(renderTimerRef.current); renderTimerRef.current = null; }
     return () => {
       activeRef.current = false;
     };
   }, [path, pageCount, scale]);
 
-  // Render visible pages on demand
+  // Render visible pages on demand, and keep state pruned to the visible window.
   useEffect(() => {
     if (!path || pageCount === 0 || !visiblePageNums || visiblePageNums.size === 0) return;
 
-    const pagesRequested = Array.from(visiblePageNums!)
+    // Publish the current window for the cancel predicate of in-flight renders.
+    visibleRef.current = visiblePageNums;
+
+    const visible = Array.from(visiblePageNums)
+      .filter((p) => p >= 1 && p <= pageCount)
       .sort((a, b) => a - b); // Prioritize top-to-bottom
 
-    // Queue all visible pages for rendering (render slot serializes the actual rendering)
-    for (const page of pagesRequested) {
-      if (page < 1 || page > pageCount) continue;
-
-      // Skip instantly if this page has already been requested/rendered
-      if (requestedRef.current.has(page)) continue;
-
-      const key = `${path}:${page}:${scale}`;
-      // If already in memory cache, update state synchronously and mark as requested
-      if (thumbCache.has(key)) {
-        requestedRef.current.add(page);
-        setThumbnails((prev) => {
-          if (prev[page] === thumbCache.get(key)) return prev;
-          return { ...prev, [page]: thumbCache.get(key)! };
-        });
-        continue;
+    // Rebuild state to hold ONLY currently-visible pages — pages that scrolled
+    // out of the virtual-scroll window drop their (multi-MB) base64 here so the
+    // WebView heap stays bounded no matter how far you scroll or zoom out. Cache
+    // hits are pulled in synchronously so re-entering a still-cached page never
+    // flashes a spinner. `get` also refreshes LRU recency, keeping the visible
+    // window hot and safe from eviction.
+    setThumbnails((prev) => {
+      const next: Record<number, string> = {};
+      for (const page of visible) {
+        const val = thumbCache.get(`${path}:${page}:${scale}`) ?? prev[page];
+        if (val !== undefined) next[page] = val;
       }
+      const prevKeys = Object.keys(prev);
+      if (prevKeys.length === Object.keys(next).length &&
+          prevKeys.every((k) => prev[+k] === next[+k])) {
+        return prev; // unchanged — avoid a needless re-render
+      }
+      return next;
+    });
 
-      if (inFlightRef.current.has(page)) continue;
-
-      inFlightRef.current.add(page);
-      requestedRef.current.add(page); // Checklist entry: registered as requested so we never request it again
-
-      renderPage(path!, page, scale, () => !activeRef.current)
-        .then((dataUrl) => {
-          if (activeRef.current) {
-            setThumbnails((prev) => ({ ...prev, [page]: dataUrl }));
-          }
-        })
-        .catch((e) => {
-          if (activeRef.current) {
-            console.error(`Page ${page} render failed:`, e);
-            // On failure, remove from requested list so it can be retried if it becomes visible again
-            requestedRef.current.delete(page);
-          }
-        })
-        .finally(() => {
-          inFlightRef.current.delete(page);
-        });
+    // Forget bookkeeping for pages no longer visible so they re-request (and hit
+    // the cache) if scrolled back to.
+    for (const page of Array.from(requestedRef.current)) {
+      if (!visiblePageNums.has(page)) requestedRef.current.delete(page);
     }
+
+    // Dispatch Rust renders for uncached visible pages — but only after the window
+    // stops moving. Restart the timer on every window change so flinging past a
+    // page never renders it; a page must come to rest in view to cost anything.
+    if (renderTimerRef.current) clearTimeout(renderTimerRef.current);
+    renderTimerRef.current = setTimeout(() => {
+      renderTimerRef.current = null;
+      if (!activeRef.current) return;
+      // Read the settled window (the cancel predicate uses the same ref).
+      for (const page of visibleRef.current) {
+        if (page < 1 || page > pageCount) continue;
+        if (requestedRef.current.has(page)) continue;
+
+        const key = `${path}:${page}:${scale}`;
+        if (thumbCache.has(key)) {
+          // Already placed into state synchronously above.
+          requestedRef.current.add(page);
+          continue;
+        }
+
+        if (inFlightRef.current.has(page)) continue;
+
+        inFlightRef.current.add(page);
+        requestedRef.current.add(page); // Checklist entry: registered so we never request it twice
+
+        // Cancel if the document changed, the page scrolled outside the current
+        // render window, OR the zoom moved on to a new scale (this render is for a
+        // stale zoom). Checked inside renderPage before each cache layer and, crucially,
+        // after the concurrency semaphore but before the Rust render, so a superseded
+        // render rasterizes nothing.
+        const isCancelled = () => !activeRef.current || !visibleRef.current.has(page) || scaleRef.current !== scale;
+
+        renderPage(path!, page, scale, isCancelled)
+          .then((dataUrl) => {
+            // Only commit if still active AND still visible — avoids re-adding a
+            // page that scrolled away while its render was in flight.
+            if (activeRef.current && visibleRef.current.has(page)) {
+              setThumbnails((prev) => ({ ...prev, [page]: dataUrl }));
+            }
+          })
+          .catch((e) => {
+            // Cancellation is expected (page scrolled away) — not an error. Drop it
+            // from the checklist so it re-renders if it scrolls back into view.
+            requestedRef.current.delete(page);
+            if (activeRef.current && String(e?.message ?? e) !== "Cancelled") {
+              console.error(`Page ${page} render failed:`, e);
+            }
+          })
+          .finally(() => {
+            inFlightRef.current.delete(page);
+          });
+      }
+    }, RENDER_DEBOUNCE_MS);
+  // visibleKey is the stable string proxy for visiblePageNums — depending on the
+  // Set itself would re-run on every identity change even when the pages are equal.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, pageCount, scale, visibleKey]);
 
   return thumbnails;

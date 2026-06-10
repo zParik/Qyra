@@ -11,7 +11,9 @@ const POSITIONS: PageNumberOptions["position"][] = [
 ];
 
 export default function PageNumbers() {
-  const { files, clearFiles, isProcessing } = useAppStore();
+  const files = useAppStore((s) => s.files);
+  const clearFiles = useAppStore((s) => s.clearFiles);
+  const isProcessing = useAppStore((s) => s.isProcessing);
   const { run } = usePdfCommand();
   const [startAt, setStartAt] = useState(1);
   const [position, setPosition] = useState<PageNumberOptions["position"]>("bottom-center");

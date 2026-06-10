@@ -16,6 +16,7 @@ pub fn rotate_pages(
         return Err(AppError::Invalid("Degrees must be 90, 180, or 270".to_string()));
     }
 
+    let _t = crate::utils::timing::Timer::start("rotate_pages", format!("{}deg", degrees));
     let mut doc = Document::load(&path)?;
     let page_map = doc.get_pages();
     let total = page_map.len() as u32;

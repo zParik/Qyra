@@ -54,6 +54,7 @@ pub fn make_searchable_core(
 ) -> AppResult<String> {
         let out = output.unwrap_or_else(|| temp_output_path(&path, "searchable"));
 
+        let _t = crate::utils::timing::Timer::start("make_searchable", format!("{} pages", pages.len()));
         let mut doc = Document::load(&path)?;
 
         // Collect page IDs in document order (BTreeMap is sorted by 1-based page number)

@@ -136,6 +136,7 @@ pub fn header_footer_core(
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
 
+        let _t = crate::utils::timing::Timer::start("add_header_footer", String::new());
         let mut doc = Document::load(&path)?;
         let font_id = doc.add_object(dictionary! {
             "Type" => "Font",

@@ -1,4 +1,3 @@
-import { createWorker } from "tesseract.js";
 import type { Worker as TessWorker } from "tesseract.js";
 
 export interface OcrWord {
@@ -25,17 +24,22 @@ export async function getOcrWorker(onProgress?: OcrProgressFn): Promise<TessWork
   if (worker) return worker;
 
   if (!initPromise) {
-    initPromise = createWorker(["eng"], 1, {
-      logger: (m: { status: string; progress: number }) => {
-        onProgress?.(m.progress ?? 0, m.status ?? "");
-      },
-    }).then((w) => {
-      worker = w;
-      return w;
-    }).catch((err) => {
-      initPromise = null;
-      throw err;
-    });
+    // Dynamic import keeps the heavy tesseract.js core out of the startup
+    // bundle — it loads only when OCR is first invoked.
+    initPromise = import("tesseract.js")
+      .then(({ createWorker }) => createWorker(["eng"], 1, {
+        logger: (m: { status: string; progress: number }) => {
+          onProgress?.(m.progress ?? 0, m.status ?? "");
+        },
+      }))
+      .then((w) => {
+        worker = w;
+        return w;
+      })
+      .catch((err) => {
+        initPromise = null;
+        throw err;
+      });
   }
 
   return initPromise;

@@ -245,9 +245,33 @@ pub fn run() {
         std::env::set_var("RUST_MIN_STACK", "8388608"); // 8 MiB
     }
 
+    // Hard-cap the rayon GLOBAL thread pool to half the cores (2..=8) before any
+    // parallel work runs. The Native compressor uses its own per-call capped
+    // pool, but this guarantees NO rayon path — now or later — can pin every
+    // logical CPU. Best-effort: ignore the error if already initialized.
+    let rayon_threads = (std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2)
+        / 2)
+        .clamp(2, 8);
+    let _ = rayon::ThreadPoolBuilder::new()
+        .num_threads(rayon_threads)
+        .build_global();
+
+    // The render worker shares this exact ActiveDocument handle (Arc inside), so
+    // set_active_document still cancels in-flight renders for a doc the user
+    // navigated away from. Desktop only — Android renders via JNI PdfRenderer.
+    let active_document = commands::render::ActiveDocument::new();
+    #[cfg(not(target_os = "android"))]
+    let render_worker = commands::render_worker::RenderWorker::new(active_document.clone());
+    // Publish a global handle so plain command fns (get_page_count, get_outline)
+    // can reuse the same cached documents without a tauri::State parameter.
+    #[cfg(not(target_os = "android"))]
+    commands::render_worker::set_global(render_worker.clone());
+
     let builder = tauri::Builder::default()
         .manage(commands::cache::SessionCacheState::new())
-        .manage(commands::render::ActiveDocument::new())
+        .manage(active_document)
         .manage(commands::crash::CrashLogDir::new())
         .setup(|app| {
             #[cfg(not(target_os = "android"))]
@@ -310,6 +334,10 @@ pub fn run() {
             Ok(())
         });
 
+    // Register the dedicated MuPDF render worker (owns the open-document cache).
+    #[cfg(not(target_os = "android"))]
+    let builder = builder.manage(render_worker);
+
     // Updater not applicable on Android (Play Store handles updates)
     #[cfg(not(target_os = "android"))]
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
@@ -326,8 +354,7 @@ pub fn run() {
             split::split_pdf_by_bookmarks,
             compress::compress_pdf,
             compress::cancel_compress,
-            compress_gs::compress_pdf_gs,
-            compress_gs::compress_pdf_gs_parallel,
+            compress::save_compressed_copy,
             rotate::rotate_pages,
             remove::remove_pages,
             reorder::reorder_pages,

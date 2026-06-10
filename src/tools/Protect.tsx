@@ -6,7 +6,9 @@ import { usePdfCommand } from "../hooks/usePdfCommand";
 import { protectPdf } from "../lib/tauri";
 
 export default function Protect() {
-  const { files, clearFiles, isProcessing } = useAppStore();
+  const files = useAppStore((s) => s.files);
+  const clearFiles = useAppStore((s) => s.clearFiles);
+  const isProcessing = useAppStore((s) => s.isProcessing);
   const { run } = usePdfCommand();
   const [userPassword, setUserPassword] = useState("");
   const [ownerPassword, setOwnerPassword] = useState("");

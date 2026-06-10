@@ -6,7 +6,9 @@ import { usePdfCommand } from "../hooks/usePdfCommand";
 import { pdfToImages } from "../lib/tauri";
 
 export default function PdfToImages() {
-  const { files, clearFiles, isProcessing } = useAppStore();
+  const files = useAppStore((s) => s.files);
+  const clearFiles = useAppStore((s) => s.clearFiles);
+  const isProcessing = useAppStore((s) => s.isProcessing);
   const { run } = usePdfCommand();
   const [format, setFormat] = useState<"png" | "jpg">("png");
   const [dpi, setDpi] = useState(150);

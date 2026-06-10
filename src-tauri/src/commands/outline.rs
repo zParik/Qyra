@@ -25,16 +25,31 @@ fn convert_outlines(outlines: Vec<mupdf::Outline>) -> Vec<OutlineNode> {
         .collect()
 }
 
+#[cfg(not(target_os = "android"))]
+fn outlines_of(doc: &mupdf::Document) -> AppResult<Vec<OutlineNode>> {
+    let outlines = doc.outlines().map_err(|e| AppError::Pdf(e.to_string()))?;
+    Ok(convert_outlines(outlines))
+}
+
+/// Read the outline tree, reusing the render worker's open-document cache when
+/// the app is running. Falls back to opening directly (e.g. in tests).
+#[cfg(not(target_os = "android"))]
+fn read_outline(path: String) -> AppResult<Vec<OutlineNode>> {
+    match crate::commands::render_worker::global() {
+        Some(worker) => worker.with(path, outlines_of),
+        None => {
+            let doc = mupdf::Document::open(&path).map_err(|e| AppError::Pdf(e.to_string()))?;
+            outlines_of(&doc)
+        }
+    }
+}
+
 #[tauri::command]
 #[cfg(not(target_os = "android"))]
 pub async fn get_outline(path: String) -> AppResult<Vec<OutlineNode>> {
-    tokio::task::spawn_blocking(move || -> AppResult<Vec<OutlineNode>> {
-        let doc = mupdf::Document::open(&path).map_err(|e| AppError::Pdf(e.to_string()))?;
-        let outlines = doc.outlines().map_err(|e| AppError::Pdf(e.to_string()))?;
-        Ok(convert_outlines(outlines))
-    })
-    .await
-    .map_err(|e| AppError::Other(e.to_string()))?
+    tokio::task::spawn_blocking(move || read_outline(path))
+        .await
+        .map_err(|e| AppError::Other(e.to_string()))?
 }
 
 // ── Android stub ───────────────────────────────────────────────────────────────

@@ -12,7 +12,10 @@ interface DropZoneProps {
 }
 
 export function DropZone({ accept = [".pdf"], multiple = true, label }: DropZoneProps) {
-  const { addFile, setError } = useAppStore();
+  // Action selectors are stable references, so this component never re-renders
+  // from store writes (a bare useAppStore() would re-render on every write).
+  const addFile = useAppStore((s) => s.addFile);
+  const setError = useAppStore((s) => s.setError);
   const [dragging, setDragging] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const isPhone = useIsPhone();

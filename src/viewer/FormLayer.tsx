@@ -14,7 +14,6 @@ interface FormField {
 interface Props {
   pdfPath: string;
   pageNum: number; // 1-indexed
-  zoom: number;
   isEnabled: boolean;
   onFieldChanged?: (name: string, value: string) => void;
   filledFields?: Record<string, string>;
@@ -37,7 +36,6 @@ const baseInputStyle: React.CSSProperties = {
 export function FormLayer({
   pdfPath,
   pageNum,
-  zoom: _zoom,
   isEnabled,
   onFieldChanged,
   filledFields,

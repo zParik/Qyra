@@ -40,6 +40,16 @@ impl ActiveDocument {
             path: Arc::new(Mutex::new(None)),
         }
     }
+
+    /// True if `path` is the currently active document. Used by the render
+    /// worker to drop jobs for a document the user has navigated away from.
+    /// A poisoned lock returns false (treat as "not active" → cancel).
+    pub fn is(&self, path: &str) -> bool {
+        self.path
+            .lock()
+            .map(|p| p.as_deref() == Some(path))
+            .unwrap_or(false)
+    }
 }
 
 #[tauri::command]
@@ -65,64 +75,18 @@ pub async fn read_pdf_bytes(path: String) -> AppResult<String> {
 #[tauri::command]
 #[cfg(not(target_os = "android"))]
 pub async fn render_page(
-    state: tauri::State<'_, ActiveDocument>,
+    worker: tauri::State<'_, crate::commands::render_worker::RenderWorker>,
     path: String,
     page: u32,
     scale: f32,
 ) -> AppResult<String> {
-    let state_clone = state.inner().clone();
-    let path_clone = path.clone();
-
+    // The render worker owns a cache of open MuPDF documents, so this no longer
+    // reparses the whole PDF per call. `check_active = true` keeps the previous
+    // behaviour of cancelling renders for a document the user navigated away from.
+    let worker = worker.inner().clone();
     tokio::task::spawn_blocking(move || -> AppResult<String> {
-        // Check 1: before opening document
-        if state_clone.path.lock().map_err(|e| AppError::Lock(e.to_string()))?.as_deref() != Some(&path_clone) {
-            return Err(AppError::Other("Cancelled".to_string()));
-        }
-
-        let doc = mupdf::Document::open(&path_clone)?;
-
-        // Check 2: before loading page
-        if state_clone.path.lock().map_err(|e| AppError::Lock(e.to_string()))?.as_deref() != Some(&path_clone) {
-            return Err(AppError::Other("Cancelled".to_string()));
-        }
-
-        let p = doc.load_page(page as i32 - 1)?;
-        let matrix = mupdf::Matrix::new_scale(scale, scale);
-        let cs = mupdf::Colorspace::device_rgb();
-
-        // Check 3: before heavy pixmap rendering
-        if state_clone.path.lock().map_err(|e| AppError::Lock(e.to_string()))?.as_deref() != Some(&path_clone) {
-            return Err(AppError::Other("Cancelled".to_string()));
-        }
-
-        let pixmap = p.to_pixmap(&matrix, &cs, false, false)?;
-
-        // Check 4: before raw RgbImage creation
-        if state_clone.path.lock().map_err(|e| AppError::Lock(e.to_string()))?.as_deref() != Some(&path_clone) {
-            return Err(AppError::Other("Cancelled".to_string()));
-        }
-
-        let width = pixmap.width();
-        let height = pixmap.height();
-        let samples = pixmap.samples();
-
-        let img = image::RgbImage::from_raw(width, height, samples.to_vec())
-            .ok_or_else(|| AppError::Pdf("pixmap→RgbImage failed".to_string()))?;
-
-        // Check 5: before slow JPEG compression
-        if state_clone.path.lock().map_err(|e| AppError::Lock(e.to_string()))?.as_deref() != Some(&path_clone) {
-            return Err(AppError::Other("Cancelled".to_string()));
-        }
-
-        let buf = {
-            let mut buf = Vec::new();
-            let mut cursor = std::io::Cursor::new(&mut buf);
-            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, 90)
-                .encode_image(&image::DynamicImage::ImageRgb8(img))?;
-            buf
-        };
-
-        Ok(base64::engine::general_purpose::STANDARD.encode(&buf))
+        let bytes = worker.render(path, page, scale, true)?;
+        Ok(crate::commands::render_worker::b64(&bytes))
     })
     .await
     .map_err(|e| AppError::Other(e.to_string()))?
@@ -133,29 +97,18 @@ pub async fn render_page(
 #[tauri::command]
 #[cfg(not(target_os = "android"))]
 pub async fn render_page_uncached(
+    worker: tauri::State<'_, crate::commands::render_worker::RenderWorker>,
     path: String,
     page: u32,
     scale: f32,
 ) -> AppResult<String> {
+    // Compare/preview features render two PDFs at once; the worker's doc cache
+    // holds several open documents, so both sides stay warm. `check_active =
+    // false` bypasses the active-document gate (these are not the viewer's doc).
+    let worker = worker.inner().clone();
     tokio::task::spawn_blocking(move || -> AppResult<String> {
-        let doc = mupdf::Document::open(&path)?;
-        let p = doc.load_page(page as i32 - 1)?;
-        let matrix = mupdf::Matrix::new_scale(scale, scale);
-        let cs = mupdf::Colorspace::device_rgb();
-        let pixmap = p.to_pixmap(&matrix, &cs, false, false)?;
-        let width = pixmap.width();
-        let height = pixmap.height();
-        let samples = pixmap.samples();
-        let img = image::RgbImage::from_raw(width, height, samples.to_vec())
-            .ok_or_else(|| AppError::Pdf("pixmap→RgbImage failed".to_string()))?;
-        let buf = {
-            let mut buf = Vec::new();
-            let mut cursor = std::io::Cursor::new(&mut buf);
-            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, 90)
-                .encode_image(&image::DynamicImage::ImageRgb8(img))?;
-            buf
-        };
-        Ok(base64::engine::general_purpose::STANDARD.encode(&buf))
+        let bytes = worker.render(path, page, scale, false)?;
+        Ok(crate::commands::render_worker::b64(&bytes))
     })
     .await
     .map_err(|e| AppError::Other(e.to_string()))?
@@ -337,20 +290,14 @@ pub async fn render_page(
 /// Returns height/width aspect ratio of page 1.
 #[tauri::command]
 #[cfg(not(target_os = "android"))]
-pub async fn get_page_aspect_ratio(path: String) -> AppResult<f64> {
-    tokio::task::spawn_blocking(move || -> AppResult<f64> {
-        let doc = mupdf::Document::open(&path)?;
-        let page = doc.load_page(0)?;
-        let b = page.bounds()?;
-        let w = (b.x1 - b.x0) as f64;
-        let h = (b.y1 - b.y0) as f64;
-        if w == 0.0 {
-            return Err(AppError::Invalid("zero page width".to_string()));
-        }
-        Ok(h / w)
-    })
-    .await
-    .map_err(|e| AppError::Other(e.to_string()))?
+pub async fn get_page_aspect_ratio(
+    worker: tauri::State<'_, crate::commands::render_worker::RenderWorker>,
+    path: String,
+) -> AppResult<f64> {
+    let worker = worker.inner().clone();
+    tokio::task::spawn_blocking(move || worker.aspect(path))
+        .await
+        .map_err(|e| AppError::Other(e.to_string()))?
 }
 
 #[tauri::command]
@@ -421,93 +368,14 @@ pub async fn get_page_aspect_ratio(path: String) -> AppResult<f64> {
 #[tauri::command]
 #[cfg(not(target_os = "android"))]
 pub async fn get_text_page(
-    state: tauri::State<'_, ActiveDocument>,
+    worker: tauri::State<'_, crate::commands::render_worker::RenderWorker>,
     path: String,
     page: u32,
 ) -> AppResult<Vec<TextLine>> {
-    let state_clone = state.inner().clone();
-    let path_clone = path.clone();
-
-    tokio::task::spawn_blocking(move || -> AppResult<Vec<TextLine>> {
-        // Check 1: before opening document
-        if state_clone.path.lock().map_err(|e| AppError::Lock(e.to_string()))?.as_deref() != Some(&path_clone) {
-            return Err(AppError::Other("Cancelled".to_string()));
-        }
-
-        let doc = mupdf::Document::open(&path_clone)?;
-
-        // Check 2: before loading page
-        if state_clone.path.lock().map_err(|e| AppError::Lock(e.to_string()))?.as_deref() != Some(&path_clone) {
-            return Err(AppError::Other("Cancelled".to_string()));
-        }
-
-        let p = doc.load_page(page as i32 - 1)?;
-        let b = p.bounds()?;
-        let pw = (b.x1 - b.x0) as f64;
-        let ph = (b.y1 - b.y0) as f64;
-        if pw == 0.0 || ph == 0.0 {
-            return Ok(vec![]);
-        }
-
-        // Check 3: before text extraction
-        if state_clone.path.lock().map_err(|e| AppError::Lock(e.to_string()))?.as_deref() != Some(&path_clone) {
-            return Err(AppError::Other("Cancelled".to_string()));
-        }
-
-        let stext = p.to_text_page(mupdf::TextPageFlags::empty())?;
-        let mut lines: Vec<TextLine> = Vec::new();
-
-        for block in stext.blocks() {
-            if block.r#type() != mupdf::text_page::TextBlockType::Text {
-                continue;
-            }
-            for line in block.lines() {
-                let mut line_chars = Vec::new();
-                let mut lx0 = f64::MAX;
-                let mut ly0 = f64::MAX;
-                let mut lx1 = f64::MIN;
-                let mut ly1 = f64::MIN;
-
-                for ch in line.chars() {
-                    let c_char = match ch.char() {
-                        Some(c) => c,
-                        None => continue,
-                    };
-                    let cp = c_char as u32;
-                    // skip null bytes and non-printable control chars (keep tab/space)
-                    if cp == 0 || (cp < 32 && cp != 9) {
-                        continue;
-                    }
-                    let c = c_char.to_string();
-                    let q = ch.quad();
-                    let x0 = ((q.ul.x - b.x0) as f64) / pw;
-                    let y0 = ((q.ul.y - b.y0) as f64) / ph;
-                    let x1 = ((q.lr.x - b.x0) as f64) / pw;
-                    let y1 = ((q.lr.y - b.y0) as f64) / ph;
-
-                    lx0 = lx0.min(x0);
-                    ly0 = ly0.min(y0);
-                    lx1 = lx1.max(x1);
-                    ly1 = ly1.max(y1);
-
-                    line_chars.push(CharRect { c, x0, y0, x1, y1 });
-                }
-
-                if !line_chars.is_empty() {
-                    lines.push(TextLine {
-                        chars: line_chars,
-                        x0: lx0,
-                        y0: ly0,
-                        x1: lx1,
-                        y1: ly1,
-                    });
-                }
-            }
-        }
-        Ok(lines)
-    })
-    .await
-    .map_err(|e| AppError::Other(e.to_string()))?
+    let worker = worker.inner().clone();
+    tokio::task::spawn_blocking(move || worker.text(path, page))
+        .await
+        .map_err(|e| AppError::Other(e.to_string()))?
 }
 
 #[tauri::command]
@@ -573,36 +441,15 @@ pub async fn search_pdf(_path: String, _query: String) -> AppResult<Vec<SearchHi
 /// `page` is 1-indexed.
 #[tauri::command]
 #[cfg(not(target_os = "android"))]
-pub async fn get_page_links(path: String, page: u32) -> AppResult<Vec<PageLink>> {
-    tokio::task::spawn_blocking(move || -> AppResult<Vec<PageLink>> {
-        let doc = mupdf::Document::open(&path)?;
-        let p = doc.load_page(page as i32 - 1)?;
-        let b = p.bounds()?;
-        let pw = (b.x1 - b.x0) as f64;
-        let ph = (b.y1 - b.y0) as f64;
-        if pw == 0.0 || ph == 0.0 {
-            return Ok(vec![]);
-        }
-        let mut result = Vec::new();
-        for link in p.links()? {
-            if link.uri.is_empty() && link.dest.is_none() {
-                continue;
-            }
-            // dest.page_number is 0-based; convert to 1-based for the frontend
-            let page_dest = link.dest.map(|d| d.loc.page_number + 1);
-            result.push(PageLink {
-                x0: ((link.bounds.x0 - b.x0) as f64) / pw,
-                y0: ((link.bounds.y0 - b.y0) as f64) / ph,
-                x1: ((link.bounds.x1 - b.x0) as f64) / pw,
-                y1: ((link.bounds.y1 - b.y0) as f64) / ph,
-                uri: link.uri,
-                page: page_dest,
-            });
-        }
-        Ok(result)
-    })
-    .await
-    .map_err(|e| AppError::Other(e.to_string()))?
+pub async fn get_page_links(
+    worker: tauri::State<'_, crate::commands::render_worker::RenderWorker>,
+    path: String,
+    page: u32,
+) -> AppResult<Vec<PageLink>> {
+    let worker = worker.inner().clone();
+    tokio::task::spawn_blocking(move || worker.links(path, page))
+        .await
+        .map_err(|e| AppError::Other(e.to_string()))?
 }
 
 #[tauri::command]
@@ -640,6 +487,7 @@ pub async fn pdf_to_images(
     output_dir: Option<String>,
 ) -> AppResult<Vec<String>> {
     tokio::task::spawn_blocking(move || -> AppResult<Vec<String>> {
+        let _t = crate::utils::timing::Timer::start("pdf_to_images", String::new());
         let doc = mupdf::Document::open(&path)?;
         let page_count = doc.page_count()?;
         let fmt = format.unwrap_or_else(|| "png".to_string()).to_lowercase();

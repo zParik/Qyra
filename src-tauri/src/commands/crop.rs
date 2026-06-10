@@ -11,6 +11,7 @@ pub async fn crop_pages(
     output: Option<String>,
 ) -> AppResult<String> {
     tokio::task::spawn_blocking(move || -> AppResult<String> {
+        let _t = crate::utils::timing::Timer::start("crop_pages", String::new());
         let mut doc = Document::load(&path)?;
         let out = output.unwrap_or_else(|| temp_output_path(&path, "cropped"));
 

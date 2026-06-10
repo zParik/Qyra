@@ -48,9 +48,15 @@ pub async fn add_page_numbers(
     output: Option<String>,
     app_handle: tauri::AppHandle,
 ) -> AppResult<String> {
-    add_page_numbers_core(path, options, output, |p| {
-        let _ = app_handle.emit("operation-progress", p);
+    // Run the blocking lopdf work off the async executor so the UI stays
+    // responsive on large documents.
+    tokio::task::spawn_blocking(move || {
+        add_page_numbers_core(path, options, output, |p| {
+            let _ = app_handle.emit("operation-progress", p);
+        })
     })
+    .await
+    .map_err(|e| crate::error::AppError::Other(e.to_string()))?
 }
 
 /// Pure page-numbering core (no Tauri runtime). `progress` receives each step
@@ -73,6 +79,7 @@ pub fn add_page_numbers_core(
     let margin = opts.margin.unwrap_or(20.0);
     let position = opts.position.unwrap_or_else(|| "bottom-center".into());
 
+    let _t = crate::utils::timing::Timer::start("add_page_numbers", String::new());
     let mut doc = Document::load(&path)?;
 
     let font_id = doc.add_object(dictionary! {

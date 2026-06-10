@@ -1,15 +1,29 @@
 use crate::error::{AppError, AppResult};
 
+/// Count pages with MuPDF, reusing the render worker's open-document cache when
+/// the app is running. Falls back to opening directly (e.g. in tests).
+#[cfg(not(target_os = "android"))]
+fn count_pages(path: String) -> AppResult<usize> {
+    let read = |doc: &mupdf::Document| {
+        doc.page_count()
+            .map(|c| c as usize)
+            .map_err(|e| AppError::Pdf(e.to_string()))
+    };
+    match crate::commands::render_worker::global() {
+        Some(worker) => worker.with(path, read),
+        None => {
+            let doc = mupdf::Document::open(&path).map_err(|e| AppError::Pdf(e.to_string()))?;
+            read(&doc)
+        }
+    }
+}
+
 #[tauri::command]
 #[cfg(not(target_os = "android"))]
 pub async fn get_page_count(path: String) -> AppResult<usize> {
-    tokio::task::spawn_blocking(move || -> AppResult<usize> {
-        let doc = mupdf::Document::open(&path).map_err(|e| AppError::Pdf(e.to_string()))?;
-        let count = doc.page_count().map_err(|e| AppError::Pdf(e.to_string()))?;
-        Ok(count as usize)
-    })
-    .await
-    .map_err(|e| AppError::Other(e.to_string()))?
+    tokio::task::spawn_blocking(move || count_pages(path))
+        .await
+        .map_err(|e| AppError::Other(e.to_string()))?
 }
 
 #[tauri::command]

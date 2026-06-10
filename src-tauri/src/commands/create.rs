@@ -19,6 +19,7 @@ pub fn images_to_pdf(
 
     let out = output.unwrap_or_else(|| temp_output_path(&image_paths[0], "converted"));
 
+    let _t = crate::utils::timing::Timer::start("images_to_pdf", format!("{} imgs", image_paths.len()));
     let (doc, page1, layer1) = PdfDocument::new("Images to PDF", Mm(210.0), Mm(297.0), "Layer 1");
 
     for (i, img_path) in image_paths.iter().enumerate() {

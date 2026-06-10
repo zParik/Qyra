@@ -13,7 +13,6 @@ interface PdfAnnotation {
 interface Props {
   pdfPath: string;
   pageNum: number;
-  zoom: number;
   isEnabled: boolean;
   activeAnnotTool: string | null;
   onAnnotationAdded?: () => void;
@@ -347,7 +346,6 @@ function AnnotDiv({ annot, onClick }: AnnotDivProps) {
 export function AnnotationLayer({
   pdfPath,
   pageNum,
-  zoom: _zoom,
   isEnabled,
   activeAnnotTool: _activeAnnotTool,
   onAnnotationAdded: _onAnnotationAdded,

@@ -17,6 +17,7 @@ pub fn protect_pdf(
     owner_password: Option<String>,
     output: Option<String>,
 ) -> AppResult<String> {
+    let _t = crate::utils::timing::Timer::start("protect_pdf", String::new());
     let mut doc = Document::load(&path)?;
     let owner_pw = owner_password.unwrap_or_else(|| user_password.clone());
 

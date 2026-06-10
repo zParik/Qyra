@@ -3,14 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { ToolLayout } from "../components/ToolLayout";
 import { pickDirectory } from "../lib/tauri";
-import { isAndroid } from "../lib/androidFileUtils";
 import { UI, MONO } from "../lib/tokens";
-
-const GS_AVAILABLE = !isAndroid();
 
 type Op =
   | "compress"
-  | "compress-gs"
   | "flatten"
   | "rotate"
   | "watermark"
@@ -26,8 +22,7 @@ interface RowState {
 }
 
 const ALL_OPS: { id: Op; label: string; desc: string }[] = [
-  { id: "compress", label: "Compress (native)", desc: "zlib stream recompression on every file." },
-  { id: "compress-gs", label: "Compress (Ghostscript /ebook)", desc: "Image downsampling at 150 dpi. Best for scanned PDFs. Desktop only." },
+  { id: "compress", label: "Compress (native)", desc: "Image downsampling + stream recompression on every file." },
   { id: "flatten", label: "Flatten", desc: "Bake annotations + form fields into page content." },
   { id: "rotate", label: "Rotate 90° CW", desc: "Rotate every page 90° clockwise." },
   { id: "watermark", label: "Watermark (DRAFT)", desc: "Add a default DRAFT diagonal watermark." },
@@ -35,10 +30,9 @@ const ALL_OPS: { id: Op; label: string; desc: string }[] = [
   { id: "remove-metadata", label: "Anonymize metadata", desc: "Strip Info dict + XMP + auto-actions." },
 ];
 
-const OPS = ALL_OPS.filter((o) => GS_AVAILABLE || o.id !== "compress-gs");
+const OPS = ALL_OPS;
 
 function defaultSuffix(op: Op): string {
-  if (op === "compress-gs") return "gs-compressed";
   return op;
 }
 
@@ -99,9 +93,6 @@ export default function BatchOps() {
     switch (op) {
       case "compress":
         await invoke("compress_pdf", { path: row.path, output, level: 2 });
-        return output;
-      case "compress-gs":
-        await invoke("compress_pdf_gs", { path: row.path, output, preset: "ebook" });
         return output;
       case "flatten":
         await invoke("flatten_pdf", { path: row.path, output });

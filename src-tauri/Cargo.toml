@@ -31,9 +31,16 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 lopdf = "0.40"
 rand = "0.10"
-flate2 = "1"
+# zlib-rs backend: a pure-Rust deflate implementation that is markedly faster
+# than the default miniz_oxide, with no C/cmake build dependency (keeps the
+# Windows + Android builds simple). The native compressor recompresses every
+# Flate stream, so this speeds the hot path 2-3x. Output stays standard zlib.
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 printpdf = "0.7"
 image = { version = "0.25", features = ["png", "jpeg", "webp"] }
+# Memory-map PDF inputs so huge files are not read into the heap (no OOM at read,
+# especially on Android). Pure-Rust, supports Windows/unix/Android.
+memmap2 = "0.9"
 tokio = { version = "1", features = ["sync", "rt", "macros"] }
 rayon = "1"
 tempfile = "3"
@@ -57,7 +64,31 @@ jni = { version = "0.21", default-features = false }
 ndk-context = "0.1"
 libc = "0.2"
 
-# libc on unix desktop for nice() in compress_gs.rs lower_priority.
+# libc on unix desktop for setpriority() in the compressor's thread scheduling.
 [target.'cfg(all(unix, not(target_os = "android")))'.dependencies]
 libc = "0.2"
+
+# ── Build profiles ────────────────────────────────────────────────────────────
+# Release: maximize runtime speed of the Rust+C hot paths — MuPDF render, image
+# JPEG encode, the pdf parser/rewriter, lopdf split/merge. thin-LTO + a single
+# codegen unit trade compile time for ~10-25% faster binaries; strip shrinks it.
+# NOTE: panic = "abort" is deliberately NOT set — command handlers rely on
+# spawn_blocking catching task panics and returning them as AppError (JoinError).
+# panic=abort would turn a caught render panic into a whole-app crash.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+
+# Dev: keep OUR crate fast to compile and fully debuggable (opt-level 1 retains
+# line info), but compile every DEPENDENCY at opt-level 3 so the heavy stack
+# (MuPDF C via cc, image, flate2, lopdf, mupdf) runs release-grade under
+# `cargo tauri dev`. This is the single biggest fix for "everything is sluggish
+# in dev" — debug-mode MuPDF/image is 10-50x slower than optimized.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
 

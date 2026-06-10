@@ -176,12 +176,14 @@ fn csv_escape(s: &str) -> String {
 #[tauri::command]
 pub async fn get_page_annotations(path: String, page: u32) -> AppResult<Vec<PdfAnnotation>> {
     tokio::task::spawn_blocking(move || -> AppResult<Vec<PdfAnnotation>> {
-        let doc = Document::load(&path)?;
+        // Read-only: reuse the shared parse so scrolling an annotated document
+        // does not reparse the whole file once per visible page.
+        let doc = crate::commands::lopdf_cache::load(&path)?;
         let page_map: std::collections::HashMap<u32, ObjectId> = doc.get_pages().into_iter().collect();
         let page_id = page_map.get(&page).copied()
             .ok_or_else(|| AppError::NotFound(format!("Page {} not found", page)))?;
 
-        Ok(parse_page_annots(&doc, page, page_id))
+        Ok(parse_page_annots(doc.as_ref(), page, page_id))
     })
     .await
     .map_err(|e| AppError::Other(e.to_string()))?

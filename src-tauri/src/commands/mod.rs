@@ -2,11 +2,13 @@ pub mod android_pdf;
 pub mod merge;
 pub mod split;
 pub mod compress;
-pub mod compress_gs;
 pub mod rotate;
 pub mod remove;
 pub mod reorder;
 pub mod render;
+#[cfg(not(target_os = "android"))]
+pub mod render_worker;
+pub mod lopdf_cache;
 pub mod create;
 pub mod page_numbers;
 pub mod protect;

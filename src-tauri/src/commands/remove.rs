@@ -13,6 +13,7 @@ pub fn remove_pages(
         return Err(AppError::Invalid("No pages specified".to_string()));
     }
 
+    let _t = crate::utils::timing::Timer::start("remove_pages", format!("{} pages", pages.len()));
     let mut doc = Document::load(&path)?;
     let total = doc.get_pages().len() as u32;
 

@@ -67,6 +67,13 @@ pub fn dedup(
     let mut keep = vec![true; objects.len()];
 
     for i in 0..objects.len() {
+        // Skip serialization for large stream objects — they are almost never
+        // duplicates and serializing them is very expensive on object-heavy PDFs.
+        if let PdfObject::Stream(ref s) = objects[i].1 {
+            if s.raw_bytes.len() > 65_536 {
+                continue;
+            }
+        }
         let bytes = serialize(&objects[i].1);
         let key = hash_bytes(&bytes);
         let bucket = buckets.entry(key).or_default();

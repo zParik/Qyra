@@ -1,19 +1,20 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAppStore } from "../store/useAppStore";
 import { useNotesStore, PageTemplate, VirtualPage } from "../store/useNotesStore";
 
-import { usePageThumbnails, evictPathFromThumbnailCache } from "../hooks/usePageThumbnails";
+import { usePageThumbnails, evictPathFromThumbnailCache, freePathMemoryThumbnails } from "../hooks/usePageThumbnails";
 import { PageStrip } from "./PageStrip";
 import { ScrollPageIndicator } from "./ScrollPageIndicator";
 import { ZoomFab } from "./ZoomFab";
 import { ToolSidebar, ViewerTool } from "./ToolSidebar";
 import { invoke } from "@tauri-apps/api/core";
-import { copyFile, showSaveDialog, bakeAnnotations, setActiveDocument } from "../lib/tauri";
+import { copyFile, showSaveDialog, bakeAnnotations, setActiveDocument, saveCompressedCopy } from "../lib/tauri";
 import { loadSetting, Settings } from "../lib/settings";
 import { triggerPrint } from "./tools/PrintPanel";
 import { DrawingCanvas } from "./DrawingCanvas";
 import { VirtualPageBackground } from "./VirtualPageBackground";
+import { PageCanvas } from "./PageCanvas";
 import { DrawToolbar } from "./tools/DrawToolbar";
 import { TextLayer } from "./TextLayer";
 import { LinkLayer } from "./LinkLayer";
@@ -27,6 +28,7 @@ import { AnnotationToolbar } from "./AnnotationToolbar";
 import { SignaturePanel } from "./tools/SignaturePanel";
 import { useFormFilling } from "./useFormFilling";
 import { PresentationMode } from "./PresentationMode";
+import { nextZoomFromWheel, snapZoom, clampZoom } from "./zoom";
 import { useComments } from "./hooks/useComments";
 import { useViewerUI } from "./hooks/useViewerUI";
 import { useToolMode } from "./hooks/useToolMode";
@@ -39,6 +41,29 @@ import { useAutoSave } from "./hooks/useAutoSave";
 // import { getPageOcrText } from "../lib/ocrEngine";
 
 const EMPTY_VIRTUAL_PAGES: VirtualPage[] = [];
+const EMPTY_SIGS: never[] = [];
+
+// How long the wheel must be still before a zoom gesture commits — i.e. before the
+// page boxes resize to the final zoom AND the high-res render is fetched. The smooth
+// CSS transform preview covers this window, so a longer settle just means fast zoom-
+// spam never fetches an intermediate resolution; it lands once. Tune to taste.
+const ZOOM_COMMIT_SETTLE_MS = 400;
+
+// Hard cap on how many pages get ACTIVE OPERATIONS (bitmap decode, text/link fetch,
+// find highlights) around the current page. The page bitmaps are the only heavy memory,
+// so capping to ±this bounds RAM regardless of zoom-out (which would otherwise fit
+// dozens of pages on screen at once) and stops a fast scroll from loading everything it
+// flies past. Pages beyond the band show a cheap placeholder until you scroll to them.
+const MAX_LOADED_RADIUS = 3;
+
+// Keep zone: pages within ±this of the current page stay MOUNTED and FROZEN once loaded
+// — the canvas keeps its last frame, but no operation touches them (no decode, no IPC,
+// no redraw). Re-entering the ±MAX_LOADED_RADIUS band "syncs" them again, and PageCanvas
+// skips the decode entirely if the cached render is unchanged. This is what stops the
+// load/unload thrash when scrolling back and forth: leaving the band no longer destroys
+// the page, it just freezes it. Beyond the keep zone pages unmount and free their backing,
+// so worst-case pinned memory is (2·KEEP_RADIUS+1) frames at the current render scale.
+const KEEP_RADIUS = 8;
 
 /** 0-based index of the current find hit among hits on `page`, or -1 if none. */
 function findActiveMatchOrdinalOnPage(
@@ -90,6 +115,10 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
 
   const [docAspectRatio, setDocAspectRatio] = useState(1.4142);
   const [zoom, setZoom] = useState(1.0);
+  // Always-fresh mirror of `zoom` for the wheel handler, which accumulates a
+  // gesture's zoom in a ref and commits to React state only once it settles.
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
 
   // Viewer UI: chrome visibility, reading/presentation modes, back-confirm overlay
   const {
@@ -134,6 +163,18 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
     pendingSignature, setPendingSignature,
     showSignaturePanel, setShowSignaturePanel,
   } = useSignatures();
+
+  // Group signatures by page once per change instead of running
+  // signatures.filter() for every visible page on every render.
+  const sigsByPage = useMemo(() => {
+    const m = new Map<number, typeof signatures>();
+    for (const s of signatures) {
+      const arr = m.get(s.pageNum);
+      if (arr) arr.push(s);
+      else m.set(s.pageNum, [s]);
+    }
+    return m;
+  }, [signatures]);
 
   // Form filling
   const { fieldValues, setFieldValue, saveFormFields: _saveFormFields, isDirty: _isFormDirty } = useFormFilling();
@@ -190,7 +231,7 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
   function adjustZoom(delta: number) {
     setZoom((prev) => {
       const next = Math.round((prev + delta) * 100) / 100;
-      return Math.min(3.0, Math.max(0.25, next));
+      return snapZoom(next);
     });
   }
 
@@ -247,14 +288,45 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
 
   // --- Virtual scroll for center pane ---
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  // Wraps all the absolutely-positioned page slots. During a zoom gesture we apply a
+  // transient CSS `transform: scale()` here for an instant, smooth preview (no re-render,
+  // no re-raster of pages); on settle we commit the real zoom and clear the transform.
+  const contentWrapperRef = useRef<HTMLDivElement>(null);
   const [centerScrollTop, setCenterScrollTop] = useState(0);
   const [containerWidth, setContainerWidth] = useState(0);
+  const [containerHeight, setContainerHeight] = useState(0);
+  const suppressScrollRef = useRef(false);
+
+  // Fling detector. Every page that enters the virtual window mounts its full overlay
+  // stack (text/link/comment/form/… layers), and TextLayer + LinkLayer each fire an IPC
+  // fetch on mount — so flinging 0→50 mounts/unmounts ~50 heavy subtrees and queues ~100
+  // IPC calls while the software compositor re-rasters the churning DOM every frame.
+  // That transient pile was a multi-GB RAM spike (OOM risk on small machines). While a
+  // fling is in progress we render canvas/placeholder ONLY; the overlay layers mount
+  // once scrolling settles. Programmatic jumps (scrollToPage, zoom re-anchor) set
+  // suppressScrollRef and never trip this.
+  const [scrollSettled, setScrollSettled] = useState(true);
+  const scrollSamplesRef = useRef<{ t: number; y: number }[]>([]);
+  const scrollSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (scrollSettleTimerRef.current) clearTimeout(scrollSettleTimerRef.current);
+  }, []);
 
   useEffect(() => {
     const el = scrollContainerRef.current;
     if (!el) return;
+    // Width is kept stable by scrollbar-gutter; height is not, because a HORIZONTAL
+    // scrollbar (which appears when a zoomed page overflows the width) shrinks the
+    // content height by the scrollbar's thickness. Updating containerHeight on that
+    // would fire a re-render + virtual-window recompute every time you cross fit-width.
+    // So ignore height deltas within a scrollbar's thickness; real resizes are larger.
+    let lastH = 0;
     const observer = new ResizeObserver((entries) => {
-      if (entries[0]) setContainerWidth(entries[0].contentRect.width);
+      if (entries[0]) {
+        setContainerWidth(entries[0].contentRect.width);
+        const h = entries[0].contentRect.height;
+        if (Math.abs(h - lastH) > 24) { lastH = h; setContainerHeight(h); }
+      }
     });
     observer.observe(el);
     return () => observer.disconnect();
@@ -265,24 +337,36 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
   const TOP_PAD    = 32;    // sm:py-8
   const SIDE_PAD   = 32;    // sm:px-8
   const BUFFER_SLOTS = 2;   // small buffer to avoid gaps when scrolling
+  // Base width (CSS px) the page CANVAS BACKING STORE is rendered at — pinned, so the
+  // bitmap memory a page costs never grows with zoom. The page BOX is laid out at the
+  // zoomed pixel width (zoom*768) and the canvas (w-full) CSS-stretches this fixed
+  // bitmap to fill it — no transform/zoom scale, so the WebView never caches a per-scale
+  // raster tile-set in native RAM (that pyramid hit ~20 GB during zoom-spam). See the
+  // page render block.
+  const BASE_PAGE_W = 768;
 
   const basePageW = zoom * 768;
   const actualPageW = basePageW;
   const slotH = actualPageW * docAspectRatio + SLOT_MARGIN;
-  const containerH = scrollContainerRef.current?.clientHeight ?? 600;
+  const containerH = containerHeight || 600;
   const firstSlot  = Math.max(0, Math.floor((centerScrollTop - TOP_PAD) / slotH) - BUFFER_SLOTS);
   const lastSlot   = Math.min(pageSlots.length - 1, Math.ceil((centerScrollTop + containerH - TOP_PAD) / slotH) + BUFFER_SLOTS);
   const totalH     = TOP_PAD * 2 + pageSlots.length * slotH;
 
-  // Visible PDF page numbers come from the virtual scroll window — no IntersectionObserver needed
+  // Visible PDF page numbers come from the virtual scroll window — no IntersectionObserver
+  // needed — but HARD-CAPPED to ±MAX_LOADED_RADIUS of the current page. That bounds the
+  // rendered/decoded set (the only heavy memory) no matter how far zoomed out, and means
+  // a fast scroll only ever loads a tight band around where you actually are.
   const visiblePageNums = useMemo(() => {
     const nums = new Set<number>();
     for (let i = firstSlot; i <= lastSlot; i++) {
       const slot = pageSlots[i];
-      if (slot?.type === 'pdf') nums.add(slot.pdfPage);
+      if (slot?.type === 'pdf' && Math.abs(slot.pdfPage - currentPage) <= MAX_LOADED_RADIUS) {
+        nums.add(slot.pdfPage);
+      }
     }
     return nums;
-  }, [firstSlot, lastSlot, pageSlots]);
+  }, [firstSlot, lastSlot, pageSlots, currentPage]);
 
   // O(1) lookup: PDF page number → slot index, used by scrollToPage
   const pageToSlotIndex = useMemo(() => {
@@ -290,6 +374,13 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
     pageSlots.forEach((slot, i) => { if (slot.type === 'pdf') m.set(slot.pdfPage, i); });
     return m;
   }, [pageSlots]);
+
+  // Mount range = viewport window ∪ keep zone. Slots in the keep zone but outside the
+  // viewport stay mounted (frozen — see KEEP_RADIUS); slots beyond both unmount and
+  // free their canvas backing.
+  const curSlotIdx = pageToSlotIndex.get(currentPage) ?? 0;
+  const mountFirst = Math.max(0, Math.min(firstSlot, curSlotIdx - KEEP_RADIUS));
+  const mountLast = Math.min(pageSlots.length - 1, Math.max(lastSlot, curSlotIdx + KEEP_RADIUS));
 
   const [stripVisibleRange, setStripVisibleRange] = useState<[number, number]>([1, 5]);
   const stripVisibleNums = useMemo(() => {
@@ -300,30 +391,72 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
   }, [stripVisibleRange, pageCount]);
 
   const stripThumbnails = usePageThumbnails(viewerFile?.path ?? null, pageCount, 0.3, stripVisibleNums);
-  // Fixed render scale — independent of zoom. Browser CSS scales the <img> to the
-  // current displayed width, so zoom never triggers a re-render. Crisp up to
-  // ~1.3x zoom on HiDPI; slightly soft beyond. Eliminates flicker entirely.
+  // Render-at-zoom, quantized: the page bitmap is rasterized (by MuPDF) at the current
+  // zoom BUCKET's resolution and CSS-downscaled the rest of the way. With no transform
+  // scaling the canvas, the WebView (software-compositing here, GPU stays idle) never
+  // caches a per-scale raster tile-set in system RAM — the multi-GB zoom-spam blowup.
+  //
+  // Why buckets instead of the exact zoom: re-rendering on every 0.1 ladder step costs
+  // a full band re-render + IPC per step and mints a new cache key each time. Rounding
+  // the RENDER resolution UP to the next 0.5 bucket means steps inside a bucket re-render
+  // NOTHING (the canvas just CSS-resizes its unchanged backing — no clear, no decode,
+  // no flicker) and the whole 0.25–3.0 range uses at most 6 distinct scales, so the LRU
+  // holds several zoom levels of the visible band and revisits are instant. Rounding up
+  // guarantees downscale-only display: never blurry, at worst ~2× transient pixels.
+  // The Rust worker clamps the longest raster edge (MAX_RENDER_DIM) as the upper guard.
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const centerRenderScale = 2.0 * dpr;
+  const renderZoomBucket = Math.min(3, Math.max(0.5, Math.ceil(zoom * 2) / 2));
+  const centerRenderScale = 1.5 * dpr * renderZoomBucket;
   const centerThumbnails = usePageThumbnails(viewerFile?.path ?? null, pageCount, centerRenderScale, visiblePageNums);
 
-  // Re-anchor scroll position when zoom changes so the current page stays in view
+  // Anchor of the zoom gesture in content coords + its offset inside the viewport.
+  // Captured at gesture start (wheel: cursor; pinch: midpoint); consumed by the commit
+  // layout effect so the exact content point under the cursor/fingers stays put.
+  const zoomAnchorRef = useRef<{ cx: number; cy: number; ox: number; oy: number } | null>(null);
+
+  // On a committed zoom/aspect change: clear the gesture preview transform and re-anchor
+  // scroll so the gesture's anchor point (cursor / pinch midpoint, falling back to the
+  // viewport centre for keyboard/toolbar zoom) stays on the same content — matching the
+  // preview's transform-origin, so there is no jump at the preview→commit handoff.
+  // useLayoutEffect so both happen BEFORE the browser paints the new layout — otherwise
+  // the new (larger) layout would paint one frame with the stale preview transform = flash.
+  // Vertical positions scale by newSlotH/oldSlotH (slots are uniform); horizontal page
+  // coords scale by the raw zoom ratio about the SIDE_PAD edge (the browser clamps when
+  // there is no horizontal overflow).
   const prevZoomRef = useRef(zoom);
   const prevAspectRef = useRef(docAspectRatio);
   const prevContainerWidthRef = useRef(containerWidth);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (prevZoomRef.current === zoom && prevAspectRef.current === docAspectRatio && prevContainerWidthRef.current === containerWidth) return;
+    const prevZoom = prevZoomRef.current;
+    const prevAspect = prevAspectRef.current;
     prevZoomRef.current = zoom;
     prevAspectRef.current = docAspectRatio;
     prevContainerWidthRef.current = containerWidth;
+    // Clear the transient preview transform now that the real layout is at this zoom.
+    if (contentWrapperRef.current) contentWrapperRef.current.style.transform = "";
     const container = scrollContainerRef.current;
     if (!container) return;
-    const idx = pageToSlotIndex.get(currentPage) ?? 0;
-    const actW = zoom * 768;
-    const newSlotH = actW * docAspectRatio + SLOT_MARGIN;
-    const newSt = TOP_PAD + idx * newSlotH;
+    const oldSlotH = prevZoom * 768 * prevAspect + SLOT_MARGIN;
+    const newSlotH = zoom * 768 * docAspectRatio + SLOT_MARGIN;
+    if (oldSlotH <= 0) return;
+    const ratioV = newSlotH / oldSlotH;
+    const ratioH = prevZoom > 0 ? zoom / prevZoom : 1;
+    const half = container.clientHeight / 2;
+    const anchor = zoomAnchorRef.current ?? {
+      cx: container.scrollLeft + container.clientWidth / 2,
+      cy: container.scrollTop + half,
+      ox: container.clientWidth / 2,
+      oy: half,
+    };
+    zoomAnchorRef.current = null;
+    const newSt = Math.max(0, TOP_PAD + (anchor.cy - TOP_PAD) * ratioV - anchor.oy);
+    const newSl = Math.max(0, SIDE_PAD + (anchor.cx - SIDE_PAD) * ratioH - anchor.ox);
+    suppressScrollRef.current = true;
     container.scrollTop = newSt;
+    container.scrollLeft = newSl;
     setCenterScrollTop(newSt);
+    requestAnimationFrame(() => suppressScrollRef.current = false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zoom, docAspectRatio, containerWidth]);
 
@@ -339,7 +472,9 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
       try {
         const ratio = await invoke<number>("get_page_aspect_ratio", { path: viewerFile!.path });
         if (!cancelled && ratio > 0) setDocAspectRatio(ratio);
-      } catch {}
+      } catch {
+        // ignore
+      }
     }
     fetchAspectRatio();
     return () => { cancelled = true; };
@@ -403,63 +538,148 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
     }
   }, []);
 
-  // Ctrl+wheel / pinch-to-zoom (non-passive, attached to window so WebView2 native zoom is blocked)
+  // Zoom gesture controller: ctrl+wheel (non-passive on window so WebView2 native zoom
+  // is blocked) and two-finger pinch share one preview/commit pipeline.
+  //
+  // Wheel events fire far faster than the screen refreshes (60–120+/sec on a trackpad).
+  // Calling setZoom on every one floods React with full re-renders faster than the
+  // WebView can drain them. Instead the gesture drives a transient CSS transform preview
+  // (instant, anchored on the cursor / pinch midpoint, re-renders nothing) and commits
+  // ONE snapped zoom once the gesture settles; the layout effect above then re-anchors
+  // scroll to the same anchor point, so the content under the cursor never moves.
   useEffect(() => {
+    let accumDelta = 0;
+    let raf: number | null = null;
+    let settleTimer: ReturnType<typeof setTimeout> | null = null;
+    // Continuous gesture zoom — drives the smooth CSS preview every frame. The
+    // committed (React-state) zoom only changes on settle, and is snapped to the
+    // ladder so the render cache sees only a handful of distinct scales.
+    let previewZoom: number | null = null;
+    // Preview transform origin in content coords, captured once per gesture.
+    let originX = 0, originY = 0;
+    // Where the wheel cursor was (viewport coords) — anchor for the next gesture.
+    let lastClientX = 0, lastClientY = 0;
+    // Pinch state.
+    let lastDist = 0;
+
+    // Capture the gesture anchor: the content point under (clientX, clientY) plus its
+    // offset inside the viewport. The preview scales about it; the commit layout effect
+    // consumes zoomAnchorRef to pin the same point after the real layout lands.
+    function captureAnchor(clientX: number, clientY: number) {
+      const container = scrollContainerRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      const ox = clientX - rect.left;
+      const oy = clientY - rect.top;
+      originX = container.scrollLeft + ox;
+      originY = container.scrollTop + oy;
+      zoomAnchorRef.current = { cx: originX, cy: originY, ox, oy };
+    }
+    function applyPreview() {
+      const wrapper = contentWrapperRef.current;
+      if (!wrapper || previewZoom == null) return;
+      // Scale the page slots relative to the CURRENT committed layout. This is a pure
+      // composite transform — instant, smooth, and it re-renders NOTHING, so a fast
+      // zoom-spam never decodes a page or spikes RAM mid-gesture.
+      wrapper.style.transformOrigin = `${originX}px ${originY}px`;
+      wrapper.style.transform = `scale(${previewZoom / zoomRef.current})`;
+    }
+    function scheduleCommit() {
+      // Commit (and thus fetch the high-res render) only once the gesture has been
+      // still for a beat. The transform preview covers this gap, so fast zoom-spam
+      // never fetches an intermediate resolution — only the zoom you land on.
+      if (settleTimer) clearTimeout(settleTimer);
+      settleTimer = setTimeout(commit, ZOOM_COMMIT_SETTLE_MS);
+    }
+    function commit() {
+      if (settleTimer) clearTimeout(settleTimer);
+      settleTimer = null;
+      if (previewZoom == null) return;
+      const container = scrollContainerRef.current;
+      const cw = container ? container.clientWidth : window.innerWidth;
+      const fitZoom = (cw - 32) / 768;
+      // Snap on commit (fit-width magnet exempt so it stays exactly landable). The
+      // layout effect then clears the transform + re-anchors, pre-paint.
+      const committed = Math.abs(previewZoom - fitZoom) < 1e-6 ? previewZoom : snapZoom(previewZoom);
+      previewZoom = null;
+      setZoom(committed);
+    }
+
+    // ── ctrl+wheel ──
+    function flush() {
+      raf = null;
+      const delta = accumDelta;
+      accumDelta = 0;
+      if (delta === 0) return;
+      const container = scrollContainerRef.current;
+      const cw = container ? container.clientWidth : window.innerWidth;
+      // fitZoom = zoom at which page exactly fills container (accounting for 32px horizontal padding)
+      const fitZoom = (cw - 32) / 768;
+      const wasIdle = previewZoom == null;
+      const base = previewZoom ?? zoomRef.current;
+      // Continuous (un-snapped) so the preview is buttery; snapping happens at commit.
+      previewZoom = nextZoomFromWheel(base, delta, fitZoom);
+      if (wasIdle) captureAnchor(lastClientX, lastClientY);
+      applyPreview();
+      scheduleCommit();
+    }
     function onWheel(e: WheelEvent) {
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
-        const container = scrollContainerRef.current;
-        const containerWidth = container ? container.clientWidth : window.innerWidth;
-        // fitZoom = zoom at which page exactly fills container (accounting for 32px horizontal padding)
-        const fitZoom = (containerWidth - 32) / 768;
-        setZoom((prev) => {
-          const factor = Math.pow(0.999, e.deltaY);
-          const next = Math.min(3.0, Math.max(0.25, prev * factor));
-          // Magnet: snap to fit-width only when crossing into the zone (not when already there)
-          const inZone = (z: number) => Math.abs(z - fitZoom) < fitZoom * 0.04;
-          if (!inZone(prev) && inZone(next)) return fitZoom;
-          return next;
-        });
+        accumDelta += e.deltaY;
+        lastClientX = e.clientX;
+        lastClientY = e.clientY;
+        if (raf == null) raf = requestAnimationFrame(flush);
       }
     }
-    window.addEventListener("wheel", onWheel, { passive: false });
-    return () => window.removeEventListener("wheel", onWheel);
-  }, []);
 
-  // Pinch-to-zoom via touch (two-finger gesture on Android / iOS)
-  useEffect(() => {
-    const el = scrollContainerRef.current;
-    if (!el) return;
-
-    let lastDist = 0;
-
+    // ── two-finger pinch ──
     function pinchDist(e: TouchEvent) {
       const [a, b] = [e.touches[0]!, e.touches[1]!];
       return Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
     }
-
     function onTouchStart(e: TouchEvent) {
       if (e.touches.length === 2) lastDist = pinchDist(e);
     }
-
     function onTouchMove(e: TouchEvent) {
       if (e.touches.length !== 2 || lastDist === 0) return;
       e.preventDefault();
       const dist = pinchDist(e);
       const factor = dist / lastDist;
       lastDist = dist;
-      setZoom((prev) => Math.min(3.0, Math.max(0.25, prev * factor)));
+      const wasIdle = previewZoom == null;
+      const base = previewZoom ?? zoomRef.current;
+      // Continuous, like the wheel — the old per-move snap+commit re-laid-out the page
+      // mid-gesture; now the fingers drive the preview and the commit lands on release.
+      previewZoom = clampZoom(base * factor);
+      if (wasIdle) {
+        const [a, b] = [e.touches[0]!, e.touches[1]!];
+        captureAnchor((a.clientX + b.clientX) / 2, (a.clientY + b.clientY) / 2);
+      }
+      applyPreview();
+      scheduleCommit();
+    }
+    function onTouchEnd(e: TouchEvent) {
+      if (e.touches.length >= 2) return;
+      lastDist = 0;
+      // Fingers lifted — commit immediately rather than waiting out the settle timer.
+      commit();
     }
 
-    function onTouchEnd() { lastDist = 0; }
-
-    el.addEventListener("touchstart", onTouchStart, { passive: true });
-    el.addEventListener("touchmove", onTouchMove, { passive: false });
-    el.addEventListener("touchend", onTouchEnd, { passive: true });
+    const el = scrollContainerRef.current;
+    window.addEventListener("wheel", onWheel, { passive: false });
+    el?.addEventListener("touchstart", onTouchStart, { passive: true });
+    el?.addEventListener("touchmove", onTouchMove, { passive: false });
+    el?.addEventListener("touchend", onTouchEnd, { passive: true });
+    el?.addEventListener("touchcancel", onTouchEnd, { passive: true });
     return () => {
-      el.removeEventListener("touchstart", onTouchStart);
-      el.removeEventListener("touchmove", onTouchMove);
-      el.removeEventListener("touchend", onTouchEnd);
+      window.removeEventListener("wheel", onWheel);
+      el?.removeEventListener("touchstart", onTouchStart);
+      el?.removeEventListener("touchmove", onTouchMove);
+      el?.removeEventListener("touchend", onTouchEnd);
+      el?.removeEventListener("touchcancel", onTouchEnd);
+      if (raf != null) cancelAnimationFrame(raf);
+      if (settleTimer) clearTimeout(settleTimer);
     };
   // scrollContainerRef.current is stable after mount
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -608,8 +828,30 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
   function handleScroll() {
     const container = scrollContainerRef.current;
     if (!container) return;
+    if (suppressScrollRef.current) return;
     const st = container.scrollTop;
     setCenterScrollTop(st);
+
+    // Fling detection: distance covered in the last ~150ms exceeding a viewport-height
+    // means the user is flying past pages, not reading — strip the overlay layers.
+    const now = performance.now();
+    const samples = scrollSamplesRef.current;
+    samples.push({ t: now, y: st });
+    while (samples.length > 0 && now - samples[0]!.t > 150) samples.shift();
+    const dist = Math.abs(st - samples[0]!.y);
+    const h = containerHeight || 600;
+    // >1 viewport in 150ms = flinging. Settled comes back ONLY via the quiet timer
+    // below — an early speed-based re-entry flapped during fling deceleration, firing
+    // band decodes + layer mounts for every intermediate position (multi-GB transient)
+    // and cancelling first decodes mid-flight (stuck spinners).
+    if (dist > h && scrollSettled) setScrollSettled(false);
+    if (scrollSettleTimerRef.current) clearTimeout(scrollSettleTimerRef.current);
+    scrollSettleTimerRef.current = setTimeout(() => {
+      scrollSettleTimerRef.current = null;
+      scrollSamplesRef.current = [];
+      setScrollSettled(true);
+    }, 180);
+
     // Derive current page from scroll position — O(1), no DOM queries
     const rawIdx = Math.max(0, Math.min(pageSlots.length - 1, Math.round((st - TOP_PAD) / slotH)));
     for (let i = rawIdx; i >= 0; i--) {
@@ -624,8 +866,10 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
     if (!container) return;
     const idx = pageToSlotIndex.get(page) ?? 0;
     const newSt = TOP_PAD + idx * slotH;
+    suppressScrollRef.current = true;
     container.scrollTop = newSt;
     setCenterScrollTop(newSt);
+    requestAnimationFrame(() => suppressScrollRef.current = false);
   }
   // Keep the find-in-document hook's nav callback pointing at the latest closure.
   scrollToPageRef.current = scrollToPage;
@@ -676,10 +920,37 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
     }
   }
 
-  async function handleApplied(path: string) {
+  async function handleApplied(path: string, opts?: { saveAsNew?: boolean }) {
+    const prevPath = viewerFile?.path;
+
+    // Compress: save the result as a NEW file beside the original (never
+    // overwrite), then open it as a clean, saved document — no "unsaved" limbo.
+    if (opts?.saveAsNew) {
+      const base = originalViewerPath ?? prevPath ?? path;
+      try {
+        const dest = await saveCompressedCopy(path, base);
+        setUndoViewerFile(viewerFile); // Ctrl+Z → back to the pre-compress doc
+        handleOpenFile(dest);
+        setOriginalViewerPath(dest); // the new file is its own document
+        setIsViewerDirty(false);
+        markSaved();
+        if (prevPath && prevPath !== dest) freePathMemoryThumbnails(prevPath);
+        return;
+      } catch (e) {
+        // Couldn't place the file (e.g. no real path on Android) — fall back to
+        // opening the result as an unsaved edit so it isn't lost.
+        setSaveStatus("error");
+        setSaveError(friendlySaveError(e));
+      }
+    }
+
     setUndoViewerFile(viewerFile); // snapshot for Ctrl+Z
     handleOpenFile(path);
     setIsViewerDirty(true);
+    // Free the superseded document's in-memory bitmaps now — the viewer has
+    // moved to `path`, so the old file's rendered pages just waste WebView heap.
+    // (Undo re-renders them lazily; disk/session caches keep that cheap.)
+    if (prevPath && prevPath !== path) freePathMemoryThumbnails(prevPath);
     if (autoSaveRef.current) {
       clearTimeout(autoSaveTimerRef.current);
       autoSaveTimerRef.current = window.setTimeout(triggerAutoSave, 1500);
@@ -1454,7 +1725,10 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
         <div
           ref={scrollContainerRef}
           className="flex-1 overflow-auto"
-          style={{ background: "var(--viewer-canvas)", paddingBottom: "env(safe-area-inset-bottom, 0px)", position: "relative" }}
+          // scrollbar-gutter: stable reserves the vertical scrollbar's space so it
+          // appearing/disappearing never resizes the content → no ResizeObserver churn /
+          // re-render on (zoom) overflow.
+          style={{ background: "var(--viewer-canvas)", paddingBottom: "env(safe-area-inset-bottom, 0px)", position: "relative", scrollbarGutter: "stable" }}
           onScroll={handleScroll}
         >
           <ScrollPageIndicator
@@ -1602,7 +1876,7 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
           )}
 
           {/* Virtual scroll container — only renders the visible window of slots */}
-          <div style={{ position: "relative", height: totalH }}>
+          <div ref={contentWrapperRef} style={{ position: "relative", height: totalH }}>
 
             {/* Add-page bar before first page (draw mode) */}
             {activeTool === "draw" && pageSlots.length > 0 && (
@@ -1611,8 +1885,8 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
               </div>
             )}
 
-            {pageSlots.slice(firstSlot, lastSlot + 1).map((slot, i) => {
-              const slotIndex = firstSlot + i;
+            {pageSlots.slice(mountFirst, mountLast + 1).map((slot, i) => {
+              const slotIndex = mountFirst + i;
               const topPos = TOP_PAD + slotIndex * slotH;
 
               if (slot.type === 'pdf') {
@@ -1632,6 +1906,16 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                         paddingRight: SIDE_PAD,
                       }}
                     >
+                      {/* Render-at-zoom page box: laid out at the zoomed pixel WIDTH with NO
+                          transform/zoom scaling. The page canvas is rendered at this zoom's
+                          resolution (see centerRenderScale) and shown ~1:1, so the software
+                          compositor holds one raster per visible page and never a per-scale pyramid.
+
+                          Height is deliberately NOT set: the canvas's own (true, per-page) aspect
+                          drives it. The slot math uses the document-nominal aspect, but a page whose
+                          real aspect differs would misalign every %-positioned overlay (text/links/
+                          comments/draw) if the box were forced to the nominal height — the box must
+                          shrink-wrap the canvas so overlays with inset:0 align by construction. */}
                       <div
                         className="relative"
                         data-page-index={page}
@@ -1642,38 +1926,19 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                         }}
                         onClick={activeTool === "remove" ? () => handlePageToggle(page) : undefined}
                       >
-                        {centerThumbnails[page] ? (
-                          <img
-                            src={centerThumbnails[page]}
-                            alt={`Page ${page}`}
-                            className="w-full rounded shadow-2xl block"
-                            draggable={false}
-                            style={{
-                              height: "auto",
-                              display: "block",
-                              userSelect: "none",
-                              WebkitUserSelect: "none",
-                              WebkitUserDrag: "none",
-                              pointerEvents: "none",
-                              ...(isSelected ? { outline: "3px solid #ef4444", borderRadius: "0.5rem" } : {}),
-                            } as React.CSSProperties}
-                          />
-                        ) : (
-                          <div
-                            className="rounded flex flex-col items-center justify-center gap-2"
-                            style={{
-                              aspectRatio: `1/${docAspectRatio}`,
-                              background: "color-mix(in oklch, var(--viewer-elevated) 60%, transparent)",
-                              border: isSelected ? "3px solid #ef4444" : "1px solid var(--viewer-border-sub)",
-                            }}
-                          >
-                            <svg className="w-6 h-6 animate-spin" style={{ color: "var(--viewer-text-muted)" }} fill="none" viewBox="0 0 24 24">
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-                            </svg>
-                            <span className="text-xs" style={{ color: "var(--viewer-text-muted)" }}>Page {page}</span>
-                          </div>
-                        )}
+                        {/* src is withheld during a fling: a page mounting mid-fling with a
+                            cached src would decode its JPEG into a full RGBA ImageBitmap +
+                            canvas backing (tens of MB each at high zoom) just to fly off
+                            screen — ~50 such decodes piled multi-GB of transient native RAM.
+                            Withholding src defers ALL decode to settle (≤ the ±3 band). Pages
+                            already showing a frame keep it (PageCanvas never clears on
+                            src→undefined), so nothing visible blanks. */}
+                        <PageCanvas
+                          src={scrollSettled ? centerThumbnails[page] : undefined}
+                          aspect={docAspectRatio}
+                          pageLabel={page}
+                          isSelected={isSelected}
+                        />
                         {isSelected && (
                           <div className="absolute inset-0 rounded flex items-center justify-center pointer-events-none"
                             style={{ background: "rgba(239, 68, 68, 0.25)" }}>
@@ -1684,10 +1949,15 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                             </div>
                           </div>
                         )}
+                        {/* Overlay stack mounts only for pages in the active band AND once
+                            scrolling settles. Keep-zone pages are frozen: their canvas frame
+                            stays, but no layer subtree (and no mount-time IPC) runs on them.
+                            During a fling these subtrees would churn for every page flying
+                            past — the source of the fast-scroll RAM spike. */}
+                        {scrollSettled && Math.abs(page - currentPage) <= MAX_LOADED_RADIUS && <>
                         <TextLayer
                           pdfPath={viewerFile.path}
                           pageNum={page}
-                          zoom={zoom}
                           findQuery={findOpen ? findQuery : undefined}
                           findActiveMatchOrdinal={
                             findOpen && findQuery.trim()
@@ -1708,7 +1978,6 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                           pageSlotId={slot.slotId}
                           docPath={viewerFile.path}
                           isDrawingMode={activeTool === "draw"}
-                          zoom={zoom}
                         />
                         <CommentLayer
                           pageIndex={page}
@@ -1718,7 +1987,6 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                         <FormLayer
                           pdfPath={viewerFile.path}
                           pageNum={page}
-                          zoom={zoom}
                           isEnabled={activeTool === "forms"}
                           onFieldChanged={setFieldValue}
                           filledFields={fieldValues}
@@ -1726,7 +1994,6 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                         <AnnotationLayer
                           pdfPath={viewerFile.path}
                           pageNum={page}
-                          zoom={zoom}
                           isEnabled={activeTool === "annotate"}
                           activeAnnotTool={activeAnnotTool}
                           onAnnotationAdded={() => setAnnotRefreshKey(k => k + 1)}
@@ -1735,7 +2002,6 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                         <SignatureLayer
                           pdfPath={viewerFile.path}
                           pageNum={page}
-                          zoom={zoom}
                           isEnabled={activeTool === "signature"}
                           pendingSignature={pendingSignature}
                           onSignaturePlaced={(sig) => {
@@ -1743,7 +2009,7 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                             setPendingSignature(null);
                           }}
                           onSignatureRemoved={(id) => setSignatures(prev => prev.filter(s => s.id !== id))}
-                          signatures={signatures.filter(s => s.pageNum === page)}
+                          signatures={sigsByPage.get(page) ?? EMPTY_SIGS}
                         />
                         <RedactLayer
                           pageNum={page}
@@ -1754,6 +2020,7 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                           onAddRegions={(rs) => setRedactRegions(prev => [...prev, ...rs])}
                           onRemoveRegion={(idx) => setRedactRegions(prev => prev.filter((_, i) => i !== idx))}
                         />
+                        </>}
                       </div>
                     </div>
                     {/* Add-page bar after this page (draw mode) */}
@@ -1769,6 +2036,7 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                 const vp = slot.vp;
                 const pageW = Math.round(zoom * 768);
                 const pageH = Math.round(pageW * docAspectRatio);
+                const baseH = Math.round(BASE_PAGE_W * docAspectRatio);
                 return (
                   <div
                     key={slot.slotId}
@@ -1781,16 +2049,24 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                       paddingRight: SIDE_PAD,
                     }}
                   >
+                    {/* Virtual pages are lightweight vector (SVG) with no page bitmap, so the
+                        canvas tile-pyramid that forced the PDF-page rework doesn't apply here.
+                        A plain transform:scale of fixed-size SVG is cheap and crisp at any zoom. */}
+                    <div style={{ width: `${pageW}px`, height: `${pageH}px`, margin: "0 auto" }}>
                     <div
                       className="relative rounded shadow-2xl overflow-hidden"
-                      style={{ width: `${pageW}px`, aspectRatio: `${pageW}/${pageH}`, margin: "0 auto" }}
+                      style={{
+                        width: `${BASE_PAGE_W}px`,
+                        height: `${baseH}px`,
+                        transform: `scale(${zoom})`,
+                        transformOrigin: "top left",
+                      }}
                     >
-                      <VirtualPageBackground template={vp.template} width={pageW} height={pageH} />
+                      <VirtualPageBackground template={vp.template} width={BASE_PAGE_W} height={baseH} />
                       <DrawingCanvas
                         pageSlotId={slot.slotId}
                         docPath={viewerFile.path}
                         isDrawingMode={activeTool === "draw"}
-                        zoom={zoom}
                       />
                       <div
                         className="absolute top-2 right-2 text-xs px-1.5 py-0.5 rounded pointer-events-none"
@@ -1798,6 +2074,7 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                       >
                         {vp.template}
                       </div>
+                    </div>
                     </div>
                   </div>
                 );

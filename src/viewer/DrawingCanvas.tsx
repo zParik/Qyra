@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState, memo } from "react";
 import { useNotesStore, Stroke, Point } from "../store/useNotesStore";
 import { getStroke } from "perfect-freehand";
 
@@ -55,19 +55,22 @@ interface DrawingCanvasProps {
   pageSlotId: string;
   docPath: string;
   isDrawingMode: boolean;
-  zoom: number;
 }
 
-export function DrawingCanvas({
+function DrawingCanvasInner({
   pageSlotId,
   docPath,
   isDrawingMode,
-  zoom,
 }: DrawingCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Freehand stroke in progress
   const [currentStroke, setCurrentStroke] = useState<Point[] | null>(null);
+  // Live points accumulate in a ref (O(1) push) and flush to state at most once
+  // per animation frame. Previously every pointermove did setCurrentStroke([...prev, pt])
+  // — an O(n) spread + full re-render per event → O(n²) for one long stroke.
+  const livePointsRef = useRef<Point[] | null>(null);
+  const liveRafRef = useRef<number | null>(null);
 
   // Bezier: anchor points placed so far + live cursor preview
   const [bezierPts, setBezierPts] = useState<[number, number][] | null>(null);
@@ -118,6 +121,20 @@ export function DrawingCanvas({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [isDrawingMode, bezierPts]);
+
+  // Flush accumulated live points to state once per frame (coalesces bursts of
+  // pointermove events into a single render).
+  function scheduleLiveFlush() {
+    if (liveRafRef.current != null) return;
+    liveRafRef.current = requestAnimationFrame(() => {
+      liveRafRef.current = null;
+      setCurrentStroke(livePointsRef.current ? livePointsRef.current.slice() : null);
+    });
+  }
+
+  useEffect(() => () => {
+    if (liveRafRef.current != null) cancelAnimationFrame(liveRafRef.current);
+  }, []);
 
   // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -227,6 +244,7 @@ export function DrawingCanvas({
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     const [rx, ry] = relPos(e);
     const pressure = e.pointerType === 'pen' ? e.pressure : 0.5;
+    livePointsRef.current = [[rx, ry, pressure]];
     setCurrentStroke([[rx, ry, pressure]]);
   }
 
@@ -249,22 +267,24 @@ export function DrawingCanvas({
       return;
     }
 
-    if (!currentStroke) return;
+    const live = livePointsRef.current;
+    if (!live) return;
     const [rx, ry] = relPos(e);
     const rawPressure = e.pointerType === 'pen' ? e.pressure : 0.5;
 
     if (drawTool === 'calligraphy') {
-      const prev = currentStroke[currentStroke.length - 1]!;
+      const prev = live[live.length - 1]!;
       const nibRad = (drawNibAngle * Math.PI) / 180;
       const p = calPressure(
         [prev[0] * size.w, prev[1] * size.h],
         [rx * size.w, ry * size.h],
         nibRad
       );
-      setCurrentStroke((prev) => [...(prev || []), [rx, ry, p]]);
+      live.push([rx, ry, p]);
     } else {
-      setCurrentStroke((prev) => [...(prev || []), [rx, ry, rawPressure]]);
+      live.push([rx, ry, rawPressure]);
     }
+    scheduleLiveFlush();
   }
 
   function handlePointerUp(e: React.PointerEvent) {
@@ -300,7 +320,13 @@ export function DrawingCanvas({
     }
 
     // Freehand tools
-    if (!currentStroke || currentStroke.length < 2) {
+    if (liveRafRef.current != null) {
+      cancelAnimationFrame(liveRafRef.current);
+      liveRafRef.current = null;
+    }
+    const pts = livePointsRef.current;
+    livePointsRef.current = null;
+    if (!pts || pts.length < 2) {
       setCurrentStroke(null);
       return;
     }
@@ -311,7 +337,7 @@ export function DrawingCanvas({
       color: drawColor,
       baseThickness:
         drawTool === 'highlighter' ? drawThickness * 3 : drawThickness,
-      points: currentStroke,
+      points: pts,
     };
     addStroke(docPath, newStroke);
     setCurrentStroke(null);
@@ -331,7 +357,7 @@ export function DrawingCanvas({
     const isHighlighter = tool === 'highlighter';
     const isCalligraphy = tool === 'calligraphy';
     const outlineData = getStroke(scaledPts, {
-      size: thickness * zoom,
+      size: thickness,
       thinning: isCalligraphy ? 0.85 : isHighlighter ? 0 : 0.5,
       smoothing: isCalligraphy ? 0.3 : 0.5,
       streamline: isHighlighter ? 0.3 : 0.5,
@@ -355,7 +381,7 @@ export function DrawingCanvas({
       <path
         d={catmullRomPath(pxPts)}
         stroke={color}
-        strokeWidth={thickness * zoom}
+        strokeWidth={thickness}
         strokeLinecap="round"
         strokeLinejoin="round"
         fill="none"
@@ -377,6 +403,14 @@ export function DrawingCanvas({
       : bezierPts
     : [];
 
+  // Committed strokes only re-render when they (or geometry) change — not on every
+  // live-stroke frame, so drawing on a heavily-annotated page stays cheap.
+  const committedEls = useMemo(
+    () => strokes.map((s) => <g key={s.id}>{renderStroke(s)}</g>),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [strokes, size.w, size.h]
+  );
+
   return (
     <div
       ref={containerRef}
@@ -395,9 +429,7 @@ export function DrawingCanvas({
     >
       <svg className="w-full h-full absolute inset-0 pointer-events-none">
         {/* Committed strokes */}
-        {strokes.map((s) => (
-          <g key={s.id}>{renderStroke(s)}</g>
-        ))}
+        {committedEls}
 
         {/* Freehand in-progress */}
         {currentStroke && currentStroke.length > 1 && (
@@ -418,10 +450,10 @@ export function DrawingCanvas({
               bezierPreviewPts.map(([x, y]) => [x * size.w, y * size.h])
             )}
             stroke={drawColor}
-            strokeWidth={drawThickness * zoom}
+            strokeWidth={drawThickness}
             strokeLinecap="round"
             strokeLinejoin="round"
-            strokeDasharray={`${6 * zoom} ${4 * zoom}`}
+            strokeDasharray="6 4"
             strokeOpacity={0.7}
             fill="none"
           />
@@ -456,7 +488,7 @@ export function DrawingCanvas({
               key={i}
               cx={x * size.w}
               cy={y * size.h}
-              r={4 * zoom}
+              r={4}
               fill={drawColor}
               fillOpacity={0.9}
               stroke="white"
@@ -481,3 +513,10 @@ export function DrawingCanvas({
     </div>
   );
 }
+
+// All props primitive (pageSlotId/docPath/isDrawingMode). Memoized so a page's
+// overlay is not re-rendered on every Viewer re-render (scroll/thumbnail/zoom).
+// Zoom is no longer a prop — the page box is laid out at the zoomed size and this
+// SVG resizes with it (ResizeObserver → size), re-rendering its normalized strokes
+// crisply at the new scale. Internal drawing state re-renders it when the user draws.
+export const DrawingCanvas = memo(DrawingCanvasInner);

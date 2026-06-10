@@ -16,22 +16,30 @@ pub async fn merge_pdfs(
         return Err(AppError::Invalid("Need at least 2 files to merge".to_string()));
     }
 
-    let total = paths.len();
-    let mut documents = Vec::with_capacity(total);
-    for (i, p) in paths.iter().enumerate() {
-        let doc = Document::load(p).map_err(|e| AppError::Pdf(format!("Failed to load {}: {}", p, e)))?;
-        documents.push(doc);
-        let _ = app_handle.emit(
-            "operation-progress",
-            Progress::new(i + 1, total, format!("Loading file {} of {}", i + 1, total)),
-        );
-    }
+    // Run the blocking lopdf load/merge/save off the async executor so the UI
+    // stays responsive (every other heavy command already does this; merge was
+    // the one that blocked the runtime thread).
+    tokio::task::spawn_blocking(move || -> AppResult<String> {
+        let total = paths.len();
+        let _t = crate::utils::timing::Timer::start("merge_pdfs", format!("{total} files"));
+        let mut documents = Vec::with_capacity(total);
+        for (i, p) in paths.iter().enumerate() {
+            let doc = Document::load(p).map_err(|e| AppError::Pdf(format!("Failed to load {}: {}", p, e)))?;
+            documents.push(doc);
+            let _ = app_handle.emit(
+                "operation-progress",
+                Progress::new(i + 1, total, format!("Loading file {} of {}", i + 1, total)),
+            );
+        }
 
-    let mut merged = merge_documents(documents)?;
+        let mut merged = merge_documents(documents)?;
 
-    let out = output.unwrap_or_else(|| temp_output_path(&paths[0], "merged"));
-    merged.save(&out)?;
-    Ok(out)
+        let out = output.unwrap_or_else(|| temp_output_path(&paths[0], "merged"));
+        merged.save(&out)?;
+        Ok(out)
+    })
+    .await
+    .map_err(|e| AppError::Other(e.to_string()))?
 }
 
 pub fn merge_documents(mut documents: Vec<Document>) -> AppResult<Document> {

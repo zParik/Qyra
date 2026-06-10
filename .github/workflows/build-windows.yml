@@ -42,20 +42,6 @@ jobs:
           jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
         shell: bash
 
-      - name: Fetch Ghostscript sidecar
-        shell: pwsh
-        run: |
-          # CI-safe GS fetch: install via choco (no interactive Inno installer,
-          # which hangs headless). Local devs still use scripts/fetch-gs.ps1.
-          choco install ghostscript --no-progress -y
-          $bin = Get-ChildItem 'C:\Program Files\gs' -Recurse -Filter gswin64c.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-          $dll = Get-ChildItem 'C:\Program Files\gs' -Recurse -Filter gsdll64.dll  -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $bin -or -not $dll) { throw "Ghostscript binaries not found after choco install" }
-          New-Item -ItemType Directory -Force src-tauri/binaries | Out-Null
-          Copy-Item $bin.FullName 'src-tauri/binaries/gs-x86_64-pc-windows-msvc.exe' -Force
-          Copy-Item $dll.FullName 'src-tauri/binaries/gsdll64.dll' -Force
-          Write-Host "Bundled GS: $($bin.FullName)"
-
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0
         env:

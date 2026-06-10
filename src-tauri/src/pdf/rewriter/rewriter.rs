@@ -8,6 +8,9 @@
 /// directly inside the parallel transform, avoiding O(n²) scan_for_endstream
 /// and the 138 MB worth of sequential clone allocations.
 use std::collections::HashSet;
+use std::fs::File;
+use std::io::BufWriter;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -17,7 +20,10 @@ use crate::pdf::error::PdfError;
 use crate::pdf::parser::object::parse_indirect_object;
 use crate::pdf::parser::PdfReader;
 use crate::pdf::rewriter::config::CompressConfig;
+use crate::pdf::rewriter::placement::analyze_placements;
+use crate::pdf::rewriter::plan::{build_plans, ImagePlan, PlanMap};
 use crate::pdf::rewriter::transforms::{is_metadata_stream, recompress_image, recompress_stream};
+use crate::pdf::source::Bytes;
 use crate::pdf::types::{ObjectId, PdfDict, PdfObject, XrefEntry};
 use crate::pdf::writer::PdfWriter;
 
@@ -32,19 +38,24 @@ impl Rewriter {
         }
     }
 
+    /// Compress `source` and STREAM the result to `out_path`. Returns the number
+    /// of bytes written. Output goes straight to disk (object-by-object), so the
+    /// whole compressed document never has to live in the heap; validation reads
+    /// the written file back via mmap rather than cloning it.
     pub fn run(
         &self,
-        input_bytes: Vec<u8>,
+        source: Bytes,
+        out_path: &Path,
         progress_cb: impl Fn(usize, usize, &str) + Send + Sync,
         cancel: &AtomicBool,
-    ) -> Result<Vec<u8>, PdfError> {
+    ) -> Result<u64, PdfError> {
         // ---------------------------------------------------------------
         // Pass 1: parse xref + eagerly unpack all ObjStm streams.
         // ---------------------------------------------------------------
         #[cfg(debug_assertions)]
         eprintln!("[compress] Pass 1: parsing xref + unpacking ObjStm streams…");
         progress_cb(0, 1, "Reading PDF");
-        let mut reader = PdfReader::new(input_bytes)?;
+        let mut reader = PdfReader::from_source(source)?;
         let trailer = reader.trailer().clone();
         let expected_pages = reader.pages().map(|p| p.len()).unwrap_or(0);
 
@@ -78,6 +89,23 @@ impl Rewriter {
                 }
             }
         }
+
+        // ---------------------------------------------------------------
+        // Image pre-pass (sequential, needs reader): walk content streams to
+        // learn each image's drawn size, then resolve colour spaces + target
+        // resolution into a self-contained ImagePlan per image. This is what
+        // closes the gap to Ghostscript — DPI-based downsampling of ICCBased /
+        // CMYK / Indexed images the old per-object path could not touch.
+        // ---------------------------------------------------------------
+        let plans: PlanMap = if self.config.compress_images() {
+            progress_cb(0, 1, "Analyzing images");
+            let placements = analyze_placements(&mut reader);
+            build_plans(&mut reader, &self.config, &placements)
+        } else {
+            PlanMap::new()
+        };
+        #[cfg(debug_assertions)]
+        eprintln!("[compress] image pre-pass: {} image plans", plans.len());
 
         // ---------------------------------------------------------------
         // Extract raw parts from reader — no more sequential access needed.
@@ -116,66 +144,91 @@ impl Rewriter {
         // Compressed objects: index into the pre-built objstm_cache (read-only).
         // ---------------------------------------------------------------
         let config = &self.config;
-        let trailer_ref = &trailer;
+        let plans_ref = &plans;
         let data_ref: &[u8] = &data;
         let done_count = Arc::new(AtomicUsize::new(0));
         // Show the bar at 0 immediately so a slow first object doesn't look stuck.
         progress_cb(0, work_total, "Compressing");
 
-        let transformed: Vec<(ObjectId, Result<PdfObject, PdfError>)> = work
-            .into_par_iter()
-            .map(|(id, entry)| {
-                if cancel.load(Ordering::Relaxed) {
-                    return (id, Ok(PdfObject::Null));
-                }
-                let obj = match entry {
-                    XrefEntry::InUse { offset } => {
-                        // Bound slice to [offset, next_object_offset] so any
-                        // scan_for_endstream fallback can't read the whole file.
-                        let end = {
-                            let idx = sorted_offsets.partition_point(|&o| o <= offset);
-                            sorted_offsets
-                                .get(idx)
-                                .copied()
-                                .unwrap_or(data_ref.len() as u64) as usize
-                        };
-                        let slice = &data_ref[offset as usize..end];
-                        match parse_indirect_object(slice, 0) {
-                            Ok((_, o)) => o,
-                            Err(_) => return (id, Ok(PdfObject::Null)),
-                        }
-                    }
-                    XrefEntry::Compressed { obj_stream_id, index } => {
-                        objstm_cache
-                            .get(&obj_stream_id)
-                            .and_then(|v| v.get(index as usize))
-                            .map(|(_, o)| o.clone())
-                            .unwrap_or(PdfObject::Null)
-                    }
-                    XrefEntry::Free => return (id, Ok(PdfObject::Null)),
-                };
-
-                // Skip format-internal objects (xref streams, object streams).
-                if let Some(dict) = obj.as_dict() {
-                    let t = dict.get_type();
-                    if t == Some(b"XRef") || t == Some(b"ObjStm") {
+        // The transform body. Runs over `&work` (borrowed) so nothing it touches
+        // — including `progress_cb` — has to be moved into it; that lets us run
+        // it on a dedicated, capped pool below without losing the closure for the
+        // sequential phases that follow.
+        let run_transform = || -> Vec<(ObjectId, Result<PdfObject, PdfError>)> {
+            work
+                .par_iter()
+                .map(|(id, entry)| {
+                    let id = *id;
+                    if cancel.load(Ordering::Relaxed) {
                         return (id, Ok(PdfObject::Null));
                     }
-                }
+                    let obj = match entry {
+                        XrefEntry::InUse { offset } => {
+                            let offset = *offset;
+                            // Bound slice to [offset, next_object_offset] so any
+                            // scan_for_endstream fallback can't read the whole file.
+                            let end = {
+                                let idx = sorted_offsets.partition_point(|&o| o <= offset);
+                                sorted_offsets
+                                    .get(idx)
+                                    .copied()
+                                    .unwrap_or(data_ref.len() as u64) as usize
+                            };
+                            let slice = &data_ref[offset as usize..end];
+                            match parse_indirect_object(slice, 0) {
+                                Ok((_, o)) => o,
+                                Err(_) => return (id, Ok(PdfObject::Null)),
+                            }
+                        }
+                        XrefEntry::Compressed { obj_stream_id, index } => objstm_cache
+                            .get(obj_stream_id)
+                            .and_then(|v| v.get(*index as usize))
+                            .map(|(_, o)| o.clone())
+                            .unwrap_or(PdfObject::Null),
+                        XrefEntry::Free => return (id, Ok(PdfObject::Null)),
+                    };
 
-                let result = transform_object(config, obj, trailer_ref);
-                let done = done_count.fetch_add(1, Ordering::Relaxed) + 1;
-                // Throttle: emit on the first + every 50 to avoid flooding the bus.
-                if done == 1 || done % 50 == 0 || done == work_total {
-                    progress_cb(done, work_total, "Compressing");
-                }
-                (id, result)
-            })
-            .collect();
+                    // Skip format-internal objects (xref streams, object streams).
+                    if let Some(dict) = obj.as_dict() {
+                        let t = dict.get_type();
+                        if t == Some(b"XRef") || t == Some(b"ObjStm") {
+                            return (id, Ok(PdfObject::Null));
+                        }
+                    }
+
+                    let result = transform_object(config, obj, plans_ref.get(&id));
+                    let done = done_count.fetch_add(1, Ordering::Relaxed) + 1;
+                    // Throttle: emit on the first + every 50 to avoid flooding the bus.
+                    if done == 1 || done % 50 == 0 || done == work_total {
+                        progress_cb(done, work_total, "Compressing");
+                    }
+                    (id, result)
+                })
+                .collect()
+        };
+
+        // Run on a capped, de-prioritised pool, then DROP it so its worker
+        // threads are torn down the moment the job ends — they can't linger or
+        // spin on the cores afterwards. Falls back to the (startup-capped) global
+        // pool if the dedicated one can't be built.
+        let transformed: Vec<(ObjectId, Result<PdfObject, PdfError>)> =
+            match build_compress_pool() {
+                Some(pool) => pool.install(run_transform),
+                None => run_transform(),
+            };
 
         if cancel.load(Ordering::Relaxed) {
             return Err(PdfError::Cancelled);
         }
+
+        // Free the input bytes, the unpacked object-stream cache, and the image
+        // plans now — the transform is done with them, and the write/dedup/gc
+        // phase below builds its own buffers. Releasing here keeps peak memory to
+        // roughly one copy of the document, which is what keeps phones off the
+        // OOM killer. (Borrows into these ended when the pool closure returned.)
+        drop(data);
+        drop(objstm_cache);
+        drop(plans);
 
         // ---------------------------------------------------------------
         // Pass 2b: collect live objects, then write with object streams
@@ -216,46 +269,75 @@ impl Rewriter {
         progress_cb(0, 1, "Removing unused objects");
         let live = crate::pdf::rewriter::gc::gc(live, &out_trailer);
 
-        // Preferred path: object streams + xref stream.
+        // Stream the compressed PDF straight to `out_path`. Preferred path:
+        // object streams + xref stream, then validate by re-opening the file
+        // (mmap) and checking the page count. If that fails, rewrite a classic
+        // xref table in its place. The full output never lives in the heap.
         progress_cb(0, 1, "Writing compressed PDF");
-        let objstm_bytes = {
-            let mut w = PdfWriter::new();
-            w.write_header();
-            match w.write_with_object_streams(live.clone(), out_trailer.clone()) {
-                Ok(()) => Some(w.finish()),
-                Err(_e) => {
-                    #[cfg(debug_assertions)]
-                    eprintln!("[compress] object-stream write failed: {_e}; falling back");
-                    None
-                }
+
+        let objstm_ok = match write_object_streams_to(out_path, &live, &out_trailer) {
+            Ok(()) => validate_output(out_path, expected_pages),
+            Err(_e) => {
+                #[cfg(debug_assertions)]
+                eprintln!("[compress] object-stream write failed: {_e}; falling back");
+                false
             }
         };
 
-        // Validate by re-parsing; page count must match the input.
-        let validated = objstm_bytes.and_then(|bytes| match PdfReader::new(bytes.clone()) {
-            Ok(mut r) => match r.pages() {
-                Ok(p) if p.len() == expected_pages => Some(bytes),
-                _ => None,
-            },
-            Err(_) => None,
-        });
+        if !objstm_ok {
+            // Fallback: classic cross-reference table (trusted, no re-validation).
+            write_classic_to(out_path, &live, out_trailer)?;
+        }
 
-        let result = match validated {
-            Some(bytes) => bytes,
-            None => {
-                // Fallback: classic cross-reference table.
-                let mut w = PdfWriter::new();
-                w.write_header();
-                for (id, obj) in &live {
-                    w.write_object(*id, obj)?;
-                }
-                w.write_xref_and_trailer(out_trailer)?;
-                w.finish()
-            }
-        };
+        let written = std::fs::metadata(out_path)?.len();
         #[cfg(debug_assertions)]
-        eprintln!("[compress] done — {} bytes out", result.len());
-        Ok(result)
+        eprintln!("[compress] done — {} bytes out", written);
+        Ok(written)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Output writers (stream to disk) + validation
+// ---------------------------------------------------------------------------
+
+/// Write `live` to `path` using object streams + an xref stream, streamed.
+fn write_object_streams_to(
+    path: &Path,
+    live: &[(ObjectId, PdfObject)],
+    trailer: &PdfDict,
+) -> Result<(), PdfError> {
+    let file = File::create(path)?;
+    let mut w = PdfWriter::new(BufWriter::new(file));
+    w.write_header()?;
+    w.write_with_object_streams(live, trailer.clone())?;
+    w.finish()?;
+    Ok(())
+}
+
+/// Write `live` to `path` using a classic cross-reference table, streamed.
+fn write_classic_to(
+    path: &Path,
+    live: &[(ObjectId, PdfObject)],
+    trailer: PdfDict,
+) -> Result<(), PdfError> {
+    let file = File::create(path)?;
+    let mut w = PdfWriter::new(BufWriter::new(file));
+    w.write_header()?;
+    for (id, obj) in live {
+        w.write_object(*id, obj)?;
+    }
+    w.write_xref_and_trailer(trailer)?;
+    w.finish()?;
+    Ok(())
+}
+
+/// Re-open the written file (mmap) and confirm the page count matches. The
+/// reader — and its mapping — is dropped before this returns, so a fallback
+/// rewrite of the same path is free to truncate it.
+fn validate_output(path: &Path, expected_pages: usize) -> bool {
+    match PdfReader::open(path) {
+        Ok(mut r) => matches!(r.pages(), Ok(p) if p.len() == expected_pages),
+        Err(_) => false,
     }
 }
 
@@ -266,7 +348,7 @@ impl Rewriter {
 fn transform_object(
     config: &CompressConfig,
     obj: PdfObject,
-    _trailer: &PdfDict,
+    plan: Option<&ImagePlan>,
 ) -> Result<PdfObject, PdfError> {
     match obj {
         PdfObject::Stream(stream) => {
@@ -276,14 +358,14 @@ fn transform_object(
                 return Ok(PdfObject::Null);
             }
 
+            // Image with a plan: downsample + DCT re-encode (GS-parity path).
             if config.compress_images() && subtype.as_deref() == Some(b"Image") {
-                let recompressed = recompress_image(
-                    stream,
-                    config.jpeg_quality,
-                    config.to_grayscale,
-                    config.max_image_dimension,
-                )?;
-                return Ok(PdfObject::Stream(recompressed));
+                if let Some(plan) = plan {
+                    let recompressed = recompress_image(stream, plan, config.jpeg_quality)?;
+                    return Ok(PdfObject::Stream(recompressed));
+                }
+                // No plan (mono/mask/unsupported space): fall through to a
+                // lossless re-flate below — never worse than the original.
             }
 
             if config.recompress_streams {
@@ -296,3 +378,63 @@ fn transform_object(
         other => Ok(other),
     }
 }
+
+// ---------------------------------------------------------------------------
+// Scheduling — keep the box usable while compressing.
+// ---------------------------------------------------------------------------
+
+/// Build a per-call, capped, de-prioritised rayon pool for the transform pass.
+///
+/// Returned by value so the caller can DROP it right after the job — that tears
+/// the worker threads down immediately, so they can never linger or spin on the
+/// cores once compression has finished (the symptom we kept chasing).
+///
+/// Capped to half the cores (min 2, max 8) so a compression never pins every
+/// core, and at most that many full-resolution images decode at once (memory).
+/// Phones: at most 2 workers (tighter memory + thermal headroom). Worker threads
+/// run at below-normal priority so they yield to the UI/audio.
+fn build_compress_pool() -> Option<rayon::ThreadPool> {
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2);
+    let workers = if cfg!(target_os = "android") {
+        cores.saturating_sub(1).clamp(1, 2)
+    } else {
+        (cores / 2).clamp(2, 8).min(cores.max(1))
+    };
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(workers)
+        .thread_name(|i| format!("qyra-compress-{i}"))
+        .start_handler(|_| lower_current_thread_priority())
+        .build()
+        .ok()
+}
+
+/// Drop the calling thread's scheduling priority so it yields to foreground
+/// work. No-op where we don't have a cheap per-thread hook.
+#[cfg(windows)]
+fn lower_current_thread_priority() {
+    use std::ffi::c_void;
+    const THREAD_PRIORITY_BELOW_NORMAL: i32 = -1;
+    extern "system" {
+        fn GetCurrentThread() -> *mut c_void;
+        fn SetThreadPriority(handle: *mut c_void, priority: i32) -> i32;
+    }
+    unsafe {
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+    }
+}
+
+// unix covers Linux, macOS AND Android (bionic has setpriority; libc is a dep on
+// all three). Phones especially need this so the compressor yields instead of
+// cooking the CPU / tripping thermal throttling.
+#[cfg(unix)]
+fn lower_current_thread_priority() {
+    // setpriority(PRIO_PROCESS, 0, ..) applies to the calling thread on Linux.
+    unsafe {
+        libc::setpriority(libc::PRIO_PROCESS, 0, 10);
+    }
+}
+
+#[cfg(not(any(windows, unix)))]
+fn lower_current_thread_priority() {}

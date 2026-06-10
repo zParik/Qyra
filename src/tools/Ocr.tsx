@@ -31,7 +31,8 @@ function formatBytes(bytes: number): string {
 }
 
 export default function Ocr() {
-  const { files, clearFiles } = useAppStore();
+  const files = useAppStore((s) => s.files);
+  const clearFiles = useAppStore((s) => s.clearFiles);
   const file = files[0];
 
   const [status, setStatus] = useState<Status>("idle");

@@ -1,10 +1,6 @@
-import { getSetting, setSetting, type GsPreset } from "./tauri";
+import { getSetting, setSetting } from "./tauri";
 
-export type CompressEngine = "rust" | "gs";
 export type CompressLevel = 0 | 1 | 2;
-// GsPreset is owned by tauri.ts (used by CompressPanel); re-export so settings
-// consumers import it from one place. Do NOT redefine it here.
-export type { GsPreset } from "./tauri";
 
 export interface SettingSpec<T> {
   key: string;
@@ -41,14 +37,8 @@ function oneOf<T extends string | number>(
 /** Typed registry. Every persisted preference lives here. */
 export const Settings = {
   autoSave: bool("auto_save", false),
-  defaultCompressEngine: oneOf<CompressEngine>(
-    "default_compress_engine", "rust", ["rust", "gs"], (r) => r as CompressEngine,
-  ),
   defaultCompressLevel: oneOf<CompressLevel>(
     "default_compress_level", 0, [0, 1, 2], (r) => parseInt(r, 10) as CompressLevel,
-  ),
-  defaultCompressPreset: oneOf<GsPreset>(
-    "default_compress_preset", "ebook", ["screen", "ebook", "printer", "prepress"], (r) => r as GsPreset,
   ),
   confirmBeforeOverwrite: bool("confirm_before_overwrite", true),
   defaultSaveFolder: str("default_save_folder", ""),

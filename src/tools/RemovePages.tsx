@@ -6,7 +6,9 @@ import { usePdfCommand } from "../hooks/usePdfCommand";
 import { removePages } from "../lib/tauri";
 
 export default function RemovePages() {
-  const { files, clearFiles, isProcessing } = useAppStore();
+  const files = useAppStore((s) => s.files);
+  const clearFiles = useAppStore((s) => s.clearFiles);
+  const isProcessing = useAppStore((s) => s.isProcessing);
   const { run } = usePdfCommand();
   const [pageList, setPageList] = useState("");
   const file = files[0]!;

@@ -41,7 +41,9 @@ function PageChip({ id, label }: { id: string; label: string }) {
 }
 
 export default function ReorderPages() {
-  const { files, clearFiles, isProcessing } = useAppStore();
+  const files = useAppStore((s) => s.files);
+  const clearFiles = useAppStore((s) => s.clearFiles);
+  const isProcessing = useAppStore((s) => s.isProcessing);
   const { run } = usePdfCommand();
   const file = files[0];
   const pageCount = file?.info?.page_count ?? 0;

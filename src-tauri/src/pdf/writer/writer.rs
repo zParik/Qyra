@@ -1,7 +1,14 @@
-/// PDF writer — serializes a `PdfObject` graph to bytes. Emits either a
-/// traditional cross-reference table or (preferred) object streams + an
-/// xref stream (PDF 1.5).
+/// PDF writer — serializes a `PdfObject` graph to a `Write` sink. Emits either a
+/// traditional cross-reference table or (preferred) object streams + an xref
+/// stream (PDF 1.5).
+///
+/// The writer is generic over its sink and STREAMS output: each object (or
+/// object-stream batch) is serialized into a small reused scratch buffer and
+/// written straight to the sink, so the full output never has to live in the
+/// heap. Pass a `BufWriter<File>` to write a multi-hundred-MB PDF in ~constant
+/// memory, or a `Vec<u8>` to build it in memory (tests / small docs).
 use std::collections::BTreeMap;
+use std::io::Write;
 
 use crate::pdf::error::PdfError;
 use crate::pdf::types::{ObjectId, PdfDict, PdfObject};
@@ -9,30 +16,46 @@ use crate::pdf::writer::object_stream::build_objstm;
 use crate::pdf::writer::serialize;
 use crate::pdf::writer::xref_stream::{build_xref_stream, XrefRow};
 
-pub struct PdfWriter {
-    buf: Vec<u8>,
+pub struct PdfWriter<W: Write> {
+    out: W,
+    /// Bytes written so far — the running offset for xref entries.
+    pos: u64,
     /// Recorded (object_id → byte_offset) as objects are written.
     offsets: Vec<(ObjectId, u64)>,
 }
 
-impl PdfWriter {
-    pub fn new() -> Self {
+impl<W: Write> PdfWriter<W> {
+    pub fn new(out: W) -> Self {
         PdfWriter {
-            buf: Vec::new(),
+            out,
+            pos: 0,
             offsets: Vec::new(),
         }
+    }
+
+    /// Current byte offset into the output.
+    pub fn position(&self) -> u64 {
+        self.pos
+    }
+
+    /// Write raw bytes to the sink and advance the offset counter. Every byte
+    /// emitted goes through here so `pos` stays an accurate file offset.
+    fn write_raw(&mut self, data: &[u8]) -> Result<(), PdfError> {
+        self.out.write_all(data)?;
+        self.pos += data.len() as u64;
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
     // Header
     // -----------------------------------------------------------------------
 
-    /// Write the PDF header.  The binary comment (4 bytes ≥ 128) signals that
-    /// the file contains binary data and should not be mangled by ASCII-only
+    /// Write the PDF header. The binary comment (4 bytes ≥ 128) signals that the
+    /// file contains binary data and should not be mangled by ASCII-only
     /// transport (email, FTP ASCII mode, etc.).
-    pub fn write_header(&mut self) {
-        self.buf.extend_from_slice(b"%PDF-1.5\n");
-        self.buf.extend_from_slice(b"%\xE2\xE3\xCF\xD3\n");
+    pub fn write_header(&mut self) -> Result<(), PdfError> {
+        self.write_raw(b"%PDF-1.5\n")?;
+        self.write_raw(b"%\xE2\xE3\xCF\xD3\n")
     }
 
     // -----------------------------------------------------------------------
@@ -41,14 +64,14 @@ impl PdfWriter {
 
     /// Serialize one indirect object, recording its byte offset.
     pub fn write_object(&mut self, id: ObjectId, obj: &PdfObject) -> Result<(), PdfError> {
-        let offset = self.buf.len() as u64;
+        let offset = self.pos;
         self.offsets.push((id, offset));
 
-        self.buf
-            .extend_from_slice(format!("{} {} obj\n", id.0, id.1).as_bytes());
-        serialize::write_object_body(&mut self.buf, obj)?;
-        self.buf.extend_from_slice(b"\nendobj\n");
-        Ok(())
+        let mut scratch = Vec::new();
+        scratch.extend_from_slice(format!("{} {} obj\n", id.0, id.1).as_bytes());
+        serialize::write_object_body(&mut scratch, obj)?;
+        scratch.extend_from_slice(b"\nendobj\n");
+        self.write_raw(&scratch)
     }
 
     // -----------------------------------------------------------------------
@@ -61,24 +84,25 @@ impl PdfWriter {
     /// into `/ObjStm` batches. Emits the `/XRef` stream + `startxref`/`%%EOF`.
     pub fn write_with_object_streams(
         &mut self,
-        mut objects: Vec<(ObjectId, PdfObject)>,
+        objects: &[(ObjectId, PdfObject)],
         trailer: PdfDict,
     ) -> Result<(), PdfError> {
         const BATCH: usize = 100;
 
-        objects.sort_by_key(|(id, _)| id.0);
         let max_obj = objects.iter().map(|(id, _)| id.0).max().unwrap_or(0);
 
         // Partition: stream objects (or non-gen-0) → regular; else → packable.
         let mut regular: Vec<(ObjectId, &PdfObject)> = Vec::new();
         let mut packable: Vec<(ObjectId, &PdfObject)> = Vec::new();
-        for (id, obj) in &objects {
+        for (id, obj) in objects {
             if matches!(obj, PdfObject::Stream(_)) || id.1 != 0 {
                 regular.push((*id, obj));
             } else {
                 packable.push((*id, obj));
             }
         }
+        regular.sort_by_key(|(id, _)| id.0);
+        packable.sort_by_key(|(id, _)| id.0);
 
         // Allocate new object numbers for the ObjStm objects + the xref stream.
         let n_batches = packable.len().div_ceil(BATCH);
@@ -96,13 +120,17 @@ impl PdfWriter {
         // rows[obj_num] — all Free until filled.
         let mut rows: Vec<XrefRow> = (0..total_objs).map(|_| XrefRow::Free).collect();
 
+        // Reused scratch buffer — one object (or one ObjStm batch) at a time.
+        let mut scratch: Vec<u8> = Vec::new();
+
         // 1) Regular objects: write now, record offset (type 1).
         for (id, obj) in &regular {
-            let offset = self.buf.len() as u64;
-            self.buf
-                .extend_from_slice(format!("{} {} obj\n", id.0, id.1).as_bytes());
-            serialize::write_object_body(&mut self.buf, obj)?;
-            self.buf.extend_from_slice(b"\nendobj\n");
+            let offset = self.pos;
+            scratch.clear();
+            scratch.extend_from_slice(format!("{} {} obj\n", id.0, id.1).as_bytes());
+            serialize::write_object_body(&mut scratch, obj)?;
+            scratch.extend_from_slice(b"\nendobj\n");
+            self.write_raw(&scratch)?;
             rows[id.0 as usize] = XrefRow::InUse { offset };
         }
 
@@ -118,26 +146,26 @@ impl PdfWriter {
                 };
             }
             let stream = build_objstm(&members)?;
-            let offset = self.buf.len() as u64;
-            self.buf
-                .extend_from_slice(format!("{} 0 obj\n", objstm_num).as_bytes());
-            serialize::write_object_body(&mut self.buf, &PdfObject::Stream(stream))?;
-            self.buf.extend_from_slice(b"\nendobj\n");
+            let offset = self.pos;
+            scratch.clear();
+            scratch.extend_from_slice(format!("{} 0 obj\n", objstm_num).as_bytes());
+            serialize::write_object_body(&mut scratch, &PdfObject::Stream(stream))?;
+            scratch.extend_from_slice(b"\nendobj\n");
+            self.write_raw(&scratch)?;
             rows[objstm_num as usize] = XrefRow::InUse { offset };
         }
 
         // 3) XRef stream at the end (references itself by offset, type 1).
-        let xref_offset = self.buf.len() as u64;
+        let xref_offset = self.pos;
         rows[xref_id as usize] = XrefRow::InUse { offset: xref_offset };
         let xref_stream = build_xref_stream(&rows, &trailer)?;
-        self.buf
-            .extend_from_slice(format!("{} 0 obj\n", xref_id).as_bytes());
-        serialize::write_object_body(&mut self.buf, &PdfObject::Stream(xref_stream))?;
-        self.buf.extend_from_slice(b"\nendobj\n");
+        scratch.clear();
+        scratch.extend_from_slice(format!("{} 0 obj\n", xref_id).as_bytes());
+        serialize::write_object_body(&mut scratch, &PdfObject::Stream(xref_stream))?;
+        scratch.extend_from_slice(b"\nendobj\n");
+        self.write_raw(&scratch)?;
 
-        self.buf
-            .extend_from_slice(format!("startxref\n{}\n%%EOF\n", xref_offset).as_bytes());
-        Ok(())
+        self.write_raw(format!("startxref\n{}\n%%EOF\n", xref_offset).as_bytes())
     }
 
     // -----------------------------------------------------------------------
@@ -147,7 +175,7 @@ impl PdfWriter {
     /// Write the traditional cross-reference table and trailer, then finish
     /// the file with `startxref` and `%%EOF`.
     pub fn write_xref_and_trailer(&mut self, mut trailer_dict: PdfDict) -> Result<(), PdfError> {
-        let xref_offset = self.buf.len() as u64;
+        let xref_offset = self.pos;
 
         // Build a sorted map: obj_number → (generation, offset).
         let mut by_obj_num: BTreeMap<u32, (u16, Option<u64>)> = BTreeMap::new();
@@ -162,9 +190,9 @@ impl PdfWriter {
 
         trailer_dict.set(b"Size", PdfObject::Integer(size as i64));
 
-        self.buf.extend_from_slice(b"xref\n");
-        self.buf
-            .extend_from_slice(format!("0 {}\n", size).as_bytes());
+        let mut scratch: Vec<u8> = Vec::new();
+        scratch.extend_from_slice(b"xref\n");
+        scratch.extend_from_slice(format!("0 {}\n", size).as_bytes());
 
         for obj_num in 0..size {
             let (gen, offset_opt) = by_obj_num.get(&obj_num).copied().unwrap_or((0, None));
@@ -172,27 +200,20 @@ impl PdfWriter {
                 Some(off) => format!("{:010} {:05} n \r\n", off, gen),
                 None => format!("{:010} {:05} f \r\n", 0u64, gen),
             };
-            self.buf.extend_from_slice(entry.as_bytes());
+            scratch.extend_from_slice(entry.as_bytes());
         }
 
-        self.buf.extend_from_slice(b"trailer\n");
-        serialize::write_dict(&mut self.buf, &trailer_dict)?;
-        self.buf.push(b'\n');
-
-        self.buf
-            .extend_from_slice(format!("startxref\n{}\n%%EOF\n", xref_offset).as_bytes());
-        Ok(())
+        scratch.extend_from_slice(b"trailer\n");
+        serialize::write_dict(&mut scratch, &trailer_dict)?;
+        scratch.push(b'\n');
+        scratch.extend_from_slice(format!("startxref\n{}\n%%EOF\n", xref_offset).as_bytes());
+        self.write_raw(&scratch)
     }
 
-    /// Consume the writer and return the assembled bytes.
-    pub fn finish(self) -> Vec<u8> {
-        self.buf
-    }
-}
-
-impl Default for PdfWriter {
-    fn default() -> Self {
-        Self::new()
+    /// Flush and return the underlying sink.
+    pub fn finish(mut self) -> Result<W, PdfError> {
+        self.out.flush()?;
+        Ok(self.out)
     }
 }
 
@@ -205,12 +226,17 @@ mod tests {
     use super::*;
     use crate::pdf::types::{PdfDict, PdfObject};
 
+    /// Build an in-memory writer over a `Vec<u8>`.
+    fn writer() -> PdfWriter<Vec<u8>> {
+        PdfWriter::new(Vec::new())
+    }
+
     #[test]
     fn write_integer_object() {
-        let mut w = PdfWriter::new();
-        w.write_header();
+        let mut w = writer();
+        w.write_header().unwrap();
         w.write_object((1, 0), &PdfObject::Integer(42)).unwrap();
-        let bytes = w.finish();
+        let bytes = w.finish().unwrap();
         let s = String::from_utf8_lossy(&bytes);
         assert!(s.contains("1 0 obj"));
         assert!(s.contains("42"));
@@ -219,12 +245,12 @@ mod tests {
 
     #[test]
     fn write_dict_object() {
-        let mut w = PdfWriter::new();
-        w.write_header();
+        let mut w = writer();
+        w.write_header().unwrap();
         let mut dict = PdfDict::new();
         dict.set(b"Type".to_vec(), PdfObject::Name(b"Catalog".to_vec()));
         w.write_object((1, 0), &PdfObject::Dictionary(dict)).unwrap();
-        let bytes = w.finish();
+        let bytes = w.finish().unwrap();
         let s = String::from_utf8_lossy(&bytes);
         assert!(s.contains("/Type"));
         assert!(s.contains("/Catalog"));
@@ -232,25 +258,25 @@ mod tests {
 
     #[test]
     fn write_reference() {
-        let mut w = PdfWriter::new();
-        w.write_header();
+        let mut w = writer();
+        w.write_header().unwrap();
         w.write_object((1, 0), &PdfObject::Reference((5, 0))).unwrap();
-        let bytes = w.finish();
+        let bytes = w.finish().unwrap();
         let s = String::from_utf8_lossy(&bytes);
         assert!(s.contains("5 0 R"));
     }
 
     #[test]
     fn xref_entry_offsets() {
-        let mut w = PdfWriter::new();
-        w.write_header();
-        let obj_offset = w.buf.len() as u64;
+        let mut w = writer();
+        w.write_header().unwrap();
+        let obj_offset = w.position();
         w.write_object((1, 0), &PdfObject::Integer(99)).unwrap();
 
         let trailer = PdfDict::new();
         w.write_xref_and_trailer(trailer).unwrap();
 
-        let bytes = w.finish();
+        let bytes = w.finish().unwrap();
         let s = String::from_utf8_lossy(&bytes);
         let expected_offset = format!("{:010}", obj_offset);
         assert!(
@@ -263,11 +289,11 @@ mod tests {
 
     #[test]
     fn xref_always_has_object_zero_free() {
-        let mut w = PdfWriter::new();
-        w.write_header();
+        let mut w = writer();
+        w.write_header().unwrap();
         w.write_object((1, 0), &PdfObject::Null).unwrap();
         w.write_xref_and_trailer(PdfDict::new()).unwrap();
-        let bytes = w.finish();
+        let bytes = w.finish().unwrap();
         let s = String::from_utf8_lossy(&bytes);
         assert!(s.contains("0000000000 65535 f"));
     }
@@ -275,8 +301,8 @@ mod tests {
     #[test]
     fn write_stream_object() {
         use crate::pdf::types::PdfStream;
-        let mut w = PdfWriter::new();
-        w.write_header();
+        let mut w = writer();
+        w.write_header().unwrap();
         let mut dict = PdfDict::new();
         dict.set(b"Length".to_vec(), PdfObject::Integer(5));
         let stream = PdfStream {
@@ -284,7 +310,7 @@ mod tests {
             raw_bytes: b"hello".to_vec(),
         };
         w.write_object((2, 0), &PdfObject::Stream(stream)).unwrap();
-        let bytes = w.finish();
+        let bytes = w.finish().unwrap();
         let s = String::from_utf8_lossy(&bytes);
         assert!(s.contains("stream\nhello\nendstream"));
     }
@@ -321,10 +347,10 @@ mod tests {
         let mut trailer = PdfDict::new();
         trailer.set(b"Root", PdfObject::Reference((1, 0)));
 
-        let mut w = PdfWriter::new();
-        w.write_header();
-        w.write_with_object_streams(objects, trailer).unwrap();
-        let bytes = w.finish();
+        let mut w = writer();
+        w.write_header().unwrap();
+        w.write_with_object_streams(&objects, trailer).unwrap();
+        let bytes = w.finish().unwrap();
 
         let mut reader = PdfReader::new(bytes).expect("reader parses object-stream output");
         let page_ids = reader.pages().expect("pages resolve");

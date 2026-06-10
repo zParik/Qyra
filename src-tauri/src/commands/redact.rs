@@ -60,6 +60,7 @@ pub async fn redact_pdf(
             by_page.entry(r.page).or_default().push(*r);
         }
 
+        let _t = crate::utils::timing::Timer::start("redact_pdf", format!("{} regions", regions.len()));
         let doc = PdfDocument::open(path.as_str())?;
 
         for (page_num, page_regions) in &by_page {

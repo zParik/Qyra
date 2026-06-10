@@ -469,6 +469,7 @@ pub fn bake_annotations(
         return Ok(out);
     }
 
+    let _t = crate::utils::timing::Timer::start("bake_annotations", String::new());
     let mut doc = Document::load(&path)?;
 
     // Build page_map: page number (1-indexed) -> ObjectId

@@ -39,19 +39,20 @@ fn get_info_string(doc: &Document, key: &[u8]) -> Option<String> {
 #[tauri::command]
 pub async fn get_pdf_info(path: String) -> AppResult<PdfInfo> {
     tokio::task::spawn_blocking(move || -> AppResult<PdfInfo> {
-        let doc = Document::load(&path)?;
-        let page_count = doc.get_pages().len();
+        let doc = crate::commands::lopdf_cache::load(&path)?;
+        let d = doc.as_ref();
+        let page_count = d.get_pages().len();
         let file_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
 
         let metadata = PdfMetadata {
-            title: get_info_string(&doc, b"Title"),
-            author: get_info_string(&doc, b"Author"),
-            subject: get_info_string(&doc, b"Subject"),
-            keywords: get_info_string(&doc, b"Keywords"),
-            creator: get_info_string(&doc, b"Creator"),
-            producer: get_info_string(&doc, b"Producer"),
-            creation_date: get_info_string(&doc, b"CreationDate"),
-            mod_date: get_info_string(&doc, b"ModDate"),
+            title: get_info_string(d, b"Title"),
+            author: get_info_string(d, b"Author"),
+            subject: get_info_string(d, b"Subject"),
+            keywords: get_info_string(d, b"Keywords"),
+            creator: get_info_string(d, b"Creator"),
+            producer: get_info_string(d, b"Producer"),
+            creation_date: get_info_string(d, b"CreationDate"),
+            mod_date: get_info_string(d, b"ModDate"),
         };
 
         Ok(PdfInfo { page_count, file_size, metadata })
@@ -62,16 +63,17 @@ pub async fn get_pdf_info(path: String) -> AppResult<PdfInfo> {
 
 #[tauri::command]
 pub fn get_metadata(path: String) -> AppResult<PdfMetadata> {
-    let doc = Document::load(&path)?;
+    let doc = crate::commands::lopdf_cache::load(&path)?;
+    let d = doc.as_ref();
     Ok(PdfMetadata {
-        title: get_info_string(&doc, b"Title"),
-        author: get_info_string(&doc, b"Author"),
-        subject: get_info_string(&doc, b"Subject"),
-        keywords: get_info_string(&doc, b"Keywords"),
-        creator: get_info_string(&doc, b"Creator"),
-        producer: get_info_string(&doc, b"Producer"),
-        creation_date: get_info_string(&doc, b"CreationDate"),
-        mod_date: get_info_string(&doc, b"ModDate"),
+        title: get_info_string(d, b"Title"),
+        author: get_info_string(d, b"Author"),
+        subject: get_info_string(d, b"Subject"),
+        keywords: get_info_string(d, b"Keywords"),
+        creator: get_info_string(d, b"Creator"),
+        producer: get_info_string(d, b"Producer"),
+        creation_date: get_info_string(d, b"CreationDate"),
+        mod_date: get_info_string(d, b"ModDate"),
     })
 }
 
@@ -127,7 +129,7 @@ fn algorithm_name(v: i64) -> &'static str {
 /// allowed) when the document is not encrypted.
 #[tauri::command]
 pub fn get_pdf_permissions(path: String) -> AppResult<PdfPermissions> {
-    let doc = Document::load(&path)?;
+    let doc = crate::commands::lopdf_cache::load(&path)?;
     let Ok(encrypt_ref) = doc.trailer.get(b"Encrypt") else {
         return Ok(PdfPermissions::default());
     };
@@ -180,6 +182,7 @@ pub fn set_metadata(
     metadata: PdfMetadata,
     output: Option<String>,
 ) -> AppResult<String> {
+    let _t = crate::utils::timing::Timer::start("set_metadata", String::new());
     let mut doc = Document::load(&path)?;
 
     // Get or create Info dictionary

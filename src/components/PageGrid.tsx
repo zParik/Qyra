@@ -1,3 +1,4 @@
+import { memo, useMemo } from "react";
 import {
   DndContext, closestCenter, KeyboardSensor,
   MouseSensor, TouchSensor, useSensor, useSensors, DragEndEvent,
@@ -21,10 +22,13 @@ interface PageGridProps {
   onToggleSelect?: (path: string) => void;
 }
 
-function FileCard({ file, thumbnail, onRemove, selectable, selected, onToggleSelect }: {
+// Memoized: parent passes path-based, stable handlers so only the card whose
+// `thumbnail`/`selected` actually changed re-renders — not every card on each
+// parent render (e.g. a thumbnail arriving, or a sibling being removed).
+const FileCard = memo(function FileCard({ file, thumbnail, onRemove, selectable, selected, onToggleSelect }: {
   file: LoadedFile; thumbnail?: string;
-  onRemove: () => void; selectable?: boolean;
-  selected?: boolean; onToggleSelect?: () => void;
+  onRemove: (path: string) => void; selectable?: boolean;
+  selected?: boolean; onToggleSelect?: (path: string) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: file.path });
@@ -47,7 +51,7 @@ function FileCard({ file, thumbnail, onRemove, selectable, selected, onToggleSel
         overflow: "hidden",
         boxShadow: selected ? `0 0 0 1px var(--accent)` : undefined,
       }}
-      onClick={selectable ? onToggleSelect : undefined}
+      onClick={selectable && onToggleSelect ? () => onToggleSelect(file.path) : undefined}
     >
       {/* Drag handle */}
       <div
@@ -68,7 +72,7 @@ function FileCard({ file, thumbnail, onRemove, selectable, selected, onToggleSel
 
       {/* Remove button */}
       <button
-        onClick={(e) => { e.stopPropagation(); onRemove(); }}
+        onClick={(e) => { e.stopPropagation(); onRemove(file.path); }}
         aria-label="Remove file"
         className="pg-remove"
         style={{
@@ -129,7 +133,7 @@ function FileCard({ file, thumbnail, onRemove, selectable, selected, onToggleSel
       )}
     </div>
   );
-}
+});
 
 export function PageGrid({ files, onRemove, onReorder, selectable, selected, onToggleSelect }: PageGridProps) {
   const sensors = useSensors(
@@ -137,7 +141,10 @@ export function PageGrid({ files, onRemove, onReorder, selectable, selected, onT
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
-  const thumbnails = useThumbnails(files.map((f) => f.path));
+  // Stable across renders unless `files` itself changes — feeds both the
+  // thumbnail hook and SortableContext without allocating a new array each render.
+  const filePaths = useMemo(() => files.map((f) => f.path), [files]);
+  const thumbnails = useThumbnails(filePaths);
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
@@ -152,7 +159,7 @@ export function PageGrid({ files, onRemove, onReorder, selectable, selected, onT
 
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-      <SortableContext items={files.map((f) => f.path)} strategy={rectSortingStrategy}>
+      <SortableContext items={filePaths} strategy={rectSortingStrategy}>
         <div className="pg-grid" style={{
           display: "grid", gap: 10,
           gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
@@ -162,10 +169,10 @@ export function PageGrid({ files, onRemove, onReorder, selectable, selected, onT
               key={file.path}
               file={file}
               thumbnail={thumbnails[file.path]}
-              onRemove={() => onRemove(file.path)}
+              onRemove={onRemove}
               selectable={selectable}
               selected={selected?.has(file.path)}
-              onToggleSelect={() => onToggleSelect?.(file.path)}
+              onToggleSelect={onToggleSelect}
             />
           ))}
         </div>
