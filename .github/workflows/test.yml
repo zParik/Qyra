@@ -25,18 +25,6 @@ jobs:
       - name: Generate PDF fixtures
         run: node tests/fixtures/generate.mjs
 
-      # tauri-build verifies the bundled Ghostscript sidecar exists. The real
-      # binary is fetched only for release builds; the GS-dependent tests are
-      # #[ignore]-gated, so empty placeholders are enough to satisfy the build.
-      - name: Stub Ghostscript sidecar
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force src-tauri/binaries | Out-Null
-          foreach ($f in @('gs-x86_64-pc-windows-msvc.exe', 'gsdll64.dll')) {
-            $p = "src-tauri/binaries/$f"
-            if (-not (Test-Path $p)) { New-Item -ItemType File -Path $p | Out-Null }
-          }
-
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 

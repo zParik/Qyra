@@ -5,6 +5,8 @@ use image::DynamicImage;
 use std::io::{Cursor, Write};
 
 use crate::pdf::error::PdfError;
+use crate::pdf::rewriter::colorspace::{decode_image_to_dynimage, ResolvedColorSpace};
+use crate::pdf::rewriter::plan::ImagePlan;
 use crate::pdf::types::{ObjectId, PdfDict, PdfObject, PdfStream};
 
 // ---------------------------------------------------------------------------
@@ -72,155 +74,103 @@ pub fn recompress_stream(stream: PdfStream, zlib_level: u32) -> Result<PdfStream
 // Image recompression (lossy)
 // ---------------------------------------------------------------------------
 
-/// Recompress an image XObject as JPEG.
+/// Recompress an image XObject as JPEG, following its precomputed `ImagePlan`.
 ///
-/// Ported from `try_recompress_image` in the lopdf-based `compress.rs`.
-/// Returns the original stream unchanged if:
-/// - the image is a mask or has an SMask (transparency)
-/// - the image is smaller than 64×64 (logos/icons)
-/// - the new encoding is not smaller than the original
-/// - the image format cannot be decoded
+/// The plan (built in the sequential pre-pass) carries the fully resolved colour
+/// space and the target pixel dimensions derived from the image's drawn DPI —
+/// this is what lets the engine match Ghostscript on ICCBased/CMYK/Indexed
+/// images and on resolution-based downsampling, instead of skipping them.
+///
+/// Returns the original stream unchanged on any decode/encode failure or when
+/// the result is not smaller — never corrupts.
 pub fn recompress_image(
     stream: PdfStream,
+    plan: &ImagePlan,
     quality: u8,
-    to_grayscale: bool,
-    max_dimension: Option<u32>,
 ) -> Result<PdfStream, PdfError> {
     if quality == 0 {
         return Ok(stream);
     }
 
-    // Safety guards — same as lopdf version
-    let is_mask = stream
-        .dict
-        .get(b"ImageMask")
-        .and_then(|v| if let PdfObject::Boolean(b) = v { Some(*b) } else { None })
-        .unwrap_or(false);
-    if is_mask {
+    let width = stream.dict.get(b"Width").and_then(|v| v.as_integer()).unwrap_or(0) as u32;
+    let height = stream.dict.get(b"Height").and_then(|v| v.as_integer()).unwrap_or(0) as u32;
+    if width == 0 || height == 0 {
         return Ok(stream);
     }
-
-    // Skip if there's an SMask reference (transparency channel)
-    if stream.dict.get(b"SMask").is_some() {
-        return Ok(stream);
-    }
-
-    let width = stream
+    let bpc = stream
         .dict
-        .get(b"Width")
+        .get(b"BitsPerComponent")
         .and_then(|v| v.as_integer())
-        .unwrap_or(0) as u32;
-    let height = stream
-        .dict
-        .get(b"Height")
-        .and_then(|v| v.as_integer())
-        .unwrap_or(0) as u32;
-
-    if width < 64 || height < 64 {
-        return Ok(stream); // preserve logos/icons
-    }
+        .unwrap_or(8) as u32;
 
     let filter_name = stream.filter_name().map(|n| n.to_vec());
     let is_dct = filter_name
         .as_deref()
         .map(|n| n == b"DCTDecode" || n == b"DCT")
         .unwrap_or(false);
-    let is_flate = filter_name
-        .as_deref()
-        .map(|n| n == b"FlateDecode" || n == b"Fl")
-        .unwrap_or(false);
 
-    if !is_dct && !is_flate {
-        return Ok(stream); // unsupported encoding
+    // CMYK JPEGs carry an Adobe APP14 transform; the decoder can silently
+    // invert them. Re-encoding risks wrong colours, so leave them untouched.
+    if is_dct && matches!(plan.cs, ResolvedColorSpace::Cmyk) {
+        return Ok(stream);
     }
-
-    // Determine colour space / components
-    let cs = stream.dict.get(b"ColorSpace").cloned();
-    let components = colorspace_components(&cs);
-
-    // Only handle supported component counts for FlateDecode raw images
-    if !is_dct {
-        match components {
-            Some(1) | Some(3) => {}
-            _ => return Ok(stream), // Indexed, CMYK, unknown — skip
-        }
-    }
-
-    let is_already_gray = match &cs {
-        Some(PdfObject::Name(n)) => n == b"DeviceGray",
-        Some(PdfObject::Array(_)) => components == Some(1),
-        _ => false,
-    };
 
     let original_len = stream.raw_bytes.len();
 
-    // Decode to pixel data
-    let content = if is_dct {
-        stream.raw_bytes.clone()
-    } else {
-        stream.decode().map_err(|e| PdfError::ImageDecodeError(e.to_string()))?
-    };
-
+    // ---- decode to pixels -------------------------------------------------
     let mut img: DynamicImage = if is_dct {
-        image::load_from_memory(&content)
-            .map_err(|e| PdfError::ImageDecodeError(format!("JPEG decode: {}", e)))?
-    } else {
-        let comps = if is_already_gray { 1usize } else { 3usize };
-        let expected = (width as usize) * (height as usize) * comps;
-        if content.len() < expected {
-            return Ok(stream); // corrupt / partial image
+        match image::load_from_memory(&stream.raw_bytes) {
+            Ok(i) => i,
+            Err(_) => return Ok(stream), // CMYK/odd JPEG we can't decode — leave it
         }
-        if comps == 1 {
-            let gray = image::GrayImage::from_raw(width, height, content[..expected].to_vec())
-                .ok_or_else(|| PdfError::ImageDecodeError("Raw Gray decode failed".into()))?;
-            DynamicImage::ImageLuma8(gray)
-        } else {
-            let rgb = image::RgbImage::from_raw(width, height, content[..expected].to_vec())
-                .ok_or_else(|| PdfError::ImageDecodeError("Raw RGB decode failed".into()))?;
-            DynamicImage::ImageRgb8(rgb)
+    } else {
+        let samples = match stream.decode() {
+            Ok(s) => s,
+            Err(_) => return Ok(stream),
+        };
+        let decode_arr = decode_array(&stream.dict);
+        match decode_image_to_dynimage(&samples, width, height, bpc, &plan.cs, decode_arr.as_deref())
+        {
+            Some(i) => i,
+            None => return Ok(stream),
         }
     };
 
-    // Downsample if needed
-    if let Some(cap) = max_dimension {
-        let (w, h) = (img.width(), img.height());
-        if w > cap || h > cap {
-            img = img.resize(cap, cap, image::imageops::FilterType::Lanczos3);
-        }
+    // ---- downsample to the planned resolution -----------------------------
+    if plan.target_w < img.width() || plan.target_h < img.height() {
+        // Triangle (bilinear) is much cheaper than Lanczos3 and visually fine
+        // for downscaling photos to 72/150 DPI — the right speed/quality trade.
+        img = img.resize_exact(
+            plan.target_w.max(1),
+            plan.target_h.max(1),
+            image::imageops::FilterType::Triangle,
+        );
     }
 
-    #[cfg(debug_assertions)]
-    eprintln!(
-        "[compress] image {}x{} → reencoding at quality {}{}",
-        img.width(),
-        img.height(),
-        quality,
-        if to_grayscale { " (grayscale)" } else { "" }
-    );
+    // ---- re-encode as JPEG ------------------------------------------------
+    let output_gray = plan.force_gray
+        || plan.cs.is_gray_output()
+        || matches!(img, DynamicImage::ImageLuma8(_) | DynamicImage::ImageLumaA8(_));
 
-    // Re-encode as JPEG
     let mut new_bytes = Vec::new();
-    let output_gray = to_grayscale || is_already_gray;
     {
         let mut cursor = Cursor::new(&mut new_bytes);
-        if output_gray {
+        let res = if output_gray {
             let gray = img.to_luma8();
-            let encoder =
-                image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, quality);
+            let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, quality);
             gray.write_with_encoder(encoder)
-                .map_err(|e| PdfError::ImageDecodeError(format!("JPEG encode: {}", e)))?;
         } else {
             let rgb = img.to_rgb8();
-            let encoder =
-                image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, quality);
+            let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, quality);
             rgb.write_with_encoder(encoder)
-                .map_err(|e| PdfError::ImageDecodeError(format!("JPEG encode: {}", e)))?;
+        };
+        if res.is_err() {
+            return Ok(stream);
         }
     }
 
-    // Only replace if smaller
     if new_bytes.len() >= original_len {
-        return Ok(stream);
+        return Ok(stream); // no benefit
     }
 
     let color_space: &[u8] = if output_gray { b"DeviceGray" } else { b"DeviceRGB" };
@@ -232,11 +182,27 @@ pub fn recompress_image(
     new_dict.set(b"Height", PdfObject::Integer(img.height() as i64));
     new_dict.set(b"Length", PdfObject::Integer(new_bytes.len() as i64));
     new_dict.remove(b"DecodeParms");
+    // We baked the /Decode remap into the pixels; a stale array would re-apply it.
+    new_dict.remove(b"Decode");
 
     Ok(PdfStream {
         dict: new_dict,
         raw_bytes: new_bytes,
     })
+}
+
+/// Read an image's /Decode array into floats, if present.
+fn decode_array(dict: &PdfDict) -> Option<Vec<f64>> {
+    let arr = dict.get(b"Decode")?.as_array()?;
+    let mut out = Vec::with_capacity(arr.len());
+    for o in arr {
+        match o {
+            PdfObject::Integer(i) => out.push(*i as f64),
+            PdfObject::Real(r) => out.push(*r),
+            _ => return None,
+        }
+    }
+    Some(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -268,24 +234,6 @@ fn zlib_compress(data: &[u8], level: u32) -> Result<Vec<u8>, PdfError> {
         .map_err(|e| PdfError::WriteError(format!("zlib write: {}", e)))?;
     enc.finish()
         .map_err(|e| PdfError::WriteError(format!("zlib finish: {}", e)))
-}
-
-/// Determine the number of colour components from a /ColorSpace value.
-fn colorspace_components(cs: &Option<PdfObject>) -> Option<usize> {
-    match cs.as_ref()? {
-        PdfObject::Name(n) if n == b"DeviceRGB" => Some(3),
-        PdfObject::Name(n) if n == b"DeviceGray" => Some(1),
-        PdfObject::Name(n) if n == b"DeviceCMYK" => Some(4),
-        PdfObject::Array(arr) => {
-            let first = arr.first()?.as_name()?;
-            if first == b"Indexed" {
-                return None;
-            }
-            // For ICCBased we'd need to look up the profile — return None (safe skip)
-            None
-        }
-        _ => None,
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -351,20 +299,62 @@ mod tests {
         assert!(!is_info_dict((6, 0), &trailer));
     }
 
+    fn rgb_plan(w: u32, h: u32) -> ImagePlan {
+        ImagePlan {
+            cs: crate::pdf::rewriter::colorspace::ResolvedColorSpace::Rgb,
+            target_w: w,
+            target_h: h,
+            force_gray: false,
+        }
+    }
+
     #[test]
-    fn recompress_image_mask_skipped() {
+    fn recompress_image_quality_zero_noop() {
         let mut dict = PdfDict::new();
-        dict.set(b"Subtype".to_vec(), PdfObject::Name(b"Image".to_vec()));
-        dict.set(b"ImageMask".to_vec(), PdfObject::Boolean(true));
-        dict.set(b"Width".to_vec(), PdfObject::Integer(100));
-        dict.set(b"Height".to_vec(), PdfObject::Integer(100));
-        dict.set(b"Length".to_vec(), PdfObject::Integer(5));
-        let stream = PdfStream {
-            dict,
-            raw_bytes: b"abcde".to_vec(),
-        };
-        let result = recompress_image(stream.clone(), 72, false, None).unwrap();
-        // ImageMask must be untouched
-        assert_eq!(result.raw_bytes, b"abcde");
+        dict.set(b"Subtype", PdfObject::Name(b"Image".to_vec()));
+        dict.set(b"Width", PdfObject::Integer(8));
+        dict.set(b"Height", PdfObject::Integer(8));
+        let stream = PdfStream { dict, raw_bytes: vec![0u8; 8 * 8 * 3] };
+        let r = recompress_image(stream.clone(), &rgb_plan(8, 8), 0).unwrap();
+        assert_eq!(r.raw_bytes, stream.raw_bytes); // untouched at quality 0
+    }
+
+    #[test]
+    fn recompress_raw_rgb_becomes_dct() {
+        // 64x64 RGB gradient, stored uncompressed → JPEG should be smaller.
+        let (w, h) = (64u32, 64u32);
+        let mut raw = Vec::with_capacity((w * h * 3) as usize);
+        for i in 0..(w * h) {
+            raw.push((i % 256) as u8);
+            raw.push((i.wrapping_mul(2) % 256) as u8);
+            raw.push((i.wrapping_mul(3) % 256) as u8);
+        }
+        let mut dict = PdfDict::new();
+        dict.set(b"Subtype", PdfObject::Name(b"Image".to_vec()));
+        dict.set(b"Width", PdfObject::Integer(w as i64));
+        dict.set(b"Height", PdfObject::Integer(h as i64));
+        dict.set(b"ColorSpace", PdfObject::Name(b"DeviceRGB".to_vec()));
+        dict.set(b"BitsPerComponent", PdfObject::Integer(8));
+        let stream = PdfStream { dict, raw_bytes: raw };
+        let r = recompress_image(stream.clone(), &rgb_plan(w, h), 50).unwrap();
+        assert_eq!(r.filter_name(), Some(b"DCTDecode".as_ref()));
+        assert!(r.raw_bytes.len() < stream.raw_bytes.len());
+    }
+
+    #[test]
+    fn recompress_image_downsamples() {
+        let (w, h) = (64u32, 64u32);
+        let raw = vec![128u8; (w * h * 3) as usize];
+        let mut dict = PdfDict::new();
+        dict.set(b"Subtype", PdfObject::Name(b"Image".to_vec()));
+        dict.set(b"Width", PdfObject::Integer(w as i64));
+        dict.set(b"Height", PdfObject::Integer(h as i64));
+        dict.set(b"ColorSpace", PdfObject::Name(b"DeviceRGB".to_vec()));
+        dict.set(b"BitsPerComponent", PdfObject::Integer(8));
+        let stream = PdfStream { dict, raw_bytes: raw };
+        let r = recompress_image(stream, &rgb_plan(16, 16), 50).unwrap();
+        // Solid colour JPEG of 16x16 is tiny — must have shrunk + resized.
+        assert_eq!(r.dict.get(b"Width").and_then(|v| v.as_integer()), Some(16));
+        assert_eq!(r.dict.get(b"Height").and_then(|v| v.as_integer()), Some(16));
     }
 }

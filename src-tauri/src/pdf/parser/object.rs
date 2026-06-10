@@ -237,14 +237,14 @@ fn consume_stream_body(
     let raw_bytes = if let Some(len) = declared_length {
         let end = stream_start + len;
         if end <= data.len() {
-            // Verify the next bytes after length are endstream
+            // Verify the next bytes after length are endstream.
+            // Skip CR/LF in-place — no allocation needed.
             let after = &data[end..];
-            let after_trimmed = after
-                .iter()
-                .skip_while(|&&b| b == b'\r' || b == b'\n')
-                .cloned()
-                .collect::<Vec<_>>();
-            if after_trimmed.starts_with(b"endstream") {
+            let mut skip = 0;
+            while skip < after.len() && (after[skip] == b'\r' || after[skip] == b'\n') {
+                skip += 1;
+            }
+            if after[skip..].starts_with(b"endstream") {
                 lex.seek(end);
                 // Skip optional EOL before endstream
                 if lex.pos() < data.len() && data[lex.pos()] == b'\r' {

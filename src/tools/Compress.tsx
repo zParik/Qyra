@@ -29,7 +29,9 @@ const LEVELS = [
 type Level = 0 | 1 | 2;
 
 export default function Compress() {
-  const { files, clearFiles, isProcessing } = useAppStore();
+  const files = useAppStore((s) => s.files);
+  const clearFiles = useAppStore((s) => s.clearFiles);
+  const isProcessing = useAppStore((s) => s.isProcessing);
   const { run } = usePdfCommand();
   const file = files[0]!;
   const [level, setLevel] = useState<Level>(0);

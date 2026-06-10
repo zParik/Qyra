@@ -31,6 +31,24 @@ pub fn temp_dir_str() -> String {
     std::env::temp_dir().to_string_lossy().to_string()
 }
 
+/// Sibling path `<dir>/<stem><suffix>.<ext>`, bumping `-1`, `-2`, … until it
+/// names a file that does not yet exist. Lets compression always write a NEW
+/// file next to the original without ever overwriting anything.
+pub fn unique_sibling_path(input: &str, suffix: &str) -> String {
+    let p = Path::new(input);
+    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
+    let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("pdf");
+    let dir = p.parent().unwrap_or(Path::new("."));
+
+    let mut candidate = dir.join(format!("{stem}{suffix}.{ext}"));
+    let mut n = 1;
+    while candidate.exists() {
+        candidate = dir.join(format!("{stem}{suffix}-{n}.{ext}"));
+        n += 1;
+    }
+    candidate.to_string_lossy().to_string()
+}
+
 pub fn output_path_with_ext(input: &str, suffix: &str, ext: &str) -> String {
     let p = Path::new(input);
     let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("output");

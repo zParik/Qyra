@@ -245,6 +245,19 @@ pub fn run() {
         std::env::set_var("RUST_MIN_STACK", "8388608"); // 8 MiB
     }
 
+    // Hard-cap the rayon GLOBAL thread pool to half the cores (2..=8) before any
+    // parallel work runs. The Native compressor uses its own per-call capped
+    // pool, but this guarantees NO rayon path — now or later — can pin every
+    // logical CPU. Best-effort: ignore the error if already initialized.
+    let rayon_threads = (std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2)
+        / 2)
+        .clamp(2, 8);
+    let _ = rayon::ThreadPoolBuilder::new()
+        .num_threads(rayon_threads)
+        .build_global();
+
     // The render worker shares this exact ActiveDocument handle (Arc inside), so
     // set_active_document still cancels in-flight renders for a doc the user
     // navigated away from. Desktop only — Android renders via JNI PdfRenderer.
@@ -341,8 +354,7 @@ pub fn run() {
             split::split_pdf_by_bookmarks,
             compress::compress_pdf,
             compress::cancel_compress,
-            compress_gs::compress_pdf_gs,
-            compress_gs::compress_pdf_gs_parallel,
+            compress::save_compressed_copy,
             rotate::rotate_pages,
             remove::remove_pages,
             reorder::reorder_pages,

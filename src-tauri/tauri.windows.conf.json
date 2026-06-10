@@ -1,8 +1,1 @@
-{
-  "bundle": {
-    "externalBin": ["binaries/gs"],
-    "resources": {
-      "binaries/gsdll64.dll": "gsdll64.dll"
-    }
-  }
-}
+{}

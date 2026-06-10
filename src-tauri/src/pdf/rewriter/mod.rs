@@ -1,6 +1,9 @@
+pub mod colorspace;
 pub mod config;
 pub mod dedup;
 pub mod gc;
+pub mod placement;
+pub mod plan;
 pub mod rewriter;
 pub mod transforms;
 

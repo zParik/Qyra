@@ -34,30 +34,13 @@ export const compressPdf = (path: string, output?: string, level?: number) =>
 /** Signal the in-flight Native (Rust) compression to abort. */
 export const cancelCompress = () => invoke<void>("cancel_compress");
 
-export type GsPreset = "screen" | "ebook" | "printer" | "prepress";
-export interface GsCompressResult {
-  path: string;
-  original_bytes: number;
-  compressed_bytes: number;
-  preset: GsPreset;
-}
-export const compressPdfGs = (path: string, output?: string, preset?: GsPreset, turbo?: boolean) =>
-  invoke<GsCompressResult>("compress_pdf_gs", { path, output, preset, turbo });
-
-export const compressPdfGsParallel = (
-  path: string,
-  output?: string,
-  preset?: GsPreset,
-  chunkPages?: number,
-  turbo?: boolean,
-) =>
-  invoke<GsCompressResult>("compress_pdf_gs_parallel", {
-    path,
-    output,
-    preset,
-    chunkPages,
-    turbo,
-  });
+/**
+ * Save a freshly-compressed temp file as a NEW file next to `original`
+ * (`<name>-compressed.pdf`, auto-numbered). Never overwrites the source.
+ * Returns the saved file's path.
+ */
+export const saveCompressedCopy = (src: string, original: string) =>
+  invoke<string>("save_compressed_copy", { src, original });
 
 export const rotatePages = (path: string, pages: number[], degrees: number, output?: string) =>
   invoke<string>("rotate_pages", { path, pages, degrees, output });

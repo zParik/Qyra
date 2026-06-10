@@ -48,10 +48,6 @@ coverage/
 playwright-report/
 test-results/
 
-# Vendored sidecar binaries — fetched by scripts/fetch-gs.{ps1,sh}
-src-tauri/binaries/gs-*
-src-tauri/binaries/gsdll64.dll
-
 # Local-only notes & scripts
 PLAN.md
 CLAUDE.md

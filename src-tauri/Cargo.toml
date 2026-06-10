@@ -38,6 +38,9 @@ rand = "0.10"
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 printpdf = "0.7"
 image = { version = "0.25", features = ["png", "jpeg", "webp"] }
+# Memory-map PDF inputs so huge files are not read into the heap (no OOM at read,
+# especially on Android). Pure-Rust, supports Windows/unix/Android.
+memmap2 = "0.9"
 tokio = { version = "1", features = ["sync", "rt", "macros"] }
 rayon = "1"
 tempfile = "3"
@@ -61,7 +64,7 @@ jni = { version = "0.21", default-features = false }
 ndk-context = "0.1"
 libc = "0.2"
 
-# libc on unix desktop for nice() in compress_gs.rs lower_priority.
+# libc on unix desktop for setpriority() in the compressor's thread scheduling.
 [target.'cfg(all(unix, not(target_os = "android")))'.dependencies]
 libc = "0.2"
 
