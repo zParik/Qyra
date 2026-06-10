@@ -14,18 +14,19 @@ describe("stripDataUrlPrefix", () => {
 });
 
 describe("base64ToBlob", () => {
-  it("decodes to the original byte length", () => {
+  it("decodes to the original byte length", async () => {
     // "hi" => "aGk="
-    const blob = base64ToBlob("aGk=");
+    const blob = await base64ToBlob("aGk=");
     expect(blob.size).toBe(2);
     expect(blob.type).toBe("image/jpeg");
   });
-  it("accepts a full data URL", () => {
-    const blob = base64ToBlob("data:image/jpeg;base64,aGk=");
+  it("accepts a full data URL", async () => {
+    const blob = await base64ToBlob("data:image/jpeg;base64,aGk=");
     expect(blob.size).toBe(2);
   });
-  it("honors an explicit mime type", () => {
-    expect(base64ToBlob("aGk=", "image/png").type).toBe("image/png");
+  it("honors an explicit mime type", async () => {
+    const blob = await base64ToBlob("aGk=", "image/png");
+    expect(blob.type).toBe("image/png");
   });
 });
 

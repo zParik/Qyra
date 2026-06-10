@@ -515,8 +515,8 @@ function DrawingCanvasInner({
 }
 
 // All props primitive (pageSlotId/docPath/isDrawingMode). Memoized so a page's
-// canvas is not re-rendered on every Viewer re-render (scroll/thumbnail/zoom).
-// Zoom is no longer a prop — the page box is GPU-scaled by a CSS transform, so the
-// canvas renders once at base size and the browser scales it. Internal drawing
-// state still re-renders it when the user actually draws.
+// overlay is not re-rendered on every Viewer re-render (scroll/thumbnail/zoom).
+// Zoom is no longer a prop — the page box is laid out at the zoomed size and this
+// SVG resizes with it (ResizeObserver → size), re-rendering its normalized strokes
+// crisply at the new scale. Internal drawing state re-renders it when the user draws.
 export const DrawingCanvas = memo(DrawingCanvasInner);

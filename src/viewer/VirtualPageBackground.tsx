@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { PageTemplate } from "../store/useNotesStore";
 
 interface Props {
@@ -9,7 +10,7 @@ interface Props {
 const LINE_SPACING = 32; // px at 100% zoom — ruled/grid line interval
 const DOT_SPACING  = 32;
 
-export function VirtualPageBackground({ template, width, height }: Props) {
+function VirtualPageBackgroundInner({ template, width, height }: Props) {
   const patternId = `vp-${template}`;
 
   let pattern: React.ReactNode = null;
@@ -60,3 +61,7 @@ export function VirtualPageBackground({ template, width, height }: Props) {
     </svg>
   );
 }
+
+// Pure render from primitive props (template/width/height). Memoized so it does
+// not re-render on every Viewer re-render while scrolling/zooming.
+export const VirtualPageBackground = memo(VirtualPageBackgroundInner);

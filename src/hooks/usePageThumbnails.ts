@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { sessionCache, thumbKey, thumbPrefix, thumbStoreGet, thumbStorePut, thumbStoreEvict } from "../lib/sessionCache";
 import { LruCache } from "../lib/lruCache";
+import { evictTextPageCache } from "../viewer/TextLayer";
+import { evictLinkPageCache } from "../viewer/LinkLayer";
 
 // Cache rendered thumbnails: "path:page:scale" -> data URL.
 // LRU-bounded: a base64 page bitmap at the center render scale is multiple MB,
@@ -19,7 +21,8 @@ const thumbCache = new LruCache<string>(THUMB_CACHE_CAP);
 // with multi-MB base64 (each crosses the Tauri IPC ~3x) faster than GC reclaims
 // it — memory balloons mid-scroll and only settles once scrolling stops. Debouncing
 // means a page must actually come to rest in the window before it costs anything.
-const RENDER_DEBOUNCE_MS = 90;
+// Kept generous: at insane scroll speeds nothing should render until you stop.
+const RENDER_DEBOUNCE_MS = 200;
 
 /** Evict all cache entries for a given path so the next render reads fresh data from disk. */
 export function evictPathFromThumbnailCache(path: string) {
@@ -28,6 +31,8 @@ export function evictPathFromThumbnailCache(path: string) {
   }
   sessionCache.evictPrefix(thumbPrefix(path));
   thumbStoreEvict(path); // also purge persistent cache
+  evictTextPageCache(path); // text layer caches per page too — same staleness rules
+  evictLinkPageCache(path); // ditto links
 }
 
 /**
@@ -184,6 +189,12 @@ export function usePageThumbnails(
   // Latest visible window, read by the cancel predicate so a queued render bails
   // (before it ever calls into Rust) once its page scrolls outside render distance.
   const visibleRef = useRef<Set<number>>(new Set());
+  // Latest render scale. Zoom changes `scale`; any render still queued/in-flight for a
+  // SUPERSEDED scale must bail (its result is for the wrong zoom and only clogs the
+  // single render worker). Rapid zoom would otherwise enqueue a render per intermediate
+  // scale and run them all to completion.
+  const scaleRef = useRef(scale);
+  scaleRef.current = scale;
   // Debounce timer for the render dispatch — reset on every window change so renders
   // only fire once scrolling settles.
   const renderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -266,11 +277,12 @@ export function usePageThumbnails(
         inFlightRef.current.add(page);
         requestedRef.current.add(page); // Checklist entry: registered so we never request it twice
 
-        // Cancel if the document changed OR the page scrolled outside the current
-        // render window — checked inside renderPage before each cache layer and,
-        // crucially, after the concurrency semaphore but before the Rust render, so
-        // a render still rasterizes nothing once its page leaves view.
-        const isCancelled = () => !activeRef.current || !visibleRef.current.has(page);
+        // Cancel if the document changed, the page scrolled outside the current
+        // render window, OR the zoom moved on to a new scale (this render is for a
+        // stale zoom). Checked inside renderPage before each cache layer and, crucially,
+        // after the concurrency semaphore but before the Rust render, so a superseded
+        // render rasterizes nothing.
+        const isCancelled = () => !activeRef.current || !visibleRef.current.has(page) || scaleRef.current !== scale;
 
         renderPage(path!, page, scale, isCancelled)
           .then((dataUrl) => {

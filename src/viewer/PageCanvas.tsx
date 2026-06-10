@@ -1,130 +1,163 @@
-import { memo, useEffect, useRef } from "react";
-import { base64ToBlob, canvasBackingSize } from "./render/pageBitmap";
+import { memo, useEffect, useRef, useState } from "react";
+import { base64ToBlob } from "./render/pageBitmap";
 
 interface Props {
-  /** Base64 JPEG (data-URL or raw) for the page, or undefined while it renders. */
+  /**
+   * Base64 JPEG (data-URL) for the page, already rendered at the CURRENT zoom's
+   * target resolution, or undefined while it (re-)renders. When it goes undefined
+   * mid-zoom we keep the last frame on screen — we never blank the canvas.
+   */
   src: string | undefined;
-  /** Unscaled page-content width in CSS px (zoom is a GPU transform on the parent). */
-  cssWidth: number;
-  /** Page height / width. Drives the canvas aspect and the placeholder box. */
+  /**
+   * Document-nominal height/width ratio — used ONLY by the pre-first-frame
+   * placeholder to reserve approximate space. It never sizes the canvas or its
+   * backing: once the first frame lands, the bitmap's true aspect drives layout.
+   */
   aspect: number;
-  /** Page number — for the placeholder label + a11y. */
+  /** Page number — placeholder label + a11y. */
   pageLabel: number;
   /** Red selection outline (remove-pages mode). */
   isSelected?: boolean;
 }
 
 /**
- * Renders a single PDF page onto a <canvas>.
+ * Renders a single PDF page onto a <canvas>, double-buffered.
  *
- * Why canvas instead of `<img src="data:…">`: the WebView keeps the *decoded*
- * RGBA bitmap of every mounted <img> in an image cache that JS cannot evict, so
- * scrolling/zooming a large document accumulated decoded bitmaps until it OOM-
- * crashed. Here we decode the base64 into an ImageBitmap, blit it into a canvas
- * whose backing store is pinned to the on-screen display size, then `close()` the
- * bitmap immediately. The only pixels that persist are the (bounded) canvas
- * backing store, and unmounting the canvas — which happens automatically when the
- * page scrolls out of the virtual-scroll window — frees them at once.
+ * The page bitmap is rendered (by MuPDF, in Rust) at the resolution of the CURRENT
+ * zoom — so the canvas backing store equals the decoded bitmap's native size and is
+ * displayed ~1:1. There is no CSS transform/zoom scaling the canvas, so the WebView
+ * never caches a per-scale raster tile-set in (software-composited) system RAM — that
+ * cache was the multi-GB zoom-spam blowup.
+ *
+ * Double-buffering = no flicker: the previous frame stays on the canvas while the new
+ * bitmap decodes; only once it's fully decoded do we resize the backing + blit, in one
+ * synchronous block, so the cleared state is never painted. On a zoom change the old
+ * (lower-res) frame is simply CSS-scaled to the new display size for the ~100 ms until
+ * the crisp render lands — a soft frame, never a blank one. We deliberately do NOT
+ * clear on src→undefined (the page being momentarily pruned from the render window).
+ *
+ * Unmounting the canvas (page scrolled out of the virtual window) frees the backing
+ * store immediately, so total bitmap memory stays bounded to the visible window.
  */
-function PageCanvasInner({ src, cssWidth, aspect, pageLabel, isSelected }: Props) {
+function PageCanvasInner({ src, aspect, pageLabel, isSelected }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [ready, setReady] = useState(false);
+  // The src whose pixels currently fill the backing. Lets a page that left the active
+  // band (src → undefined, frame frozen) re-sync for free when the SAME render comes
+  // back: identical cached data-URL + intact backing → skip the decode entirely.
+  const drawnSrcRef = useRef<string | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !src) return;
+    if (src === drawnSrcRef.current && canvas.width > 0) return;
 
     let cancelled = false;
     let bitmap: ImageBitmap | null = null;
 
-    const dpr = window.devicePixelRatio || 1;
-    const { width, height } = canvasBackingSize(cssWidth, aspect, dpr);
-
     (async () => {
       try {
-        const blob = base64ToBlob(src);
-        // Decode DIRECTLY to the on-screen size. Decoding the full clamped raster
-        // (up to MAX_RENDER_DIM) and scaling down on draw allocates a much larger
-        // native RGBA bitmap; resizing during decode keeps each decode bounded to
-        // what's actually shown, so a burst of decodes can't spike native RAM.
-        bitmap = await createImageBitmap(blob, {
-          resizeWidth: width,
-          resizeHeight: height,
-          resizeQuality: "high",
-        });
-        if (cancelled || !canvasRef.current) {
+        // Decode through a Blob, NOT `new Image(src)`. A loaded HTMLImageElement
+        // leaves its decoded RGBA bitmap in the WebView's image cache, keyed by URL
+        // and unevictable from JS — and render-at-zoom mints a new data-URL every
+        // zoom step, so that cache balloons to many GB. createImageBitmap(blob)
+        // decodes into an ImageBitmap we own and close() immediately: nothing
+        // persists but the (bounded) canvas backing store.
+        const blob = await base64ToBlob(src);
+        if (cancelled && canvas.width > 0) return;
+        // Native size — no resize. The render already targets the current zoom.
+        bitmap = await createImageBitmap(blob);
+        // A cancelled decode still completes IF the canvas has no frame yet — a
+        // slightly-stale first frame beats a spinner when src is briefly withheld
+        // (fling gate). With a frame already present, stale results are discarded.
+        if (!canvasRef.current || (cancelled && canvas.width > 0)) {
           bitmap.close();
+          bitmap = null;
           return;
         }
-        // Size the backing store to the display size (not the source raster) so a
-        // page's memory cost is bounded regardless of how large it was rendered.
-        if (canvas.width !== width) canvas.width = width;
-        if (canvas.height !== height) canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          ctx.imageSmoothingEnabled = true;
-          ctx.imageSmoothingQuality = "high";
-          ctx.clearRect(0, 0, width, height);
-          ctx.drawImage(bitmap, 0, 0, width, height);
-        }
+
+        const ctx = canvas.getContext("2d", { alpha: false });
+        if (!ctx) return;
+
+        // Atomic swap: decode is already done, so resizing the backing (which clears
+        // it) and blitting happen in one synchronous block — the blank is never painted.
+        if (canvas.width !== bitmap.width) canvas.width = bitmap.width;
+        if (canvas.height !== bitmap.height) canvas.height = bitmap.height;
+        ctx.drawImage(bitmap, 0, 0);
+        drawnSrcRef.current = src;
+        if (!ready) setReady(true);
       } catch {
-        // Decode failures fall back to the placeholder (canvas stays blank).
+        // Decode failed — keep whatever frame is already on the canvas.
       } finally {
-        // Free the decoded pixels immediately — the canvas now owns the only copy.
         bitmap?.close();
         bitmap = null;
       }
     })();
 
+    // Cleanup on src change only cancels the in-flight decode. It must NOT clear the
+    // canvas — keeping the old frame is what makes zoom flicker-free.
     return () => {
       cancelled = true;
       bitmap?.close();
-      // Free the backing store immediately. Zoom re-anchors scroll every step,
-      // churning the virtual-scroll window, so pages unmount/remount rapidly;
-      // relying on GC of the detached <canvas> let native bitmap memory pile
-      // into the gigabytes. `canvas` here is the live element (this effect only
-      // runs once src/canvas exist), unlike a mount-time [] effect that captures
-      // null because the canvas isn't created until src arrives.
-      canvas.width = 0;
-      canvas.height = 0;
+      bitmap = null;
     };
-  }, [src, cssWidth, aspect]);
+  }, [src]);
 
-  if (!src) {
-    return (
-      <div
-        className="rounded flex flex-col items-center justify-center gap-2"
-        style={{
-          aspectRatio: `1/${aspect}`,
-          background: "color-mix(in oklch, var(--viewer-elevated) 60%, transparent)",
-          border: isSelected ? "3px solid #ef4444" : "1px solid var(--viewer-border-sub)",
-        }}
-      >
-        <svg className="w-6 h-6 animate-spin" style={{ color: "var(--viewer-text-muted)" }} fill="none" viewBox="0 0 24 24">
-          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-        </svg>
-        <span className="text-xs" style={{ color: "var(--viewer-text-muted)" }}>Page {pageLabel}</span>
-      </div>
-    );
-  }
+  // Free the backing store when the page scrolls out of the window (unmount only).
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    return () => {
+      if (canvas) {
+        canvas.width = 0;
+        canvas.height = 0;
+      }
+    };
+  }, []);
 
   return (
-    <canvas
-      ref={canvasRef}
-      aria-label={`Page ${pageLabel}`}
-      className="w-full rounded shadow-2xl block"
-      style={{
-        height: "auto",
-        display: "block",
-        userSelect: "none",
-        WebkitUserSelect: "none",
-        pointerEvents: "none",
-        ...(isSelected ? { outline: "3px solid #ef4444", borderRadius: "0.5rem" } : {}),
-      }}
-    />
+    <>
+      {/* The canvas is hidden (not unmounted — its backing must survive for the
+          double-buffer) until the first frame lands. Once visible, `w-full h-auto`
+          means its TRUE bitmap aspect sets the page box height, so every overlay
+          layer (inset:0 of the shrink-wrapped parent) aligns with the glyphs. */}
+      <canvas
+        ref={canvasRef}
+        aria-label={`Page ${pageLabel}`}
+        className="w-full block"
+        style={{
+          height: "auto",
+          display: ready ? "block" : "none",
+          userSelect: "none",
+          WebkitUserSelect: "none",
+          pointerEvents: "none",
+          borderRadius: "0.25rem",
+          // Cheap shadow instead of Tailwind shadow-2xl: a large blur is an expensive
+          // software raster (no GPU here) that scales with page area.
+          boxShadow: "0 1px 3px rgba(0,0,0,0.28), 0 4px 12px rgba(0,0,0,0.22)",
+          ...(isSelected ? { outline: "3px solid #ef4444" } : {}),
+        }}
+      />
+      {!ready && (
+        <div
+          className="rounded flex flex-col items-center justify-center gap-2"
+          style={{
+            // In-flow (not absolute) so it reserves the page box pre-first-frame,
+            // using the nominal aspect as an estimate until the bitmap arrives.
+            aspectRatio: `1/${aspect}`,
+            background: "color-mix(in oklch, var(--viewer-elevated) 60%, transparent)",
+            border: isSelected ? "3px solid #ef4444" : "1px solid var(--viewer-border-sub)",
+          }}
+        >
+          <svg className="w-6 h-6 animate-spin" style={{ color: "var(--viewer-text-muted)" }} fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+          </svg>
+          <span className="text-xs" style={{ color: "var(--viewer-text-muted)" }}>Page {pageLabel}</span>
+        </div>
+      )}
+    </>
   );
 }
 
-// Memoized: the cached `src` data-URL string is referentially stable, so this
-// only redraws when the page's raster actually changes (or it gets selected).
+// Memoized: redraws only when the page's raster (src) or display size changes.
 export const PageCanvas = memo(PageCanvasInner);

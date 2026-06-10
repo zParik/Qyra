@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { LruCache } from "../lib/lruCache";
 
 interface PageLink {
   uri: string;
@@ -9,6 +10,17 @@ interface PageLink {
   y0: number;
   x1: number;
   y1: number;
+}
+
+// Links per page, keyed "path:page". Pages leave/re-enter the active band while
+// scrolling; without this every band re-entry re-fired get_page_links over IPC.
+const linkPageCache = new LruCache<PageLink[]>(64);
+
+/** Drop cached links for a path after the file is rewritten in place (save/bake). */
+export function evictLinkPageCache(path: string) {
+  for (const key of linkPageCache.keys()) {
+    if (key.startsWith(`${path}:`)) linkPageCache.delete(key);
+  }
 }
 
 interface LinkLayerProps {
@@ -41,9 +53,16 @@ export function LinkLayer({
       setLinks([]);
       return;
     }
+    const cacheKey = `${pdfPath}:${pageNum}`;
+    const cached = linkPageCache.get(cacheKey);
+    if (cached) {
+      setLinks(cached);
+      return;
+    }
     let cancelled = false;
     invoke<PageLink[]>("get_page_links", { path: pdfPath, page: pageNum })
       .then((data) => {
+        linkPageCache.set(cacheKey, data);
         if (!cancelled) setLinks(data);
       })
       .catch(() => {

@@ -19,12 +19,32 @@ export function stripDataUrlPrefix(input: string): string {
  * Decode a base64 string (with or without a data-URL prefix) into a Blob.
  * Kept synchronous and dependency-free so it is trivially unit-testable.
  */
-export function base64ToBlob(base64: string, mime = "image/jpeg"): Blob {
-  const raw = stripDataUrlPrefix(base64);
-  const binary = atob(raw);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return new Blob([bytes], { type: mime });
+export async function base64ToBlob(base64: string, mime = "image/jpeg"): Promise<Blob> {
+  const url = base64.startsWith("data:") ? base64 : `data:${mime};base64,${base64}`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("fetch failed");
+    return await res.blob();
+  } catch {
+    // fallback for environments where fetch data: isn't supported (like some JSDOM/Node tests)
+    const base64Data = stripDataUrlPrefix(base64);
+    const byteString = atob(base64Data);
+    const ab = new ArrayBuffer(byteString.length);
+    const ia = new Uint8Array(ab);
+
+    // Chunk the assignment to avoid blocking the main thread synchronously
+    const CHUNK_SIZE = 1048576; // 1MB chunks
+    for (let i = 0; i < byteString.length; i += CHUNK_SIZE) {
+      const end = Math.min(i + CHUNK_SIZE, byteString.length);
+      for (let j = i; j < end; j++) {
+        ia[j] = byteString.charCodeAt(j);
+      }
+      if (end < byteString.length) {
+        await new Promise(r => setTimeout(r, 0));
+      }
+    }
+    return new Blob([ab], { type: mime });
+  }
 }
 
 /**

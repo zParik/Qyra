@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useMemo, memo } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { LruCache } from "../lib/lruCache";
 
 interface CharRect {
   c: string;
@@ -104,6 +105,19 @@ class SimpleSemaphore {
 
 const textSemaphore = new SimpleSemaphore(1);
 
+// Text lines per page, keyed "path:page". Pages unmount during flings (the Viewer strips
+// overlay layers while scrolling fast) and remount on settle — without this cache every
+// remount re-fired get_text_page over IPC. Text is a few KB–100 KB per page, so 64 pages
+// is a few MB, and the LRU bounds it.
+const textPageCache = new LruCache<TextLine[]>(64);
+
+/** Drop cached text for a path after the file is rewritten in place (save/bake). */
+export function evictTextPageCache(path: string) {
+  for (const key of textPageCache.keys()) {
+    if (key.startsWith(`${path}:`)) textPageCache.delete(key);
+  }
+}
+
 // Shared offscreen canvas for fast text-width measurement
 const measureCtx: CanvasRenderingContext2D | null =
   typeof document !== "undefined"
@@ -182,7 +196,9 @@ function TextLayerInner({
     if (e.touches.length === 1) anchorEoc(e.touches[0]!.clientY);
   };
 
-  // Track parent (page wrapper) dimensions
+  // Track parent (page wrapper) dimensions. The wrapper shrink-wraps the page canvas
+  // (its height comes from the bitmap's true aspect), so parent box == glyph box and
+  // the normalized span coords land on the glyphs. Re-measures on zoom via the observer.
   useEffect(() => {
     const el = containerRef.current?.parentElement;
     if (!el) return;
@@ -203,6 +219,12 @@ function TextLayerInner({
       setLines([]);
       return;
     }
+    const cacheKey = `${pdfPath}:${pageNum}`;
+    const cached = textPageCache.get(cacheKey);
+    if (cached) {
+      setLines(cached);
+      return;
+    }
     let cancelled = false;
     async function fetchText() {
       await textSemaphore.acquire();
@@ -212,6 +234,7 @@ function TextLayerInner({
           path: pdfPath,
           page: pageNum,
         });
+        textPageCache.set(cacheKey, data);
         if (!cancelled) setLines(data);
       } catch {
         if (!cancelled) setLines([]);
