@@ -248,13 +248,14 @@ export function CommandPalette() {
               }}>{group}</div>
               {items.map((cmd) => {
                 runningIndex++;
-                const active = runningIndex === activeIndex;
+                const idx = runningIndex; // snapshot — closures below must not read the mutating let
+                const active = idx === activeIndex;
                 return (
                   <div
                     key={cmd.id}
                     role="option"
                     aria-selected={active}
-                    onMouseEnter={() => setActiveIndex(runningIndex)}
+                    onMouseEnter={() => setActiveIndex(idx)}
                     onClick={() => { setOpen(false); cmd.run(); }}
                     style={{
                       display: "flex", alignItems: "center",

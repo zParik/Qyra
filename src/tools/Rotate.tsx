@@ -8,7 +8,9 @@ import { rotatePages } from "../lib/tauri";
 const DEGREES = [90, 180, 270] as const;
 
 export default function Rotate() {
-  const { files, clearFiles, isProcessing } = useAppStore();
+  const files = useAppStore((s) => s.files);
+  const clearFiles = useAppStore((s) => s.clearFiles);
+  const isProcessing = useAppStore((s) => s.isProcessing);
   const { run } = usePdfCommand();
   const [degrees, setDegrees] = useState<90 | 180 | 270>(90);
   const [applyTo, setApplyTo] = useState<"all" | "specific">("all");

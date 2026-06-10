@@ -36,7 +36,11 @@ export function FindBar({
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     e.stopPropagation();
     if (e.key === "Enter") {
-      e.shiftKey ? onPrev() : onNext();
+      if (e.shiftKey) {
+        onPrev();
+      } else {
+        onNext();
+      }
     } else if (e.key === "Escape") {
       onClose();
     }

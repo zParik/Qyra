@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Comment, useCommentsStore } from "../store/useCommentsStore";
 
 import { UI, MONO } from "../lib/tokens";
@@ -124,10 +124,14 @@ export function CommentPanel({ docPath, onPageSelect, isCommentMode, onToggleMod
   const allComments = docComments ?? [];
   const [showResolved, setShowResolved] = useState(false);
 
-  const sorted = [...allComments].sort((a, b) =>
-    a.pageIndex !== b.pageIndex ? a.pageIndex - b.pageIndex : a.y - b.y
-  );
-  const visible = showResolved ? sorted : sorted.filter((c) => !c.resolved);
+  // Sort + filter only when comments or the toggle change, not on every render
+  // (parent re-renders, unrelated state). docComments is a stable store ref.
+  const visible = useMemo(() => {
+    const sorted = [...allComments].sort((a, b) =>
+      a.pageIndex !== b.pageIndex ? a.pageIndex - b.pageIndex : a.y - b.y
+    );
+    return showResolved ? sorted : sorted.filter((c) => !c.resolved);
+  }, [allComments, showResolved]);
   const resolvedCount = allComments.filter((c) => c.resolved).length;
 
   if (allComments.length === 0) {

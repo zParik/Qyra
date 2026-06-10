@@ -9,7 +9,14 @@ import { mergePdfs, showSaveDialog } from "../lib/tauri";
 import { UI, MONO } from "../lib/tokens";
 
 export default function Merge() {
-  const { files, removeFile, reorderFiles, clearFiles, isProcessing, reset } = useAppStore();
+  // Per-field selectors: avoid re-rendering on unrelated store writes (e.g.
+  // progress ticks fired by other code paths) — only `files`/`isProcessing` here change.
+  const files = useAppStore((s) => s.files);
+  const removeFile = useAppStore((s) => s.removeFile);
+  const reorderFiles = useAppStore((s) => s.reorderFiles);
+  const clearFiles = useAppStore((s) => s.clearFiles);
+  const isProcessing = useAppStore((s) => s.isProcessing);
+  const reset = useAppStore((s) => s.reset);
 
   useEffect(() => {
     clearFiles();

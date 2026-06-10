@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, memo } from "react";
 import { Comment, COMMENT_COLORS, useCommentsStore } from "../store/useCommentsStore";
 
 interface CommentLayerProps {
@@ -212,7 +212,7 @@ export function CommentEditor({ comment, x, y, docPath, pageIndex, normX, normY,
 // Main CommentLayer
 // ---------------------------------------------------------------------------
 
-export function CommentLayer({ pageIndex, docPath, isCommentMode }: CommentLayerProps) {
+function CommentLayerInner({ pageIndex, docPath, isCommentMode }: CommentLayerProps) {
   const docComments = useCommentsStore((s) => s.comments[docPath]);
   const comments = (docComments ?? []).filter((c) => c.pageIndex === pageIndex);
 
@@ -303,3 +303,7 @@ export function CommentLayer({ pageIndex, docPath, isCommentMode }: CommentLayer
     </>
   );
 }
+
+// Props primitive (pageIndex/docPath/isCommentMode) → memoized to skip re-render
+// per page on Viewer scroll/zoom. Internal editor state re-renders it as needed.
+export const CommentLayer = memo(CommentLayerInner);

@@ -1,23 +1,13 @@
 import { useSetting } from "../../hooks/useSetting";
-import { Settings, CompressEngine, CompressLevel, GsPreset } from "../../lib/settings";
+import { Settings, CompressLevel } from "../../lib/settings";
 import { isAndroid, pickSaveFolderAndroid, saveFolderLabel } from "../../lib/androidFileUtils";
 import { pickDirectory } from "../../lib/tauri";
 import { SectionTitle, SettingRow, Toggle } from "./ui";
 
-const ENGINES: { value: CompressEngine; label: string }[] = [
-  { value: "rust", label: "Native" },
-  { value: "gs", label: "Ghostscript" },
-];
 const LEVELS: { value: CompressLevel; label: string }[] = [
   { value: 0, label: "Lossless" },
   { value: 1, label: "Lossy" },
   { value: 2, label: "Aggressive" },
-];
-const PRESETS: { value: GsPreset; label: string }[] = [
-  { value: "screen", label: "Screen" },
-  { value: "ebook", label: "eBook" },
-  { value: "printer", label: "Printer" },
-  { value: "prepress", label: "Prepress" },
 ];
 
 function Segmented<T extends string | number>({
@@ -45,9 +35,7 @@ function Segmented<T extends string | number>({
 
 export function FilesSection() {
   const android = isAndroid();
-  const [engine, setEngine] = useSetting(Settings.defaultCompressEngine);
   const [level, setLevel] = useSetting(Settings.defaultCompressLevel);
-  const [preset, setPreset] = useSetting(Settings.defaultCompressPreset);
   const [confirmOverwrite, setConfirmOverwrite] = useSetting(Settings.confirmBeforeOverwrite);
   const [saveFolder, setSaveFolder] = useSetting(Settings.defaultSaveFolder);
 
@@ -56,27 +44,13 @@ export function FilesSection() {
     if (picked) setSaveFolder(picked);
   }
 
-  // Ghostscript is desktop-only.
-  const effectiveEngine = android ? "rust" : engine;
-
   return (
     <div>
       <SectionTitle>Files</SectionTitle>
 
-      <SettingRow label="Default compression engine" description="Starting engine in the Compress tool.">
-        <Segmented options={android ? ENGINES.filter((e) => e.value === "rust") : ENGINES}
-          value={effectiveEngine} onChange={setEngine} />
+      <SettingRow label="Default compression level" description="Native compression level used by the Compress tool.">
+        <Segmented options={LEVELS} value={level} onChange={setLevel} />
       </SettingRow>
-
-      {effectiveEngine === "rust" ? (
-        <SettingRow label="Default level" description="Native zlib compression level.">
-          <Segmented options={LEVELS} value={level} onChange={setLevel} />
-        </SettingRow>
-      ) : (
-        <SettingRow label="Default quality preset" description="Ghostscript image downsampling.">
-          <Segmented options={PRESETS} value={preset} onChange={setPreset} />
-        </SettingRow>
-      )}
 
       <SettingRow
         label="Confirm before overwriting"

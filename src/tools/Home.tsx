@@ -61,7 +61,12 @@ interface HomeProps {
 
 export default function Home({ onOpenPdf }: HomeProps = {}) {
   const navigate = useNavigate();
-  const { openTab, setTabOriginal, setTabDirty, setTabUndo } = useAppStore();
+  // All actions (stable refs) — selecting them individually means Home never
+  // re-renders from store writes (a bare useAppStore() re-renders on every write).
+  const openTab = useAppStore((s) => s.openTab);
+  const setTabOriginal = useAppStore((s) => s.setTabOriginal);
+  const setTabDirty = useAppStore((s) => s.setTabDirty);
+  const setTabUndo = useAppStore((s) => s.setTabUndo);
   const [dragging, setDragging] = useState(false);
   const [recentFiles, setRecentFiles] = useState<RecentFile[]>([]);
   const [loading, setLoading] = useState<string | null>(null);

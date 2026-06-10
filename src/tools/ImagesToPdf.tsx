@@ -16,7 +16,12 @@ function imgSwatch(name: string): string {
 }
 
 export default function ImagesToPdf() {
-  const { files, addFile, removeFile, clearFiles, isProcessing, reset } = useAppStore();
+  const files = useAppStore((s) => s.files);
+  const addFile = useAppStore((s) => s.addFile);
+  const removeFile = useAppStore((s) => s.removeFile);
+  const clearFiles = useAppStore((s) => s.clearFiles);
+  const isProcessing = useAppStore((s) => s.isProcessing);
+  const reset = useAppStore((s) => s.reset);
 
   useEffect(() => { clearFiles(); reset(); }, []);
   const { run } = usePdfCommand();

@@ -16,7 +16,16 @@ interface ToolLayoutProps {
 export function ToolLayout({ title, description, children }: ToolLayoutProps) {
   const navigate = useNavigate();
   const isPhone = useIsPhone();
-  const { isProcessing, progress, result, resultFiles, error, setError, cancelFn } = useAppStore();
+  // Per-field selectors: only re-render when a field this component reads
+  // actually changes. A bare useAppStore() subscribes to the whole store and
+  // re-renders on every unrelated write (tab open/close, dirty toggles, etc.).
+  const isProcessing = useAppStore((s) => s.isProcessing);
+  const progress = useAppStore((s) => s.progress);
+  const result = useAppStore((s) => s.result);
+  const resultFiles = useAppStore((s) => s.resultFiles);
+  const error = useAppStore((s) => s.error);
+  const setError = useAppStore((s) => s.setError);
+  const cancelFn = useAppStore((s) => s.cancelFn);
 
   const monoSize = isPhone ? 12 : 10.5;
   const titleSize = isPhone ? 15 : 13;

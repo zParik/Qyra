@@ -19,7 +19,9 @@ function flatOutline(nodes: OutlineNode[], depth = 0): { title: string; page: nu
 }
 
 export default function Split() {
-  const { files, clearFiles, isProcessing } = useAppStore();
+  const files = useAppStore((s) => s.files);
+  const clearFiles = useAppStore((s) => s.clearFiles);
+  const isProcessing = useAppStore((s) => s.isProcessing);
   const { run } = usePdfCommand();
   const [mode, setMode] = useState<SplitMode>("ranges");
   const [rangeText, setRangeText] = useState("1-3, 4-6");
