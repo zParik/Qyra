@@ -506,8 +506,9 @@ pub async fn pdf_to_images(
         };
         let mut paths = Vec::new();
         for i in 0..page_count {
-            let page = doc.load_page(i)?;
-            let pixmap = page.to_pixmap(&matrix, &cs, false, false)?;
+            // Same raster as the viewer: contents + annotations (issue #64),
+            // minus widgets and sticky-note icons.
+            let pixmap = crate::commands::render_worker::rasterize_page(&doc, i, &matrix, &cs)?;
             let img = image::RgbImage::from_raw(
                 pixmap.width(),
                 pixmap.height(),
