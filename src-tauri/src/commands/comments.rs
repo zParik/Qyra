@@ -670,7 +670,7 @@ pub async fn load_comments(path: String) -> AppResult<String> {
             }
             for annot_id in annot_refs(&doc, page_id) {
                 let Some(dict) = get_dict(&doc, annot_id) else { continue };
-                if dict_subtype(dict) != Some(b"Text") {
+                if dict_subtype(dict) != Some(b"Text".as_slice()) {
                     continue;
                 }
 
