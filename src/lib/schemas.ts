@@ -81,6 +81,8 @@ export const CommentSchema = z.object({
   resolved: z.boolean(),
   createdAt: z.number(),
   quote: z.string().optional(),
+  /** Set by the backend once the comment exists as a PDF Text annotation. */
+  synced: z.boolean().optional(),
 });
 
 export const RecentFileSchema = z.object({
