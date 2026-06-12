@@ -350,7 +350,8 @@ pub fn rasterize_page(
     matrix: &mupdf::Matrix,
     cs: &mupdf::Colorspace,
 ) -> AppResult<mupdf::Pixmap> {
-    use mupdf::pdf::{AnnotationFlags, PdfAnnotationType, PdfPage};
+    use mupdf::pdf::annotation::AnnotationFlags;
+    use mupdf::pdf::{PdfAnnotationType, PdfPage};
 
     let page = doc.load_page(page_idx)?;
     let mut p = match PdfPage::try_from(page) {
