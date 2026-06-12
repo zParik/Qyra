@@ -19,6 +19,19 @@ function apply(choice: ThemeChoice) {
   } else {
     root.dataset.theme = choice;
   }
+  syncNativeTitleBar(choice);
+}
+
+// Keep the native OS window chrome (Windows title bar, macOS traffic-light bar)
+// in step with the in-app theme. Without this the title bar follows only the OS
+// theme and clashes with an explicit in-app light/dark choice. "system" passes
+// null so Tauri defers to the OS. Tauri-only: in a plain browser or the test
+// runner the dynamic import / IPC call rejects and we silently no-op.
+function syncNativeTitleBar(choice: ThemeChoice) {
+  const theme = choice === "system" ? null : choice;
+  import("@tauri-apps/api/webviewWindow")
+    .then(({ getCurrentWebviewWindow }) => getCurrentWebviewWindow().setTheme(theme))
+    .catch(() => { /* not running under Tauri */ });
 }
 
 // Apply once at module load so the first paint matches the stored choice.

@@ -53,16 +53,20 @@
     --text-muted:        var(--fg2);
     --text-on-dark:      oklch(0.94 0.007 40);
 
-    /* Viewer chrome — always dark */
-    --viewer-bg:          #0d0d0e;
-    --viewer-surface:     #141416;
-    --viewer-elevated:    #1a1a1d;
-    --viewer-canvas:      #202024;
-    --viewer-border:      #2a2a2f;
-    --viewer-border-sub:  #1f1f23;
-    --viewer-text:        #ededee;
-    --viewer-text-sec:    #9fa0a4;
-    --viewer-text-muted:  #6b6c70;
+    /* Viewer chrome — tracks the active theme. Mapped onto the shared shell
+       tokens so dark mode resolves to the exact hex values these were hardcoded
+       as, while light mode now gives the viewer a matching light chrome.
+       (var() is substituted at use time, so the dark-theme overrides of the
+       bg / line / fg tokens below cascade through to these automatically.) */
+    --viewer-bg:          var(--bg0);
+    --viewer-surface:     var(--bg1);
+    --viewer-elevated:    var(--bg2);
+    --viewer-canvas:      var(--bg3);
+    --viewer-border:      var(--line);
+    --viewer-border-sub:  var(--line2);
+    --viewer-text:        var(--fg0);
+    --viewer-text-sec:    var(--fg1);
+    --viewer-text-muted:  var(--fg2);
 
     /* Brand + action → amber */
     --brand:        var(--accent);
