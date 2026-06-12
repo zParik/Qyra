@@ -370,6 +370,15 @@ pub fn rasterize_page(
         ) {
             let _ = annot.set_flags(AnnotationFlags::IS_HIDDEN);
         }
+        // mupdf-rs 0.6 bug: AnnotationIter yields *borrowed* pdf_annot
+        // pointers (pdf_first/next_annot take no reference), but
+        // PdfAnnotation's Drop calls pdf_drop_annot anyway. Letting it run
+        // underflows the refcount and frees the page's annotation list while
+        // the page still uses it — use-after-free, STATUS_ACCESS_VIOLATION
+        // on any page that has annotations (links included). Forgetting the
+        // wrapper releases the borrow without the bogus drop; no leak, since
+        // no reference was ever taken.
+        std::mem::forget(annot);
     }
     let _ = p.update();
 
