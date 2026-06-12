@@ -62,6 +62,29 @@ fn text_annots(path: &str) -> Vec<(String, String)> {
     out
 }
 
+/// Count Text annotations carrying an /AP appearance (PDFium draws nothing
+/// without one).
+fn text_annots_with_ap(path: &str) -> usize {
+    let doc = Document::load(path).expect("load pdf");
+    let mut count = 0;
+    for (_num, page_id) in doc.get_pages() {
+        let Ok(Object::Dictionary(page_dict)) = doc.get_object(page_id) else { continue };
+        let refs: Vec<lopdf::ObjectId> = match page_dict.get(b"Annots") {
+            Ok(Object::Array(arr)) => arr.iter().filter_map(|o| o.as_reference().ok()).collect(),
+            _ => vec![],
+        };
+        for annot_id in refs {
+            let Ok(Object::Dictionary(d)) = doc.get_object(annot_id) else { continue };
+            if matches!(d.get(b"Subtype"), Ok(Object::Name(n)) if n == b"Text")
+                && d.get(b"AP").is_ok()
+            {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
 async fn load(path: &str) -> Vec<Value> {
     let json = load_comments(path.to_string()).await.expect("load_comments");
     serde_json::from_str(&json).expect("comments JSON")
@@ -83,6 +106,7 @@ async fn save_creates_text_annotations() {
     assert_eq!(annots.len(), 2, "one Text annotation per comment");
     assert!(annots.iter().any(|(nm, c)| nm == "c-one" && c == "first note"));
     assert!(annots.iter().any(|(nm, c)| nm == "c-two" && c == "second note"));
+    assert_eq!(text_annots_with_ap(&path), 2, "every note ships an /AP icon");
 
     // The reloaded comments are marked synced.
     let loaded = load(&path).await;

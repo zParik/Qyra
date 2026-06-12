@@ -514,14 +514,51 @@ fn collect_text_annots(doc: &Document) -> HashMap<String, ExistingNote> {
     notes
 }
 
+/// Speech-bubble icon appearance stream for a note. Acrobat and pdf.js draw
+/// their own icon for Text annotations, but PDFium (Chrome/Edge's viewer)
+/// renders only what `/AP` provides — without this the note is invisible
+/// there. BBox matches the NOTE_W×NOTE_H rect the annotation occupies.
+fn note_appearance(doc: &mut Document, color: &str) -> ObjectId {
+    let (r, g, b) = hex_to_rgb_f32(color);
+    let ops = format!(
+        "q\n\
+         {r:.3} {g:.3} {b:.3} rg\n\
+         0.15 0.15 0.15 RG\n\
+         0.6 w\n\
+         1 6 m\n1 19 l\n19 19 l\n19 6 l\n9 6 l\n5 1 l\n6.5 6 l\nh\nB\n\
+         1 1 1 RG\n1 w\n\
+         4 15.5 m 16 15.5 l S\n\
+         4 12.5 m 16 12.5 l S\n\
+         4 9.5 m 11 9.5 l S\n\
+         Q\n"
+    );
+    let mut sd = Dictionary::new();
+    sd.set("Type", Object::Name(b"XObject".to_vec()));
+    sd.set("Subtype", Object::Name(b"Form".to_vec()));
+    sd.set(
+        "BBox",
+        Object::Array(vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Integer(NOTE_W as i64),
+            Object::Integer(NOTE_H as i64),
+        ]),
+    );
+    sd.set("Resources", Object::Dictionary(Dictionary::new()));
+    doc.add_object(Object::Stream(Stream::new(sd, ops.into_bytes())))
+}
+
 /// Build a fresh Text-annotation dictionary for a comment.
-fn build_note_dict(comment: &Comment, pw: f64, ph: f64) -> Dictionary {
+fn build_note_dict(comment: &Comment, pw: f64, ph: f64, ap_id: ObjectId) -> Dictionary {
     // Pin tip (normalized, top-left origin) → PDF coords (bottom-left origin).
     let tip_x = comment.x.clamp(0.0, 1.0) * pw;
     let tip_y = (1.0 - comment.y.clamp(0.0, 1.0)) * ph;
     let (r, g, b) = hex_to_rgb_f32(&comment.color);
 
     let mut d = Dictionary::new();
+    let mut ap = Dictionary::new();
+    ap.set("N", Object::Reference(ap_id));
+    d.set("AP", Object::Dictionary(ap));
     d.set("Type", Object::Name(b"Annot".to_vec()));
     d.set("Subtype", Object::Name(b"Text".to_vec()));
     d.set(
@@ -594,6 +631,13 @@ fn sync_text_annots(doc: &mut Document, comments: &mut [Comment]) {
                 continue;
             }
 
+            // New icon appearance before the mutable borrow of the annot —
+            // a stale /AP would keep drawing the old color.
+            let ap_id = if color_changed {
+                Some(note_appearance(doc, &comment.color))
+            } else {
+                None
+            };
             let now = pdf_date(now_millis());
             if let Ok(Object::Dictionary(d)) = doc.get_object_mut(note.annot_id) {
                 if text_changed {
@@ -602,7 +646,7 @@ fn sync_text_annots(doc: &mut Document, comments: &mut [Comment]) {
                         Object::String(pdf_text_encode(&comment.text), StringFormat::Literal),
                     );
                 }
-                if color_changed {
+                if let Some(ap_id) = ap_id {
                     let (r, g, b) = hex_to_rgb_f32(&comment.color);
                     d.set(
                         "C",
@@ -612,8 +656,9 @@ fn sync_text_annots(doc: &mut Document, comments: &mut [Comment]) {
                             Object::Real(b),
                         ]),
                     );
-                    // Stale icon appearance would override the new color.
-                    d.remove(b"AP");
+                    let mut ap = Dictionary::new();
+                    ap.set("N", Object::Reference(ap_id));
+                    d.set("AP", Object::Dictionary(ap));
                 }
                 d.set("M", Object::String(now.into_bytes(), StringFormat::Literal));
             }
@@ -623,7 +668,8 @@ fn sync_text_annots(doc: &mut Document, comments: &mut [Comment]) {
                 continue;
             };
             let (pw, ph) = get_page_dims(doc, page_id);
-            let note_dict = build_note_dict(comment, pw, ph);
+            let ap_id = note_appearance(doc, &comment.color);
+            let note_dict = build_note_dict(comment, pw, ph, ap_id);
             let annot_id = doc.add_object(note_dict);
             if push_annot_ref(doc, page_id, annot_id).is_ok() {
                 comment.synced = true;
