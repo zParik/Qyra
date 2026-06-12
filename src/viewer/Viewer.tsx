@@ -180,9 +180,38 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
   const { fieldValues, setFieldValue, saveFormFields: _saveFormFields, isDirty: _isFormDirty } = useFormFilling();
 
   // Comments (loads on mount, auto-saves on change). The comments themselves
-  // are read by CommentLayer/sidebar via useCommentsStore — Viewer only needs
-  // the hook to wire up the load and auto-save effects.
-  useComments(viewerFile?.path);
+  // are read by CommentLayer/sidebar via useCommentsStore. Save paths must
+  // flushComments() first: the auto-save is debounced and a large PDF takes
+  // seconds to rewrite, so "Saved ✓" without the flush can report success
+  // while the comment write is still in flight (and dies with the process).
+  const { flushComments, hasUnsavedComments } = useComments(viewerFile?.path);
+
+  // Closing the window while a (slow, debounced) comment save is pending or
+  // in flight would kill the write mid-parse and silently lose the comment —
+  // exactly what happened with a 145 MB document. Hold the close, flush, then
+  // close for real (second close passes because nothing is pending anymore).
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let closing = false;
+    import("@tauri-apps/api/window").then(({ getCurrentWindow }) => {
+      getCurrentWindow()
+        .onCloseRequested(async (event) => {
+          if (closing || !hasUnsavedComments()) return;
+          event.preventDefault();
+          try {
+            await flushComments();
+          } catch (e) {
+            console.error("[comments] flush on close failed:", e);
+          }
+          closing = true;
+          getCurrentWindow().close();
+        })
+        .then((u) => { unlisten = u; })
+        .catch(() => {});
+    }).catch(() => {});
+    return () => unlisten?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Restore page + zoom from SQLite when this tab is mounted
   useEffect(() => {
@@ -899,6 +928,8 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
     setSaveStatus("saving");
     setSaveError(null);
     try {
+      // Pending comment writes go into vf.path — land them before copying.
+      await flushComments();
       if (!origPath) {
         const chosenPath = await showSaveDialog(vf.path);
         if (!chosenPath) { setSaveStatus("idle"); return; }
@@ -973,14 +1004,19 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
   async function handleSave() {
     if (!viewerFile) return;
     if (!originalViewerPath) return handleSaveAs();
-    if (!isViewerDirty) { markSaved(); return; }
+    if (!isViewerDirty && !hasUnsavedComments()) { markSaved(); return; }
     setSaveError(null);
     setSaveStatus("saving");
     try {
-      await copyFile(viewerFile.path, originalViewerPath);
-      evictPathFromThumbnailCache(originalViewerPath);
-      setViewerFile({ ...viewerFile, path: originalViewerPath, name: originalViewerPath.split(/[\\/]/).pop() ?? originalViewerPath });
-      setIsViewerDirty(false);
+      // Comments save on a debounce into the working file — force the write
+      // and wait, or "Saved ✓" lies while it is still in flight.
+      await flushComments();
+      if (isViewerDirty) {
+        await copyFile(viewerFile.path, originalViewerPath);
+        evictPathFromThumbnailCache(originalViewerPath);
+        setViewerFile({ ...viewerFile, path: originalViewerPath, name: originalViewerPath.split(/[\\/]/).pop() ?? originalViewerPath });
+        setIsViewerDirty(false);
+      }
       markSaved();
     } catch (e) {
       setSaveStatus("error");
@@ -995,6 +1031,8 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
     if (!chosenPath) return;
     setSaveStatus("saving");
     try {
+      // Land any pending comment write in the source before copying it.
+      await flushComments();
       await copyFile(viewerFile.path, chosenPath);
       evictPathFromThumbnailCache(chosenPath);
       setViewerFile({ ...viewerFile, path: chosenPath, name: chosenPath.split(/[\\/]/).pop() ?? chosenPath });
@@ -1038,6 +1076,9 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
     });
 
     try {
+      // Pending comment writes must land in the file before it gets baked
+      // and copied over the original.
+      await flushComments();
       let savePath = viewerFile.path;
       if (byPage.size > 0 || docVirtualPages.length > 0) {
         const annotations = Array.from(byPage.entries()).map(([page, strokes]) => ({
@@ -1101,6 +1142,8 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
     });
 
     try {
+      // Pending comment writes must land in the file before bake/copy.
+      await flushComments();
       let savePath = viewerFile.path;
       if (byPage.size > 0 || docVirtualPages.length > 0) {
         const annotations = Array.from(byPage.entries()).map(([page, strokes]) => ({
