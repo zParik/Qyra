@@ -29,8 +29,10 @@ export function useComments(viewerPath: string | undefined) {
           /* ignore malformed JSON */
         }
       })
-      .catch(() => {
-        /* file might not have comments yet */
+      .catch((e) => {
+        // File might legitimately have no comments yet, but a real failure
+        // here means comments silently never load — surface it.
+        console.error("[comments] load failed:", e);
       })
       .finally(() => {
         if (!cancelled) isLoadingCommentsRef.current = false;
@@ -46,7 +48,10 @@ export function useComments(viewerPath: string | undefined) {
     if (!viewerPath || isLoadingCommentsRef.current) return;
     clearTimeout(saveTimerRef.current);
     saveTimerRef.current = window.setTimeout(() => {
-      saveComments(viewerPath, JSON.stringify(comments)).catch(() => {});
+      saveComments(viewerPath, JSON.stringify(comments)).catch((e) => {
+        // A silent failure here loses the user's comments on disk.
+        console.error("[comments] save failed:", e);
+      });
     }, 400);
     return () => clearTimeout(saveTimerRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
