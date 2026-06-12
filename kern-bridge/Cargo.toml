@@ -1,0 +1,30 @@
+# Kern <-> Qyra PDF bridge.
+#
+# A minimal, self-contained cdylib that exposes Qyra's pure-lopdf PDF operations
+# (merge, split) to Kern (dev.kern) over JNI. It depends ONLY on lopdf + jni, so
+# it cross-compiles to Android with a plain `cargo ndk` - none of the mupdf /
+# fontconfig cross-compile workarounds the main `qyra` crate needs.
+#
+# The merge/split logic here is ported from `src-tauri/src/commands/{merge,split}.rs`.
+# Follow-up (clean upstream PR): factor that logic into a shared `qyra-pdf-core`
+# crate that both `src-tauri` and this bridge depend on, removing the duplication.
+#
+# License: GPL-3.0 (part of Qyra). Bridged into Kern (AGPL-3.0); upward-compatible.
+
+[package]
+name = "kern-bridge"
+version = "0.1.0"
+edition = "2021"
+description = "JNI bridge exposing Qyra's pure-lopdf PDF ops (merge, split) to Kern."
+license = "GPL-3.0"
+
+[lib]
+# Produces libkern_pdf.so; Kern calls System.loadLibrary("kern_pdf").
+name = "kern_pdf"
+crate-type = ["cdylib"]
+
+[dependencies]
+lopdf = "0.40"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = { version = "0.21", default-features = false }
