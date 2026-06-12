@@ -20,6 +20,7 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 tempfile = "3"
 lopdf = "0.40"
 mupdf = "0.6"
+serde_json = "1"
 
 [dependencies]
 tauri = { version = "2", features = [] }

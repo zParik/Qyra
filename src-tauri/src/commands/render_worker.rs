@@ -311,7 +311,8 @@ fn do_render(
         if check_active && !active.is(path) {
             return Err(cancelled());
         }
-        let pixmap = p.to_pixmap(&matrix, &cs, false, false)?;
+        drop(p);
+        let pixmap = rasterize_page(doc, page as i32 - 1, &matrix, &cs)?;
         let width = pixmap.width();
         let height = pixmap.height();
         let samples = pixmap.samples();
@@ -325,6 +326,71 @@ fn do_render(
         }
         Ok(buf)
     })
+}
+
+/// Rasterize one page: page contents plus standard annotations (issue #64 —
+/// highlights, sticky notes, ink, stamps written by Acrobat/Edge/Firefox were
+/// previously stripped because the raster used page *contents* only).
+///
+/// Deliberate differences from a full `fz_new_pixmap_from_page`:
+///  • Form **widgets** are not baked in: FormLayer draws live DOM inputs over
+///    the page, and baking widget appearances underneath would double-render
+///    filled fields.
+///  • **Text** (sticky-note) and **Popup** annotations are hidden before the
+///    run: Qyra's comment system shows them as DOM pins (CommentLayer), so a
+///    baked note icon would appear twice. Hiding is in-memory only — the
+///    cached document is never saved from the render worker.
+///
+/// Annotations created without an `/AP` appearance stream (including Qyra's
+/// own squares/underlines) are covered by `update()`, which lets MuPDF
+/// synthesize their appearance before the annotation pass runs.
+pub fn rasterize_page(
+    doc: &mupdf::Document,
+    page_idx: i32,
+    matrix: &mupdf::Matrix,
+    cs: &mupdf::Colorspace,
+) -> AppResult<mupdf::Pixmap> {
+    use mupdf::pdf::annotation::AnnotationFlags;
+    use mupdf::pdf::{PdfAnnotationType, PdfPage};
+
+    let page = doc.load_page(page_idx)?;
+    let mut p = match PdfPage::try_from(page) {
+        Ok(p) => p,
+        Err(_) => {
+            // Non-PDF document (no annotation API): plain full render.
+            let page = doc.load_page(page_idx)?;
+            return Ok(page.to_pixmap(matrix, cs, false, true)?);
+        }
+    };
+
+    for mut annot in p.annotations() {
+        if matches!(
+            annot.r#type(),
+            Ok(PdfAnnotationType::Text | PdfAnnotationType::Popup)
+        ) {
+            let _ = annot.set_flags(AnnotationFlags::IS_HIDDEN);
+        }
+        // mupdf-rs 0.6 bug: AnnotationIter yields *borrowed* pdf_annot
+        // pointers (pdf_first/next_annot take no reference), but
+        // PdfAnnotation's Drop calls pdf_drop_annot anyway. Letting it run
+        // underflows the refcount and frees the page's annotation list while
+        // the page still uses it — use-after-free, STATUS_ACCESS_VIOLATION
+        // on any page that has annotations (links included). Forgetting the
+        // wrapper releases the borrow without the bogus drop; no leak, since
+        // no reference was ever taken.
+        std::mem::forget(annot);
+    }
+    let _ = p.update();
+
+    let bbox = p.bounds()?.transform(matrix).round();
+    let mut pixmap = mupdf::Pixmap::new_with_rect(cs, bbox, false)?;
+    pixmap.clear_with(0xff)?;
+    let device = mupdf::Device::from_pixmap(&pixmap)?;
+    p.run_contents(&device, matrix)?;
+    p.run_annotations(&device, matrix)?;
+    // Drop closes the draw device, flushing pending output into the pixmap.
+    drop(device);
+    Ok(pixmap)
 }
 
 fn do_text(

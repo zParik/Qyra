@@ -21,7 +21,7 @@ fn obj_to_f64(o: &Object) -> f64 {
         .unwrap_or(0.0)
 }
 
-fn color_array_to_hex(arr: &[Object]) -> Option<String> {
+pub(crate) fn color_array_to_hex(arr: &[Object]) -> Option<String> {
     if arr.len() >= 3 {
         let r = (obj_to_f64(&arr[0]) * 255.0).round() as u8;
         let g = (obj_to_f64(&arr[1]) * 255.0).round() as u8;
@@ -32,7 +32,7 @@ fn color_array_to_hex(arr: &[Object]) -> Option<String> {
     }
 }
 
-fn hex_to_rgb_f32(hex: &str) -> (f32, f32, f32) {
+pub(crate) fn hex_to_rgb_f32(hex: &str) -> (f32, f32, f32) {
     let hex = hex.trim_start_matches('#');
     let r = u8::from_str_radix(hex.get(0..2).unwrap_or("00"), 16).unwrap_or(0) as f32 / 255.0;
     let g = u8::from_str_radix(hex.get(2..4).unwrap_or("00"), 16).unwrap_or(0) as f32 / 255.0;
