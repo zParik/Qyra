@@ -1,20 +1,25 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useCommentsStore } from "../../store/useCommentsStore";
+import type { Comment } from "../../store/useCommentsStore";
 import { loadComments, saveComments } from "../../lib/tauri";
 
 /**
  * Loads comments from the PDF (Text annotations + qyra sidecar) on mount and
  * auto-saves on change.
  *
- * Saving rewrites the whole document (lopdf parse + save), which on a large
- * PDF takes seconds. Three rules keep that safe and cheap:
+ * Both load and save fully reparse the document (lopdf), which on a large
+ * PDF takes seconds to tens of seconds. The rules that keep that safe:
  *
- *  1. Never save what we just loaded — the mount echo used to rewrite every
+ *  1. Comments added while the initial load is still in flight are MERGED
+ *     with the loaded list, never discarded — the old code replaced the
+ *     store wholesale and silently ate any comment made before the (slow)
+ *     load settled, then skipped saving it too.
+ *  2. Never save what we just loaded — the mount echo used to rewrite every
  *     opened file just to store an unchanged list.
- *  2. Debounce edits (400ms), but track the pending state.
- *  3. Expose `flushComments` so Save/close paths can force the pending write
- *     NOW and await it — otherwise "Saved ✓" can show while the comment save
- *     is still in flight and dies with the process.
+ *  3. Edits debounce (400ms), but `flushComments` forces the pending write
+ *     and awaits it (waiting out the load first if needed). Save/close paths
+ *     MUST flush — otherwise "Saved ✓" can show while the comment write is
+ *     still in flight and dies with the process.
  */
 export function useComments(viewerPath: string | undefined) {
   const commentsRef = useCommentsStore((s) => s.comments[viewerPath ?? ""]);
@@ -23,7 +28,9 @@ export function useComments(viewerPath: string | undefined) {
 
   const saveTimerRef = useRef<number | undefined>(undefined);
   const isLoadingCommentsRef = useRef(false);
-  /** JSON of the last list we loaded or successfully queued for save. */
+  /** Resolves when the initial load settles (success or failure). */
+  const loadPromiseRef = useRef<Promise<void> | null>(null);
+  /** JSON of the last list we loaded or successfully wrote. */
   const lastSavedJsonRef = useRef<string | null>(null);
   /** JSON that still needs to reach disk (set when debounce is armed). */
   const pendingJsonRef = useRef<string | null>(null);
@@ -32,19 +39,37 @@ export function useComments(viewerPath: string | undefined) {
   const viewerPathRef = useRef(viewerPath);
   viewerPathRef.current = viewerPath;
 
+  /** Current store list for this document, straight from the store (no
+   *  React render-cycle staleness). */
+  const storeJson = useCallback(() => {
+    const path = viewerPathRef.current;
+    if (!path) return "[]";
+    return JSON.stringify(useCommentsStore.getState().comments[path] ?? []);
+  }, []);
+
   // Load comments from the PDF once on mount.
   useEffect(() => {
     if (!viewerPath) return;
     let cancelled = false;
     isLoadingCommentsRef.current = true;
-    loadComments(viewerPath)
+    const t0 = performance.now();
+    loadPromiseRef.current = loadComments(viewerPath)
       .then((json) => {
         if (cancelled) return;
         try {
           const parsed = JSON.parse(json);
           if (Array.isArray(parsed)) {
+            console.info(
+              `[comments] loaded ${parsed.length} in ${Math.round(performance.now() - t0)}ms`
+            );
             lastSavedJsonRef.current = JSON.stringify(parsed);
-            loadCommentsIntoStore(viewerPath, parsed);
+            // Keep comments the user added while the load was in flight:
+            // they exist only in the store, not in the file yet.
+            const current: Comment[] =
+              useCommentsStore.getState().comments[viewerPath] ?? [];
+            const byId = new Map<string, Comment>(parsed.map((c: Comment) => [c.id, c]));
+            for (const c of current) if (!byId.has(c.id)) byId.set(c.id, c);
+            loadCommentsIntoStore(viewerPath, [...byId.values()]);
           }
         } catch {
           /* ignore malformed JSON */
@@ -75,7 +100,14 @@ export function useComments(viewerPath: string | undefined) {
     const prev = inFlightRef.current ?? Promise.resolve();
     const run = prev
       .catch(() => {})
-      .then(() => saveComments(path, json))
+      .then(() => {
+        const t0 = performance.now();
+        return saveComments(path, json).then(() => {
+          console.info(
+            `[comments] saved in ${Math.round(performance.now() - t0)}ms`
+          );
+        });
+      })
       .then(() => {
         lastSavedJsonRef.current = json;
       })
@@ -91,7 +123,9 @@ export function useComments(viewerPath: string | undefined) {
     return run;
   }, []);
 
-  // Auto-save comments whenever they actually change.
+  // Auto-save comments whenever they actually change. While the initial load
+  // is in flight we do nothing here — flushComments and the post-load merge
+  // pick those changes up, so nothing is lost.
   useEffect(() => {
     if (!viewerPath || isLoadingCommentsRef.current) return;
     const json = JSON.stringify(comments);
@@ -108,21 +142,26 @@ export function useComments(viewerPath: string | undefined) {
   }, [comments, viewerPath]);
 
   /**
-   * Force any pending/in-flight comment save to disk and await it. Save and
-   * close paths MUST call this before reporting success — resolves
-   * immediately when there is nothing to write.
+   * Force outstanding comment changes to disk and await them. Waits out the
+   * initial load first (its merge may add local comments), then compares the
+   * store against what's on disk — immune to React render-cycle timing.
    */
-  const flushComments = useCallback((): Promise<void> => {
+  const flushComments = useCallback(async (): Promise<void> => {
     clearTimeout(saveTimerRef.current);
+    if (loadPromiseRef.current) await loadPromiseRef.current.catch(() => {});
+    const json = storeJson();
+    if (json !== (lastSavedJsonRef.current ?? "[]")) {
+      pendingJsonRef.current = json;
+    }
     if (pendingJsonRef.current !== null) return runPendingSave();
     return inFlightRef.current ?? Promise.resolve();
-  }, [runPendingSave]);
+  }, [runPendingSave, storeJson]);
 
-  /** True while a comment save is pending or in flight. */
-  const hasUnsavedComments = useCallback(
-    () => pendingJsonRef.current !== null || inFlightRef.current !== null,
-    []
-  );
+  /** True when comment state hasn't provably reached the disk yet. */
+  const hasUnsavedComments = useCallback(() => {
+    if (pendingJsonRef.current !== null || inFlightRef.current !== null) return true;
+    return storeJson() !== (lastSavedJsonRef.current ?? "[]");
+  }, [storeJson]);
 
   return {
     comments,
