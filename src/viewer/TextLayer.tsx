@@ -33,7 +33,17 @@ interface TextLayerProps {
   findActiveMatchOrdinal?: number;
   isDrawingMode?: boolean;
   enabled?: boolean;
+  /** Reading mode (no page-surface tool active) — enables touch text selection. */
+  selectable?: boolean;
 }
+
+// Coarse pointer (phone/tablet) is decided once: pointer hardware doesn't change
+// mid-session. Used to switch on long-press text selection only where it's needed.
+const IS_COARSE =
+  typeof window !== "undefined" && !!window.matchMedia?.("(pointer: coarse)").matches;
+
+const LONG_PRESS_MS = 450;
+const LONG_PRESS_MOVE_TOLERANCE_PX = 10;
 
 function computeHighlights(
   chars: CharRect[],
@@ -153,9 +163,17 @@ function TextLayerInner({
   findActiveMatchOrdinal = -1,
   isDrawingMode,
   enabled = true,
+  selectable = false,
 }: TextLayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const eocRef = useRef<HTMLSpanElement>(null);
+
+  // Touch text selection is only wired on coarse pointers, in reading mode.
+  // On desktop the spans handle mouse-drag selection (container stays
+  // pointer-events:none); on touch a single stationary long-press can't sweep
+  // into the thin per-line spans and frequently lands in the dead gap between
+  // lines, so we drive selection explicitly from a long-press timer instead.
+  const touchSelectable = IS_COARSE && selectable && enabled && !isDrawingMode;
   const [lines, setLines] = useState<TextLine[]>([]);
   const [parent, setParent] = useState({ w: 0, h: 0 });
 
@@ -192,9 +210,79 @@ function TextLayerInner({
   };
 
   const handleMouseDown = (e: React.MouseEvent) => anchorEoc(e.clientY);
-  const handleTouchStart = (e: React.TouchEvent) => {
-    if (e.touches.length === 1) anchorEoc(e.touches[0]!.clientY);
+
+  // ── touch long-press → select word ──
+  // A pending long-press is cancelled if the finger moves (it's a scroll) or
+  // lifts early (it's a tap). On fire we snap a caret to the touch point with
+  // caretRangeFromPoint — which resolves to the nearest glyph even across the
+  // gaps between line spans — then grow it to the word with Selection.modify.
+  // Native selection handles then take over for drag-to-extend, and the
+  // selectionchange listener in useTextSelection raises the "Add Comment" popup.
+  const longPressTimer = useRef<number | null>(null);
+  const longPressStart = useRef<{ x: number; y: number } | null>(null);
+
+  const cancelLongPress = () => {
+    if (longPressTimer.current != null) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+    longPressStart.current = null;
   };
+
+  const selectWordAt = (clientX: number, clientY: number) => {
+    const layer = containerRef.current;
+    const sel = window.getSelection();
+    if (!layer || !sel) return;
+    const doc = document as Document & {
+      caretRangeFromPoint?: (x: number, y: number) => Range | null;
+    };
+    const range = doc.caretRangeFromPoint?.(clientX, clientY);
+    // Only act when the caret landed on this layer's text.
+    if (!range || !layer.contains(range.startContainer)) return;
+    sel.removeAllRanges();
+    sel.addRange(range);
+    const modifiable = sel as Selection & {
+      modify?: (alter: string, direction: string, granularity: string) => void;
+    };
+    try {
+      modifiable.modify?.("move", "backward", "word");
+      modifiable.modify?.("extend", "forward", "word");
+    } catch {
+      /* Selection.modify unsupported — fall back to the bare caret. */
+    }
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 1) {
+      anchorEoc(e.touches[0]!.clientY);
+      if (touchSelectable) {
+        const t = e.touches[0]!;
+        longPressStart.current = { x: t.clientX, y: t.clientY };
+        longPressTimer.current = window.setTimeout(() => {
+          const start = longPressStart.current;
+          if (start) selectWordAt(start.x, start.y);
+          longPressTimer.current = null;
+        }, LONG_PRESS_MS);
+      }
+    } else {
+      // Second finger down (pinch) — never a text selection.
+      cancelLongPress();
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    const start = longPressStart.current;
+    const t = e.touches[0];
+    if (!start || !t) return;
+    if (Math.hypot(t.clientX - start.x, t.clientY - start.y) > LONG_PRESS_MOVE_TOLERANCE_PX) {
+      cancelLongPress(); // finger moved → it's a scroll, not a long-press
+    }
+  };
+
+  // Drop any pending long-press timer if the page unmounts mid-press.
+  useEffect(() => () => {
+    if (longPressTimer.current != null) clearTimeout(longPressTimer.current);
+  }, []);
 
   // Track parent (page wrapper) dimensions. The wrapper shrink-wraps the page canvas
   // (its height comes from the bitmap's true aspect), so parent box == glyph box and
@@ -280,11 +368,19 @@ function TextLayerInner({
       className="textLayer"
       onMouseDown={handleMouseDown}
       onTouchStart={handleTouchStart}
+      onTouchMove={touchSelectable ? handleTouchMove : undefined}
+      onTouchEnd={touchSelectable ? cancelLongPress : undefined}
+      onTouchCancel={touchSelectable ? cancelLongPress : undefined}
       style={{
         position: "absolute",
         inset: 0,
         overflow: "hidden",
-        pointerEvents: "none",
+        // Desktop: container stays inert and the spans capture mouse-drag
+        // selection. Touch reading mode: container catches the whole page so a
+        // long-press anywhere (incl. line gaps) can resolve to nearby text,
+        // while pan-x/pan-y keeps single-finger scrolling alive.
+        pointerEvents: touchSelectable ? "auto" : "none",
+        touchAction: touchSelectable ? "pan-x pan-y" : undefined,
         cursor: isDrawingMode ? "default" : "text",
       }}
     >

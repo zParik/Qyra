@@ -2009,6 +2009,7 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                           }
                           isDrawingMode={activeTool === "draw"}
                           enabled={shouldRenderTextLayer}
+                          selectable={activeTool === null}
                         />
                         <LinkLayer
                           pdfPath={viewerFile.path}
