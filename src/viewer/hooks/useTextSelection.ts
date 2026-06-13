@@ -25,11 +25,13 @@ export function useTextSelection() {
   const [selectionPopup, setSelectionPopup] = useState<SelectionPopupState | null>(null);
   const [selectionEditor, setSelectionEditor] = useState<SelectionEditorState | null>(null);
 
-  // Handle text selection — uses pointerup so it fires on both mouse and touch.
+  // Recompute the popup from the current selection. Driven by two events:
+  //  - pointerup: instant feedback for desktop mouse-drag selection.
+  //  - selectionchange (debounced): the touch path. A long-press selection on
+  //    mobile makes the browser seize the pointer and fire pointercancel, not
+  //    pointerup, so pointerup alone would never raise the popup on touch.
   useEffect(() => {
-    function handlePointerUp(e: PointerEvent) {
-      // Ignore right-click and middle-click on desktop.
-      if (e.button > 0) return;
+    function computePopup() {
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed || !sel.rangeCount) {
         setSelectionPopup(null);
@@ -69,8 +71,27 @@ export function useTextSelection() {
       });
     }
 
+    function handlePointerUp(e: PointerEvent) {
+      // Ignore right-click and middle-click on desktop.
+      if (e.button > 0) return;
+      computePopup();
+    }
+
+    // selectionchange fires continuously while dragging a selection (or its
+    // handles on touch) — debounce so the popup settles on the final range.
+    let debounce: number | null = null;
+    function handleSelectionChange() {
+      if (debounce != null) clearTimeout(debounce);
+      debounce = window.setTimeout(computePopup, 200);
+    }
+
     document.addEventListener("pointerup", handlePointerUp as EventListener);
-    return () => document.removeEventListener("pointerup", handlePointerUp as EventListener);
+    document.addEventListener("selectionchange", handleSelectionChange);
+    return () => {
+      document.removeEventListener("pointerup", handlePointerUp as EventListener);
+      document.removeEventListener("selectionchange", handleSelectionChange);
+      if (debounce != null) clearTimeout(debounce);
+    };
   }, []);
 
   return {
