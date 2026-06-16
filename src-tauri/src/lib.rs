@@ -2,6 +2,7 @@
 // and PDF helpers directly (black-box, exactly as the IPC layer calls them).
 pub mod commands;
 mod error;
+pub mod layout;
 pub mod oxml;
 pub mod pdf;
 pub mod utils;
@@ -274,6 +275,7 @@ pub fn run() {
         .manage(commands::cache::SessionCacheState::new())
         .manage(active_document)
         .manage(commands::crash::CrashLogDir::new())
+        .manage(commands::word::WordEngine::new())
         .setup(|app| {
             #[cfg(not(target_os = "android"))]
             if let Some(dir) = commands::crash::install_panic_hook(app.handle()) {
@@ -369,6 +371,8 @@ pub fn run() {
             render::render_thumbnail,
             render::pdf_to_images,
             render::get_page_links,
+            word::open_word,
+            word::render_word_page,
             links::add_link,
             links::remove_link,
             create::images_to_pdf,

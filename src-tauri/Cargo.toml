@@ -57,6 +57,10 @@ mupdf = "0.6"
 # Pure-Rust deflate only — no C zlib/zstd — matching the flate2 zlib-rs ethos
 # and keeping the Windows + Android builds free of extra C deps.
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# Text shaping + glyph rasterization (pure-Rust) for the Word layout/render
+# engine: per-glyph advances drive line-breaking and pagination, and coverage
+# maps drive the page rasterizer. No C deps.
+fontdue = "0.9"
 
 # Updater only makes sense on desktop (Play Store handles app-store updates on Android).
 # mupdf-sys 0.6.0 ships wrapper/context.c which #includes "androidfonts.c" on Android

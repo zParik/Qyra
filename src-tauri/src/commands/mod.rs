@@ -47,3 +47,4 @@ pub mod outline_edit;
 pub mod links;
 pub mod crash;
 pub mod header_footer;
+pub mod word;

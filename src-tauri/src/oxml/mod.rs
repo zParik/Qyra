@@ -12,6 +12,9 @@
 //! engine land it grows into its own crate (`oxml`), extracted from here.
 //! ponytail: module-in-crate until it earns a workspace split; no premature crate.
 
+pub mod docx;
+pub mod model;
+
 use std::io::{Cursor, Read, Write};
 
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};

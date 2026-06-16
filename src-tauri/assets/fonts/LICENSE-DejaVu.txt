@@ -1,0 +1,10 @@
+DejaVu Sans is the default layout/render font for the Word engine.
+
+Place DejaVuSans.ttf next to this file (src-tauri/assets/fonts/DejaVuSans.ttf).
+It is required at build time (included via include_bytes! in
+src-tauri/src/layout/font.rs).
+
+DejaVu fonts are based on Bitstream Vera with a permissive, redistribution-
+friendly license. Source: https://dejavu-fonts.github.io/
+
+Full license text: https://dejavu-fonts.github.io/License.html
