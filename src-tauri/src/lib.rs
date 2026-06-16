@@ -2,6 +2,7 @@
 // and PDF helpers directly (black-box, exactly as the IPC layer calls them).
 pub mod commands;
 mod error;
+pub mod oxml;
 pub mod pdf;
 pub mod utils;
 

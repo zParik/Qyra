@@ -52,6 +52,11 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 docx-rs = "0.4"
 quick-xml = "0.36"
 mupdf = "0.6"
+# OPC (Office Open XML) packages are ZIPs of "parts". We read every part and
+# write it back to keep unknown parts byte-faithful (lossless .docx round-trip).
+# Pure-Rust deflate only — no C zlib/zstd — matching the flate2 zlib-rs ethos
+# and keeping the Windows + Android builds free of extra C deps.
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # Updater only makes sense on desktop (Play Store handles app-store updates on Android).
 # mupdf-sys 0.6.0 ships wrapper/context.c which #includes "androidfonts.c" on Android
