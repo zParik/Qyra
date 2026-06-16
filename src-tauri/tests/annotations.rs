@@ -38,6 +38,43 @@ async fn add_annotation_then_read_it_back() {
 }
 
 #[tokio::test]
+async fn add_multiline_highlight_with_quads() {
+    // Two text lines selected from the popup → one Highlight annot carrying two
+    // quad groups (8 numbers each: UL, UR, LL, LR in normalized top-left).
+    // Exercises the per-line appearance-stream path.
+    let src = fixture_str("simple.pdf");
+    let (_d, out) = temp_output("highlighted.pdf");
+
+    add_pdf_annotation(
+        src,
+        NewAnnotation {
+            subtype: "Highlight".into(),
+            page: 1,
+            rect: [0.1, 0.1, 0.6, 0.18],
+            color: "#ffeb3b".into(),
+            contents: None,
+            quad_points: Some(vec![
+                0.1, 0.10, 0.6, 0.10, 0.1, 0.14, 0.6, 0.14, // line 1
+                0.1, 0.14, 0.5, 0.14, 0.1, 0.18, 0.5, 0.18, // line 2
+            ]),
+            author: None,
+            stamp_name: None,
+        },
+        Some(out.clone()),
+    )
+    .await
+    .expect("add highlight");
+
+    let annots = get_page_annotations(out, 1).await.expect("read annotations");
+    let hl = annots.iter().find(|a| a.subtype == "Highlight").expect("highlight present");
+    assert!(
+        hl.quad_points.as_ref().map_or(0, |q| q.len()) >= 16,
+        "expected two quad groups (16 numbers), got {:?}",
+        hl.quad_points,
+    );
+}
+
+#[tokio::test]
 async fn read_existing_fixture_annotations() {
     let annots = get_page_annotations(fixture_str("annotated.pdf"), 1)
         .await

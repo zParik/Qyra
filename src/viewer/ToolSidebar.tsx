@@ -32,7 +32,7 @@ import { ComparePanel } from "./tools/ComparePanel";
 import { invoke } from "@tauri-apps/api/core";
 import {
   IconComment, IconPencil, IconRotate, IconTrash, IconReorder, IconSplit,
-  IconPageNumbers, IconStar, IconForms, IconCrop, IconRedact, IconCheckBadge,
+  IconPageNumbers, IconForms, IconCrop, IconRedact, IconCheckBadge,
   IconCompress, IconLock, IconUnlock, IconEdit, IconImage, IconWatermark,
   IconFlatten, IconDocText, IconDocWord, IconList, IconCompare,
   IconChevronLeft, IconChevronRight, IconPrint,
@@ -42,7 +42,7 @@ export type ViewerTool =
   | "rotate" | "remove" | "reorder" | "split"
   | "compress" | "page-numbers" | "protect" | "unlock"
   | "metadata" | "export-images" | "draw" | "comment" | "watermark"
-  | "annotate" | "forms" | "signature" | "crop" | "flatten" | "export-text" | "export-word" | "redact" | "stamps" | "export-annotations" | "compare" | "anonymize" | "form-data" | "bates" | "links" | "header-footer";
+  | "forms" | "signature" | "crop" | "flatten" | "export-text" | "export-word" | "redact" | "stamps" | "export-annotations" | "compare" | "anonymize" | "form-data" | "bates" | "links" | "header-footer";
 
 interface ToolSidebarProps {
   file: LoadedFile;
@@ -80,7 +80,6 @@ const PAGE_TOOLS: ToolDef[] = [
   { id: "page-numbers", label: "Page Numbers",    icon: <IconPageNumbers className={ICON_CLS} /> },
   { id: "bates",        label: "Bates Numbering", icon: <IconPageNumbers className={ICON_CLS} /> },
   { id: "header-footer", label: "Header / Footer", icon: <IconPageNumbers className={ICON_CLS} /> },
-  { id: "annotate",     label: "Annotate",        icon: <IconStar className={ICON_CLS} /> },
   { id: "links",        label: "Links",           icon: <IconList className={ICON_CLS} /> },
   { id: "forms",        label: "Fill Forms",      icon: <IconForms className={ICON_CLS} /> },
   { id: "signature",    label: "Sign",            icon: <IconPencil className={ICON_CLS} /> },
@@ -164,7 +163,7 @@ export function ToolSidebar({ file, onApplied, activeTool, onToolChange, selecte
     ),
     "export-annotations": <ExportAnnotationsPanel file={file} />,
     compare: <ComparePanel file={file} />,
-    // comment, annotate, forms, signature, redact have no sidebar panel — handled directly in Viewer
+    // comment, forms, signature, redact have no sidebar panel — handled directly in Viewer
   };
 
   const isPhone = useIsPhone();

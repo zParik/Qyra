@@ -17,6 +17,75 @@ export interface SelectionEditorState {
   normY: number;
 }
 
+export interface SelectionLine {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+export interface PageSelectionGeometry {
+  /** 1-based page number (matches data-page-index / add_pdf_annotation). */
+  page: number;
+  /** One normalized (top-left origin) rect per selected text line on this page. */
+  lines: SelectionLine[];
+  /** Bounding box of all lines on this page, normalized top-left. */
+  bbox: SelectionLine;
+}
+
+const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
+
+/**
+ * Read the live text selection and group its per-line client rects by the page
+ * they fall on. Drives highlight/underline/strikeout/redact from the selection
+ * popup. Coordinates are normalized to each page (top-left origin) — the same
+ * convention add_pdf_annotation and RedactRegion expect.
+ */
+export function getSelectionGeometry(): PageSelectionGeometry[] {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || !sel.rangeCount) return [];
+
+  const pageEls = Array.from(
+    document.querySelectorAll<HTMLElement>("[data-page-index]")
+  ).map((el) => ({ page: parseInt(el.dataset.pageIndex!, 10), rect: el.getBoundingClientRect() }));
+
+  const byPage = new Map<number, SelectionLine[]>();
+  for (let ri = 0; ri < sel.rangeCount; ri++) {
+    for (const r of Array.from(sel.getRangeAt(ri).getClientRects())) {
+      if (r.width <= 0.5 || r.height <= 0.5) continue;
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      const pg = pageEls.find(
+        (p) =>
+          p.rect.width > 0 && p.rect.height > 0 &&
+          cx >= p.rect.left && cx <= p.rect.right &&
+          cy >= p.rect.top && cy <= p.rect.bottom
+      );
+      if (!pg) continue;
+      const line: SelectionLine = {
+        x0: clamp01((r.left - pg.rect.left) / pg.rect.width),
+        y0: clamp01((r.top - pg.rect.top) / pg.rect.height),
+        x1: clamp01((r.right - pg.rect.left) / pg.rect.width),
+        y1: clamp01((r.bottom - pg.rect.top) / pg.rect.height),
+      };
+      const arr = byPage.get(pg.page);
+      if (arr) arr.push(line);
+      else byPage.set(pg.page, [line]);
+    }
+  }
+
+  return Array.from(byPage.entries()).map(([page, lines]) => ({
+    page,
+    lines,
+    bbox: {
+      x0: Math.min(...lines.map((l) => l.x0)),
+      y0: Math.min(...lines.map((l) => l.y0)),
+      x1: Math.max(...lines.map((l) => l.x1)),
+      y1: Math.max(...lines.map((l) => l.y1)),
+    },
+  }));
+}
+
 /**
  * Tracks the user's text selection inside any TextLayer page and exposes a
  * popup (with the "Add Comment" button) and a follow-on editor state.
