@@ -189,6 +189,19 @@ export const saveComments = (path: string, commentsJson: string) =>
 
 export const getDiskSpace = () => invoke<DiskSpace>("get_disk_space");
 
+// ─── Word (.docx) viewer ──────────────────────────────────────────────────────
+
+export interface WordPageSize { width: number; height: number }
+export interface WordDocInfo { pageCount: number; pages: WordPageSize[] }
+
+/** Parse + lay out a .docx, returning page count and per-page sizes (in points). */
+export const openWord = (path: string) =>
+  invoke<WordDocInfo>("open_word", { path });
+
+/** Render one page (0-indexed) to a base64 PNG at `scale` device px per point. */
+export const renderWordPage = (path: string, page: number, scale: number) =>
+  invoke<string>("render_word_page", { path, page, scale });
+
 export const setStarred = (path: string, name: string, starred: boolean) =>
   invoke<void>("set_starred", { path, name, starred });
 

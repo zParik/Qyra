@@ -190,6 +190,16 @@ export default function Home({ onOpenPdf }: HomeProps = {}) {
     }
   }, []);
 
+  const handleOpenWord = useCallback(async () => {
+    try {
+      const selected = await open({ multiple: false, filters: [{ name: "Word Documents", extensions: ["docx"] }] });
+      if (!selected) return;
+      const path = Array.isArray(selected) ? selected[0]! : selected;
+      const name = path.split(/[\\/]/).pop() ?? path;
+      navigate("/word", { state: { path, name } });
+    } catch { /* dismissed */ }
+  }, [navigate]);
+
   const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setDragging(true); }, []);
   const handleDragLeave = useCallback(() => setDragging(false), []);
   const handleDrop = useCallback(async (e: React.DragEvent) => {
@@ -342,7 +352,7 @@ export default function Home({ onOpenPdf }: HomeProps = {}) {
             )}
 
             <section>
-              <SectionHeader title="Quick actions" subtitle="03 tools" />
+              <SectionHeader title="Quick actions" subtitle="04 tools" />
               <div style={{
                 display: "grid",
                 gridTemplateColumns: isMobile ? "1fr" : "repeat(2, 1fr)",
@@ -373,6 +383,15 @@ export default function Home({ onOpenPdf }: HomeProps = {}) {
                   shortcut="Cmd+I"
                   meta="JPG, PNG, HEIC, WebP"
                   onClick={() => navigate("/images-to-pdf")}
+                  isMobile={isMobile}
+                />
+                <QuickToolCard
+                  Icon={IcFolder}
+                  title="Open Word doc"
+                  desc="View a .docx rendered by Qyra's native document engine."
+                  shortcut=""
+                  meta="Experimental · text only"
+                  onClick={handleOpenWord}
                   isMobile={isMobile}
                 />
               </div>

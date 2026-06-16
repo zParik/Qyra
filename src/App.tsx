@@ -10,6 +10,7 @@ import RepairPdf from "./tools/RepairPdf";
 import BatchOps from "./tools/BatchOps";
 import Settings from "./tools/Settings";
 import ViewerShell from "./viewer/ViewerShell";
+import WordViewer from "./viewer/WordViewer";
 import { useOpenWithFile } from "./hooks/useOpenWithFile";
 import { useUpdater } from "./hooks/useUpdater";
 import { UpdateBanner } from "./components/UpdateBanner";
@@ -50,6 +51,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/view" element={<ViewerShell />} />
+        <Route path="/word" element={<WordViewer />} />
         <Route path="/merge" element={<Merge />} />
         <Route path="/images-to-pdf" element={<ImagesToPdf />} />
         <Route path="/ocr" element={<Ocr />} />
