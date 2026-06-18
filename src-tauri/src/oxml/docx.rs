@@ -208,6 +208,10 @@ pub fn parse_document_xml(
     let mut tables: Vec<TableB> = Vec::new();
     let mut cur_ext: Option<(f32, f32)> = None;
     let mut counters: Counters = Counters::new();
+    // Set when the current paragraph's pPr holds a sectPr (a section break →
+    // page break after the paragraph). ponytail: treats every in-pPr section
+    // break as next-page; the rarer "continuous" type also breaks here.
+    let mut para_sectpr_break = false;
 
     // Paragraph-in-progress state.
     let mut style_id: Option<String> = None;
@@ -244,6 +248,10 @@ pub fn parse_document_xml(
                         list = None;
                         inlines.clear();
                         run_direct = RunPropsPartial::default();
+                        para_sectpr_break = false;
+                    }
+                    b"w:sectPr" if stack.iter().any(|n| n.as_slice() == b"w:pPr") => {
+                        para_sectpr_break = true;
                     }
                     b"w:r" => run_direct = RunPropsPartial::default(),
                     b"w:t" => {
@@ -297,6 +305,10 @@ pub fn parse_document_xml(
                     b"w:p" => {
                         let para = build_paragraph(styles, &style_id, &para_direct, &list, &mut inlines, numbering, &mut counters);
                         emit_block(Block::Paragraph(para), &mut tables, &mut blocks);
+                        if para_sectpr_break {
+                            emit_block(Block::PageBreak, &mut tables, &mut blocks);
+                            para_sectpr_break = false;
+                        }
                         in_para = false;
                     }
                     b"w:tc" => {
@@ -463,12 +475,10 @@ fn try_page_break(
     numbering: &Numbering,
     counters: &mut Counters,
 ) -> bool {
-    // A manual page break (<w:br w:type="page"/>) or Word's rendered-break hint
-    // (<w:lastRenderedPageBreak/>) both split the page. Honoring the latter makes
-    // a viewer's pagination match how Word laid the document out.
-    let is_manual = name == b"w:br" && attr_str(e, b"w:type").as_deref() == Some("page");
-    let is_rendered = name == b"w:lastRenderedPageBreak";
-    if !is_manual && !is_rendered {
+    // Only a manual page break is a hard break. <w:lastRenderedPageBreak/> is
+    // just a hint of where Word last broke; honoring it double-breaks against our
+    // own height-based pagination (blank pages), so it is deliberately ignored.
+    if name != b"w:br" || attr_str(e, b"w:type").as_deref() != Some("page") {
         return false;
     }
     let para = build_paragraph(styles, style_id, para_direct, list, inlines, numbering, counters);
@@ -597,6 +607,21 @@ mod tests {
           </w:body></w:document>"#;
         let doc = parse_document_xml(xml, &Styles::empty(), &MediaMap::new(), &Numbering::empty()).expect("parse");
         assert!(doc.blocks.iter().any(|b| matches!(b, Block::PageBreak)));
+    }
+
+    #[test]
+    fn section_break_produces_page_break() {
+        let xml = r#"<w:document xmlns:w="x"><w:body>
+          <w:p><w:r><w:t>Section one</w:t></w:r></w:p>
+          <w:p><w:pPr><w:sectPr><w:type w:val="nextPage"/><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:pPr></w:p>
+          <w:p><w:r><w:t>Section two</w:t></w:r></w:p>
+          <w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr>
+        </w:body></w:document>"#;
+        let doc = parse_document_xml(xml, &Styles::empty(), &MediaMap::new(), &Numbering::empty()).expect("parse");
+        assert!(
+            doc.blocks.iter().any(|b| matches!(b, Block::PageBreak)),
+            "in-paragraph sectPr must produce a page break"
+        );
     }
 
     #[test]
