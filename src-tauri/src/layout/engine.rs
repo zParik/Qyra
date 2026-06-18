@@ -372,6 +372,35 @@ fn paragraph_lineboxes(p: &Paragraph, font: &FontSet, col_left: f32, col_width: 
     if !line.is_empty() {
         boxes.push(commit_linebox(&mut line, &p.props, font, col_left, col_width, first_line, is_list, true));
     }
+
+    // Prepend the list marker (bullet or resolved number) to the first line.
+    if is_list {
+        if let Some(first) = boxes.first_mut() {
+            let marker = p.props.list_marker.clone().unwrap_or_else(|| "\u{2022}".to_string());
+            let marker_size = first.runs.first().map(|r| r.size_pt).unwrap_or(11.0);
+            let marker_w = font.measure_width(&marker, marker_size, false, false);
+            let anchor_x = first
+                .runs
+                .first()
+                .map(|r| r.x)
+                .unwrap_or(col_left + p.props.indent_left_pt + LIST_INDENT_PT);
+            let marker_x = (anchor_x - LIST_GAP_PT - marker_w).max(col_left);
+            first.runs.insert(
+                0,
+                LineRun {
+                    x: marker_x,
+                    width: marker_w,
+                    text: marker,
+                    bold: false,
+                    italic: false,
+                    underline: false,
+                    strike: false,
+                    size_pt: marker_size,
+                    color: [0, 0, 0],
+                },
+            );
+        }
+    }
     boxes
 }
 
@@ -455,26 +484,7 @@ fn commit_linebox(
         }
     }
 
-    if is_list && first_line {
-        let marker_size = runs.first().map(|r| r.size_pt).unwrap_or(11.0);
-        let marker_w = font.measure_width("\u{2022}", marker_size, false, false);
-        let marker_x = (start_x - LIST_GAP_PT - marker_w).max(col_left);
-        runs.insert(
-            0,
-            LineRun {
-                x: marker_x,
-                width: marker_w,
-                text: "\u{2022}".to_string(),
-                bold: false,
-                italic: false,
-                underline: false,
-                strike: false,
-                size_pt: marker_size,
-                color: [0, 0, 0],
-            },
-        );
-    }
-
+    let _ = is_list; // indent already applied via text_left; marker added by caller
     LineBox { runs, ascent: max_ascent, height: max_lh * pp.line_spacing.max(0.1), images: vec![] }
 }
 

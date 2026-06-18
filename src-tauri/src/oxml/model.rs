@@ -67,6 +67,8 @@ pub struct ParaProps {
     /// Extra first-line indent (negative = hanging indent).
     pub indent_first_pt: f32,
     pub list: Option<ListMarker>,
+    /// Resolved list-marker text (bullet or ordered number); set by the parser.
+    pub list_marker: Option<String>,
     pub style_id: Option<String>,
 }
 
@@ -80,6 +82,7 @@ impl Default for ParaProps {
             indent_left_pt: 0.0,
             indent_first_pt: 0.0,
             list: None,
+            list_marker: None,
             style_id: None,
         }
     }

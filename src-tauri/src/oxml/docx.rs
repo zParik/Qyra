@@ -15,11 +15,15 @@ use super::model::{
     emu_to_pt, twips_to_pt, Block, Cell, Document, ImageRef, Inline, ListMarker, PageMetrics,
     Paragraph, Row, Table, TextRun,
 };
+use super::numbering::Numbering;
 use super::styles::{
     apply_para_partial, apply_run_partial, attr_f32, attr_str, para_prop, run_prop,
     ParaPropsPartial, RunPropsPartial, Styles,
 };
 use super::{Package, PackageError};
+
+/// Running list counters keyed by (numId, level).
+type Counters = HashMap<(i32, u8), i32>;
 
 /// Relationship-id → encoded image bytes, resolved from the package.
 type MediaMap = HashMap<String, Vec<u8>>;
@@ -58,9 +62,14 @@ pub fn open(bytes: &[u8]) -> Result<Document, DocxError> {
         .map(Styles::parse)
         .unwrap_or_else(Styles::empty);
     let media = load_media(&pkg);
+    let numbering = pkg
+        .part("word/numbering.xml")
+        .and_then(|p| std::str::from_utf8(&p.data).ok())
+        .map(Numbering::parse)
+        .unwrap_or_else(Numbering::empty);
     let part = pkg.part("word/document.xml").ok_or(DocxError::MissingDocument)?;
     let xml = std::str::from_utf8(&part.data).map_err(|_| DocxError::MissingDocument)?;
-    parse_document_xml(xml, &styles, &media)
+    parse_document_xml(xml, &styles, &media, &numbering)
 }
 
 /// Resolve `word/_rels/document.xml.rels` into a relationship-id → image-bytes
@@ -108,8 +117,13 @@ fn normalize_rel_target(target: &str) -> String {
     }
 }
 
-/// Parse document XML against a resolved style table and media map.
-pub fn parse_document_xml(xml: &str, styles: &Styles, media: &MediaMap) -> Result<Document, DocxError> {
+/// Parse document XML against a resolved style table, media map, and numbering.
+pub fn parse_document_xml(
+    xml: &str,
+    styles: &Styles,
+    media: &MediaMap,
+    numbering: &Numbering,
+) -> Result<Document, DocxError> {
     let mut reader = Reader::from_str(xml);
     let mut buf = Vec::new();
 
@@ -118,6 +132,7 @@ pub fn parse_document_xml(xml: &str, styles: &Styles, media: &MediaMap) -> Resul
     let mut stack: Vec<Vec<u8>> = Vec::new();
     let mut tables: Vec<TableB> = Vec::new();
     let mut cur_ext: Option<(f32, f32)> = None;
+    let mut counters: Counters = Counters::new();
 
     // Paragraph-in-progress state.
     let mut style_id: Option<String> = None;
@@ -164,7 +179,7 @@ pub fn parse_document_xml(xml: &str, styles: &Styles, media: &MediaMap) -> Resul
                 }
                 if !handle_table_leaf(&name, &e, &mut tables)
                     && !handle_image_leaf(&name, &e, media, &mut cur_ext, &mut inlines, in_para)
-                    && !try_page_break(&name, &e, styles, &style_id, &para_direct, &list, &mut inlines, &mut tables, &mut blocks)
+                    && !try_page_break(&name, &e, styles, &style_id, &para_direct, &list, &mut inlines, &mut tables, &mut blocks, numbering, &mut counters)
                 {
                     apply_leaf(&name, &e, &stack, &mut page, &mut style_id, &mut para_direct, &mut run_direct, &mut list, &mut inlines, in_para);
                 }
@@ -176,7 +191,7 @@ pub fn parse_document_xml(xml: &str, styles: &Styles, media: &MediaMap) -> Resul
                     let pp = styles.para_for(None);
                     emit_block(Block::Paragraph(Paragraph { props: pp, inlines: vec![] }), &mut tables, &mut blocks);
                 } else if !handle_table_leaf(&name, &e, &mut tables)
-                    && !try_page_break(&name, &e, styles, &style_id, &para_direct, &list, &mut inlines, &mut tables, &mut blocks)
+                    && !try_page_break(&name, &e, styles, &style_id, &para_direct, &list, &mut inlines, &mut tables, &mut blocks, numbering, &mut counters)
                 {
                     apply_leaf(&name, &e, &stack, &mut page, &mut style_id, &mut para_direct, &mut run_direct, &mut list, &mut inlines, in_para);
                 }
@@ -204,7 +219,7 @@ pub fn parse_document_xml(xml: &str, styles: &Styles, media: &MediaMap) -> Resul
                     }
                     b"w:r" => run_direct = RunPropsPartial::default(),
                     b"w:p" => {
-                        let para = build_paragraph(styles, &style_id, &para_direct, &list, &mut inlines);
+                        let para = build_paragraph(styles, &style_id, &para_direct, &list, &mut inlines, numbering, &mut counters);
                         emit_block(Block::Paragraph(para), &mut tables, &mut blocks);
                         in_para = false;
                     }
@@ -313,18 +328,49 @@ fn handle_table_leaf(name: &[u8], e: &BytesStart, tables: &mut [TableB]) -> bool
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_paragraph(
     styles: &Styles,
     style_id: &Option<String>,
     para_direct: &ParaPropsPartial,
     list: &Option<ListMarker>,
     inlines: &mut Vec<Inline>,
+    numbering: &Numbering,
+    counters: &mut Counters,
 ) -> Paragraph {
     let mut pp = styles.para_for(style_id.as_deref());
     apply_para_partial(&mut pp, para_direct);
     pp.list = list.clone();
+    if let Some(lm) = list {
+        pp.list_marker = Some(compute_marker(numbering, counters, lm.num_id, lm.level));
+    }
     pp.style_id = style_id.clone();
     Paragraph { props: pp, inlines: std::mem::take(inlines) }
+}
+
+/// Resolve the marker string for a list item, advancing ordered counters.
+fn compute_marker(numbering: &Numbering, counters: &mut Counters, num_id: i32, level: u8) -> String {
+    let Some(fmt) = numbering.level(num_id, level) else {
+        return "\u{2022}".to_string();
+    };
+    if !fmt.ordered {
+        return "\u{2022}".to_string();
+    }
+    let next = counters.get(&(num_id, level)).copied().unwrap_or(fmt.start - 1) + 1;
+    counters.insert((num_id, level), next);
+    // Restarting a shallower level resets the deeper ones.
+    for d in (level + 1)..=8u8 {
+        counters.remove(&(num_id, d));
+    }
+    let mut s = fmt.lvl_text.clone();
+    for k in 0..=level {
+        let val = counters.get(&(num_id, k)).copied().unwrap_or(1);
+        s = s.replace(&format!("%{}", k + 1), &val.to_string());
+    }
+    if s.is_empty() {
+        s.push('\u{2022}');
+    }
+    s
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -338,11 +384,13 @@ fn try_page_break(
     inlines: &mut Vec<Inline>,
     tables: &mut Vec<TableB>,
     blocks: &mut Vec<Block>,
+    numbering: &Numbering,
+    counters: &mut Counters,
 ) -> bool {
     if name != b"w:br" || attr_str(e, b"w:type").as_deref() != Some("page") {
         return false;
     }
-    let para = build_paragraph(styles, style_id, para_direct, list, inlines);
+    let para = build_paragraph(styles, style_id, para_direct, list, inlines, numbering, counters);
     emit_block(Block::Paragraph(para), tables, blocks);
     emit_block(Block::PageBreak, tables, blocks);
     true
@@ -438,7 +486,7 @@ mod tests {
           <w:r><w:t xml:space="preserve">Hello </w:t></w:r>
           <w:r><w:rPr><w:b/><w:sz w:val="28"/><w:color w:val="FF0000"/></w:rPr><w:t>World</w:t></w:r>
           </w:p></w:body></w:document>"#;
-        let doc = parse_document_xml(xml, &Styles::empty(), &MediaMap::new()).expect("parse");
+        let doc = parse_document_xml(xml, &Styles::empty(), &MediaMap::new(), &Numbering::empty()).expect("parse");
         let p = first_para(&doc);
         assert_eq!(p.props.align, Align::Center);
         assert_eq!(run_texts(p), vec!["Hello ", "World"]);
@@ -454,7 +502,7 @@ mod tests {
             r#"<w:styles xmlns:w="x"><w:style w:type="paragraph" w:styleId="Heading1"><w:rPr><w:sz w:val="48"/></w:rPr></w:style></w:styles>"#,
         );
         let xml = r#"<w:document xmlns:w="x"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Title</w:t></w:r></w:p></w:body></w:document>"#;
-        let doc = parse_document_xml(xml, &styles, &MediaMap::new()).expect("parse");
+        let doc = parse_document_xml(xml, &styles, &MediaMap::new(), &Numbering::empty()).expect("parse");
         let Inline::Text(t) = &first_para(&doc).inlines[0] else { panic!() };
         assert_eq!(t.props.size_pt, 24.0);
     }
@@ -466,7 +514,7 @@ mod tests {
           <w:p><w:r><w:br w:type="page"/></w:r></w:p>
           <w:p><w:r><w:t>After</w:t></w:r></w:p>
           </w:body></w:document>"#;
-        let doc = parse_document_xml(xml, &Styles::empty(), &MediaMap::new()).expect("parse");
+        let doc = parse_document_xml(xml, &Styles::empty(), &MediaMap::new(), &Numbering::empty()).expect("parse");
         assert!(doc.blocks.iter().any(|b| matches!(b, Block::PageBreak)));
     }
 
@@ -483,7 +531,7 @@ mod tests {
             <w:tc><w:p><w:r><w:t>B2</w:t></w:r></w:p></w:tc>
           </w:tr>
         </w:tbl></w:body></w:document>"#;
-        let doc = parse_document_xml(xml, &Styles::empty(), &MediaMap::new()).expect("parse");
+        let doc = parse_document_xml(xml, &Styles::empty(), &MediaMap::new(), &Numbering::empty()).expect("parse");
         let Block::Table(t) = &doc.blocks[0] else { panic!("expected table") };
         assert_eq!(t.col_widths_pt.len(), 2);
         assert_eq!(t.col_widths_pt[0], twips_to_pt(2880.0)); // 144pt
