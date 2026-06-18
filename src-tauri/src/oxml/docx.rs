@@ -191,6 +191,7 @@ pub fn parse_document_xml(
                     let pp = styles.para_for(None);
                     emit_block(Block::Paragraph(Paragraph { props: pp, inlines: vec![] }), &mut tables, &mut blocks);
                 } else if !handle_table_leaf(&name, &e, &mut tables)
+                    && !handle_image_leaf(&name, &e, media, &mut cur_ext, &mut inlines, in_para)
                     && !try_page_break(&name, &e, styles, &style_id, &para_direct, &list, &mut inlines, &mut tables, &mut blocks, numbering, &mut counters)
                 {
                     apply_leaf(&name, &e, &stack, &mut page, &mut style_id, &mut para_direct, &mut run_direct, &mut list, &mut inlines, in_para);
