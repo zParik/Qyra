@@ -11,21 +11,21 @@ use serde::Serialize;
 
 use crate::error::{AppError, AppResult};
 use crate::layout::engine::{layout_document, LayoutResult};
-use crate::layout::font::Font;
+use crate::layout::font::FontSet;
 use crate::layout::render::render_page;
 
 /// Shared Word engine state: one layout font plus a cache of laid-out documents
 /// keyed by path. Layout is point-based and scale-independent, so a document is
 /// laid out once and rasterized per zoom level.
 pub struct WordEngine {
-    font: Arc<Font>,
+    font: Arc<FontSet>,
     docs: Mutex<HashMap<String, Arc<LayoutResult>>>,
 }
 
 impl WordEngine {
     pub fn new() -> Self {
         Self {
-            font: Arc::new(Font::default_font()),
+            font: Arc::new(FontSet::default_set()),
             docs: Mutex::new(HashMap::new()),
         }
     }

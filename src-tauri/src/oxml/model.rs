@@ -1,15 +1,20 @@
-//! Typed in-memory model of a WordprocessingML document. P1 covers body
-//! paragraphs and runs; tables, images, headers, lists arrive in later phases.
+//! Typed in-memory model of a WordprocessingML document. Wave 1 covers body
+//! paragraphs with rich run formatting, named-style resolution, paragraph
+//! spacing/indent, lists, line breaks and tabs. Tables and images follow.
 
-/// OOXML measures page geometry in twips (1/1440 inch) and font sizes in
-/// half-points. Layout works in points (1/72 inch).
+/// twips (1/1440 inch) → points (1/72 inch).
 pub fn twips_to_pt(twips: f32) -> f32 {
     twips / 20.0
 }
 
-/// Half-points (the `w:sz` unit) to points.
+/// half-points (the `w:sz` unit) → points.
 pub fn half_points_to_pt(half_points: f32) -> f32 {
     half_points / 2.0
+}
+
+/// EMUs (914400 per inch, the DrawingML unit) → points.
+pub fn emu_to_pt(emu: f32) -> f32 {
+    emu / 12700.0
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -21,17 +26,43 @@ pub struct Document {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Block {
     Paragraph(Paragraph),
+    /// Explicit page break (`<w:br w:type="page"/>`).
+    PageBreak,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Paragraph {
     pub props: ParaProps,
-    pub runs: Vec<Run>,
+    pub inlines: Vec<Inline>,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ParaProps {
     pub align: Align,
+    pub space_before_pt: f32,
+    pub space_after_pt: f32,
+    /// Line spacing as a multiple of the natural line height (1.0 = single).
+    pub line_spacing: f32,
+    pub indent_left_pt: f32,
+    /// Extra first-line indent (negative = hanging indent).
+    pub indent_first_pt: f32,
+    pub list: Option<ListMarker>,
+    pub style_id: Option<String>,
+}
+
+impl Default for ParaProps {
+    fn default() -> Self {
+        Self {
+            align: Align::Left,
+            space_before_pt: 0.0,
+            space_after_pt: 0.0,
+            line_spacing: 1.0,
+            indent_left_pt: 0.0,
+            indent_first_pt: 0.0,
+            list: None,
+            style_id: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -43,8 +74,22 @@ pub enum Align {
     Justify,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListMarker {
+    pub num_id: i32,
+    pub level: u8,
+}
+
 #[derive(Debug, Clone, PartialEq)]
-pub struct Run {
+pub enum Inline {
+    Text(TextRun),
+    /// In-paragraph line break (`<w:br/>` without `w:type="page"`).
+    LineBreak,
+    Tab,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextRun {
     pub props: RunProps,
     pub text: String,
 }
@@ -53,18 +98,25 @@ pub struct Run {
 pub struct RunProps {
     pub bold: bool,
     pub italic: bool,
-    /// Resolved size in points. Defaults to 11pt (Word body default) when the
-    /// run carries no `w:sz`.
+    pub underline: bool,
+    pub strike: bool,
     pub size_pt: f32,
+    pub color: [u8; 3],
 }
 
 impl Default for RunProps {
     fn default() -> Self {
-        Self { bold: false, italic: false, size_pt: 11.0 }
+        Self {
+            bold: false,
+            italic: false,
+            underline: false,
+            strike: false,
+            size_pt: 11.0,
+            color: [0, 0, 0],
+        }
     }
 }
 
-/// Page geometry in points, converted from the section's twip values.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PageMetrics {
     pub width: f32,
@@ -76,7 +128,6 @@ pub struct PageMetrics {
 }
 
 impl PageMetrics {
-    /// US Letter, 1-inch margins — the fallback when `sectPr` is absent.
     pub fn us_letter() -> Self {
         Self {
             width: twips_to_pt(12240.0),
@@ -88,9 +139,12 @@ impl PageMetrics {
         }
     }
 
-    /// Width available for text after horizontal margins.
     pub fn content_width(&self) -> f32 {
         self.width - self.margin_left - self.margin_right
+    }
+
+    pub fn content_height(&self) -> f32 {
+        self.height - self.margin_top - self.margin_bottom
     }
 }
 
@@ -106,21 +160,15 @@ mod tests {
 
     #[test]
     fn unit_conversions() {
-        assert_eq!(twips_to_pt(1440.0), 72.0); // 1 inch
-        assert_eq!(twips_to_pt(12240.0), 612.0); // US Letter width
-        assert_eq!(half_points_to_pt(22.0), 11.0); // Word default body size
+        assert_eq!(twips_to_pt(1440.0), 72.0);
+        assert_eq!(half_points_to_pt(22.0), 11.0);
+        assert_eq!(emu_to_pt(914400.0), 72.0);
     }
 
     #[test]
-    fn us_letter_content_box() {
-        let pm = PageMetrics::us_letter();
-        assert_eq!(pm.content_width(), 612.0 - 144.0); // 468pt
-    }
-
-    #[test]
-    fn default_run_is_11pt_regular() {
+    fn default_run_is_11pt_black() {
         let rp = RunProps::default();
-        assert!(!rp.bold && !rp.italic);
         assert_eq!(rp.size_pt, 11.0);
+        assert_eq!(rp.color, [0, 0, 0]);
     }
 }

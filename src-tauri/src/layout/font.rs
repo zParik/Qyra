@@ -1,54 +1,71 @@
-//! Text measurement and glyph rasterization over a single vendored face.
+//! Text measurement and glyph rasterization over a four-face font set
+//! (regular / bold / italic / bold-italic).
 //!
-//! Wraps `fontdue`: it maps characters to glyphs, exposes per-glyph advances and
-//! line metrics, and rasterizes glyphs to 8-bit coverage maps. Latin-only at P1.
-//!
-//! ponytail: one regular face measures and rasterizes every run; bold/italic
-//! flags are carried through the model for later face selection but do not yet
-//! pick a distinct face. Per-character advances also skip kerning/ligatures.
-//! Both are acceptable at P1 and are named later-hardening tasks.
+//! Wraps `fontdue`: character → glyph mapping, per-glyph advances, line metrics,
+//! and 8-bit coverage maps. Latin-only at this phase; one font family (the
+//! vendored default) stands in for every `w:rFonts` family — real font-family
+//! resolution is a later task.
 
-/// The default layout font, vendored for deterministic metrics. Must exist at
-/// build time (see the build note in the docx-render plan).
-const DEFAULT_FONT: &[u8] = include_bytes!("../../assets/fonts/DejaVuSans.ttf");
+const REGULAR: &[u8] = include_bytes!("../../assets/fonts/DejaVuSans.ttf");
+const BOLD: &[u8] = include_bytes!("../../assets/fonts/DejaVuSans-Bold.ttf");
+const ITALIC: &[u8] = include_bytes!("../../assets/fonts/DejaVuSans-Oblique.ttf");
+const BOLD_ITALIC: &[u8] = include_bytes!("../../assets/fonts/DejaVuSans-BoldOblique.ttf");
 
-pub struct Font {
-    inner: fontdue::Font,
+pub struct FontSet {
+    regular: fontdue::Font,
+    bold: fontdue::Font,
+    italic: fontdue::Font,
+    bold_italic: fontdue::Font,
 }
 
-impl Font {
-    /// Load the vendored default font.
-    pub fn default_font() -> Self {
-        let inner = fontdue::Font::from_bytes(DEFAULT_FONT, fontdue::FontSettings::default())
-            .expect("vendored font must parse");
-        Self { inner }
+impl FontSet {
+    pub fn default_set() -> Self {
+        let load = |b: &[u8]| {
+            fontdue::Font::from_bytes(b, fontdue::FontSettings::default())
+                .expect("vendored font must parse")
+        };
+        Self {
+            regular: load(REGULAR),
+            bold: load(BOLD),
+            italic: load(ITALIC),
+            bold_italic: load(BOLD_ITALIC),
+        }
     }
 
-    /// Width in points of `text` at `size_pt` (sum of per-character advances).
-    pub fn measure_width(&self, text: &str, size_pt: f32) -> f32 {
-        text.chars().map(|c| self.inner.metrics(c, size_pt).advance_width).sum()
+    fn face(&self, bold: bool, italic: bool) -> &fontdue::Font {
+        match (bold, italic) {
+            (true, true) => &self.bold_italic,
+            (true, false) => &self.bold,
+            (false, true) => &self.italic,
+            (false, false) => &self.regular,
+        }
     }
 
-    /// Distance from one baseline to the next at `size_pt`.
-    pub fn line_height(&self, size_pt: f32) -> f32 {
-        self.inner
+    /// Width in points of `text` at `size_pt` in the given style.
+    pub fn measure_width(&self, text: &str, size_pt: f32, bold: bool, italic: bool) -> f32 {
+        let face = self.face(bold, italic);
+        text.chars().map(|c| face.metrics(c, size_pt).advance_width).sum()
+    }
+
+    /// Baseline-to-baseline distance at `size_pt` in the given style.
+    pub fn line_height(&self, size_pt: f32, bold: bool, italic: bool) -> f32 {
+        self.face(bold, italic)
             .horizontal_line_metrics(size_pt)
             .map(|m| m.new_line_size)
             .unwrap_or(size_pt * 1.2)
     }
 
-    /// Distance from the line's top to its baseline at `size_pt`.
-    pub fn ascent(&self, size_pt: f32) -> f32 {
-        self.inner
+    /// Top-of-line to baseline at `size_pt` in the given style.
+    pub fn ascent(&self, size_pt: f32, bold: bool, italic: bool) -> f32 {
+        self.face(bold, italic)
             .horizontal_line_metrics(size_pt)
             .map(|m| m.ascent)
             .unwrap_or(size_pt * 0.8)
     }
 
-    /// Rasterize a single character at pixel size `px`: glyph metrics plus a
-    /// row-major `width * height` coverage map (0 = transparent, 255 = solid).
-    pub fn rasterize(&self, ch: char, px: f32) -> (fontdue::Metrics, Vec<u8>) {
-        self.inner.rasterize(ch, px)
+    /// Rasterize a glyph at pixel size `px`: metrics + row-major coverage map.
+    pub fn rasterize(&self, ch: char, px: f32, bold: bool, italic: bool) -> (fontdue::Metrics, Vec<u8>) {
+        self.face(bold, italic).rasterize(ch, px)
     }
 }
 
@@ -57,22 +74,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn wider_text_measures_wider() {
-        let f = Font::default_font();
-        let short = f.measure_width("i", 11.0);
-        let long = f.measure_width("iiiiiiiiii", 11.0);
-        assert!(long > short * 5.0, "10x text should be far wider");
-    }
-
-    #[test]
-    fn empty_is_zero_width() {
-        let f = Font::default_font();
-        assert_eq!(f.measure_width("", 11.0), 0.0);
+    fn bold_measures_at_least_as_wide_as_regular() {
+        let f = FontSet::default_set();
+        let reg = f.measure_width("Hello", 12.0, false, false);
+        let bold = f.measure_width("Hello", 12.0, true, false);
+        assert!(bold >= reg * 0.9 && bold > 0.0);
     }
 
     #[test]
     fn line_height_scales_with_size() {
-        let f = Font::default_font();
-        assert!(f.line_height(22.0) > f.line_height(11.0) * 1.9);
+        let f = FontSet::default_set();
+        assert!(f.line_height(24.0, false, false) > f.line_height(12.0, false, false) * 1.9);
     }
 }

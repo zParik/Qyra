@@ -14,6 +14,7 @@
 
 pub mod docx;
 pub mod model;
+pub mod styles;
 
 use std::io::{Cursor, Read, Write};
 
