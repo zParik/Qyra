@@ -106,6 +106,15 @@ pub enum Inline {
     /// In-paragraph line break (`<w:br/>` without `w:type="page"`).
     LineBreak,
     Tab,
+    Image(ImageRef),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageRef {
+    pub width_pt: f32,
+    pub height_pt: f32,
+    /// Encoded image bytes (PNG/JPEG/…), embedded from the package media part.
+    pub data: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

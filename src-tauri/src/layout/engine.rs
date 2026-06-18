@@ -1,10 +1,12 @@
 //! Flow a [`Document`] into pages. Rich runs (per-word style/size/colour),
 //! paragraph spacing/indent, alignment, bullet lists, line breaks, tabs, tables
-//! (rows/cells/grid spans, nested content, borders), and pagination.
+//! (rows/cells/grid spans, nested content, borders), inline images, and
+//! pagination.
 //!
 //! ponytail simplifications (later-hardening): tabs advance to a fixed 36pt grid;
 //! all list items render a bullet (numbering.xml for ordered lists is pending);
-//! justify renders as left; cells don't split across pages (whole row paginates).
+//! justify renders as left; cells don't split across pages (whole row paginates);
+//! each inline image is placed on its own line, left-aligned.
 
 use crate::oxml::model::{Align, Block, Document, Inline, ParaProps, Paragraph, RunProps, Row, Table};
 
@@ -26,6 +28,7 @@ pub struct LaidPage {
     pub height: f32,
     pub lines: Vec<Line>,
     pub rects: Vec<LaidRect>,
+    pub images: Vec<LaidImage>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -57,11 +60,29 @@ pub struct LaidRect {
     pub color: [u8; 3],
 }
 
+/// A placed image with absolute top-left position and encoded bytes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LaidImage {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub data: Vec<u8>,
+}
+
+struct PlacedImage {
+    x: f32,
+    w: f32,
+    h: f32,
+    data: Vec<u8>,
+}
+
 /// One laid line not yet assigned an absolute y.
 struct LineBox {
     runs: Vec<LineRun>,
     ascent: f32,
     height: f32,
+    images: Vec<PlacedImage>,
 }
 
 struct Slot {
@@ -76,6 +97,7 @@ enum Item {
     Word { text: String, props: RunProps, width: f32, space_before: bool },
     Tab,
     Break,
+    Image { width: f32, height: f32, data: Vec<u8> },
 }
 
 pub fn layout_document(doc: &Document, font: &FontSet) -> LayoutResult {
@@ -90,6 +112,7 @@ pub fn layout_document(doc: &Document, font: &FontSet) -> LayoutResult {
         pages: Vec::new(),
         lines: Vec::new(),
         rects: Vec::new(),
+        images: Vec::new(),
         pen_y: doc.page.margin_top,
     };
 
@@ -102,7 +125,7 @@ pub fn layout_document(doc: &Document, font: &FontSet) -> LayoutResult {
     }
     lay.flush_page();
     if lay.pages.is_empty() {
-        lay.pages.push(LaidPage { width: lay.page_w, height: lay.page_h, lines: vec![], rects: vec![] });
+        lay.pages.push(LaidPage { width: lay.page_w, height: lay.page_h, lines: vec![], rects: vec![], images: vec![] });
     }
     LayoutResult { pages: lay.pages }
 }
@@ -118,17 +141,19 @@ struct Layouter<'a> {
     pages: Vec<LaidPage>,
     lines: Vec<Line>,
     rects: Vec<LaidRect>,
+    images: Vec<LaidImage>,
     pen_y: f32,
 }
 
 impl<'a> Layouter<'a> {
     fn flush_page(&mut self) {
-        if !self.lines.is_empty() || !self.rects.is_empty() {
+        if !self.lines.is_empty() || !self.rects.is_empty() || !self.images.is_empty() {
             self.pages.push(LaidPage {
                 width: self.page_w,
                 height: self.page_h,
                 lines: std::mem::take(&mut self.lines),
                 rects: std::mem::take(&mut self.rects),
+                images: std::mem::take(&mut self.images),
             });
         }
     }
@@ -141,12 +166,17 @@ impl<'a> Layouter<'a> {
     fn flow_paragraph(&mut self, p: &Paragraph) {
         self.pen_y += p.props.space_before_pt;
         for lb in paragraph_lineboxes(p, self.font, self.margin_left, self.content_w) {
-            if self.pen_y + lb.ascent > self.content_bottom && !self.lines.is_empty() {
+            let LineBox { runs, ascent, height, images } = lb;
+            if self.pen_y + ascent > self.content_bottom && !self.lines.is_empty() {
                 self.flush_page();
                 self.pen_y = self.margin_top;
             }
-            self.lines.push(Line { baseline_y: self.pen_y + lb.ascent, runs: lb.runs });
-            self.pen_y += lb.height;
+            let baseline = self.pen_y + ascent;
+            for img in images {
+                self.images.push(LaidImage { x: img.x, y: baseline - img.h, w: img.w, h: img.h, data: img.data });
+            }
+            self.lines.push(Line { baseline_y: baseline, runs });
+            self.pen_y += height;
         }
         self.pen_y += p.props.space_after_pt;
     }
@@ -154,7 +184,7 @@ impl<'a> Layouter<'a> {
     fn flow_table(&mut self, t: &Table) {
         let cols = resolve_cols(t, self.content_w);
         for row in &t.rows {
-            let (row_lines, row_rects, h) = layout_row(row, self.font, self.margin_left, &cols);
+            let (row_lines, row_rects, row_images, h) = layout_row(row, self.font, self.margin_left, &cols);
             if self.pen_y + h > self.content_bottom && !self.lines.is_empty() {
                 self.flush_page();
                 self.pen_y = self.margin_top;
@@ -167,12 +197,15 @@ impl<'a> Layouter<'a> {
                 r.y += self.pen_y;
                 self.rects.push(r);
             }
+            for mut im in row_images {
+                im.y += self.pen_y;
+                self.images.push(im);
+            }
             self.pen_y += h;
         }
     }
 }
 
-/// Resolve the column widths for a table to fit `width`.
 fn resolve_cols(t: &Table, width: f32) -> Vec<f32> {
     if !t.col_widths_pt.is_empty() && t.col_widths_pt.iter().sum::<f32>() > 1.0 {
         return t.col_widths_pt.clone();
@@ -187,10 +220,10 @@ fn resolve_cols(t: &Table, width: f32) -> Vec<f32> {
     vec![width / n as f32; n]
 }
 
-/// Lay one table row, returning lines + border rects relative to the row top
+/// Lay one table row, returning lines/rects/images relative to the row top
 /// (y = 0) and the row height.
-fn layout_row(row: &Row, font: &FontSet, left: f32, cols: &[f32]) -> (Vec<Line>, Vec<LaidRect>, f32) {
-    let mut placed: Vec<(f32, f32, Vec<Line>, Vec<LaidRect>)> = Vec::new();
+fn layout_row(row: &Row, font: &FontSet, left: f32, cols: &[f32]) -> (Vec<Line>, Vec<LaidRect>, Vec<LaidImage>, f32) {
+    let mut placed: Vec<(f32, f32, Vec<Line>, Vec<LaidRect>, Vec<LaidImage>)> = Vec::new();
     let mut col_idx = 0usize;
     let mut row_h = 0.0f32;
 
@@ -200,15 +233,16 @@ fn layout_row(row: &Row, font: &FontSet, left: f32, cols: &[f32]) -> (Vec<Line>,
         let cw: f32 = if col_idx < cols.len() { cols[col_idx..end].iter().sum() } else { 0.0 };
         let cx = left + cols[..col_idx.min(cols.len())].iter().sum::<f32>();
         let inner_w = (cw - 2.0 * CELL_PAD_PT).max(1.0);
-        let (clines, crects, ch) = layout_column(&cell.blocks, font, cx + CELL_PAD_PT, inner_w);
+        let (clines, crects, cimages, ch) = layout_column(&cell.blocks, font, cx + CELL_PAD_PT, inner_w);
         row_h = row_h.max(ch + 2.0 * CELL_PAD_PT);
-        placed.push((cx, cw, clines, crects));
+        placed.push((cx, cw, clines, crects, cimages));
         col_idx += span;
     }
 
     let mut lines = Vec::new();
     let mut rects = Vec::new();
-    for (cx, cw, clines, crects) in placed {
+    let mut images = Vec::new();
+    for (cx, cw, clines, crects, cimages) in placed {
         for mut ln in clines {
             ln.baseline_y += CELL_PAD_PT;
             lines.push(ln);
@@ -217,32 +251,41 @@ fn layout_row(row: &Row, font: &FontSet, left: f32, cols: &[f32]) -> (Vec<Line>,
             r.y += CELL_PAD_PT;
             rects.push(r);
         }
+        for mut im in cimages {
+            im.y += CELL_PAD_PT;
+            images.push(im);
+        }
         rects.push(LaidRect { x: cx, y: 0.0, w: cw, h: row_h, color: [150, 150, 150] });
     }
-    (lines, rects, row_h)
+    (lines, rects, images, row_h)
 }
 
-/// Lay a list of blocks into a column (no pagination), returning lines + rects
-/// (y from 0) and the total height. Used for table cells (recurses on nested
-/// tables).
-fn layout_column(blocks: &[Block], font: &FontSet, left: f32, width: f32) -> (Vec<Line>, Vec<LaidRect>, f32) {
+/// Lay a list of blocks into a column (no pagination): lines/rects/images with
+/// y from 0 and total height. Used for table cells (recurses on nested tables).
+fn layout_column(blocks: &[Block], font: &FontSet, left: f32, width: f32) -> (Vec<Line>, Vec<LaidRect>, Vec<LaidImage>, f32) {
     let mut lines = Vec::new();
     let mut rects = Vec::new();
+    let mut images = Vec::new();
     let mut y = 0.0f32;
     for block in blocks {
         match block {
             Block::Paragraph(p) => {
                 y += p.props.space_before_pt;
                 for lb in paragraph_lineboxes(p, font, left, width) {
-                    lines.push(Line { baseline_y: y + lb.ascent, runs: lb.runs });
-                    y += lb.height;
+                    let LineBox { runs, ascent, height, images: imgs } = lb;
+                    let baseline = y + ascent;
+                    for img in imgs {
+                        images.push(LaidImage { x: img.x, y: baseline - img.h, w: img.w, h: img.h, data: img.data });
+                    }
+                    lines.push(Line { baseline_y: baseline, runs });
+                    y += height;
                 }
                 y += p.props.space_after_pt;
             }
             Block::Table(t) => {
                 let cols = resolve_cols(t, width);
                 for row in &t.rows {
-                    let (rl, rr, h) = layout_row(row, font, left, &cols);
+                    let (rl, rr, ri, h) = layout_row(row, font, left, &cols);
                     for mut ln in rl {
                         ln.baseline_y += y;
                         lines.push(ln);
@@ -251,16 +294,19 @@ fn layout_column(blocks: &[Block], font: &FontSet, left: f32, width: f32) -> (Ve
                         r.y += y;
                         rects.push(r);
                     }
+                    for mut im in ri {
+                        im.y += y;
+                        images.push(im);
+                    }
                     y += h;
                 }
             }
             Block::PageBreak => {}
         }
     }
-    (lines, rects, y)
+    (lines, rects, images, y)
 }
 
-/// Break a paragraph into laid lines within a column `[col_left, col_left+col_width]`.
 fn paragraph_lineboxes(p: &Paragraph, font: &FontSet, col_left: f32, col_width: f32) -> Vec<LineBox> {
     let is_list = p.props.list.is_some();
     let items = tokenize(&p.inlines, font);
@@ -269,7 +315,7 @@ fn paragraph_lineboxes(p: &Paragraph, font: &FontSet, col_left: f32, col_width: 
     if items.is_empty() {
         let asc = font.ascent(11.0, false, false);
         let lh = font.line_height(11.0, false, false) * p.props.line_spacing.max(0.1);
-        boxes.push(LineBox { runs: vec![], ascent: asc, height: lh });
+        boxes.push(LineBox { runs: vec![], ascent: asc, height: lh, images: vec![] });
         return boxes;
     }
 
@@ -301,6 +347,26 @@ fn paragraph_lineboxes(p: &Paragraph, font: &FontSet, col_left: f32, col_width: 
                 first_line = false;
                 line_w = 0.0;
             }
+            Item::Image { width, height, data } => {
+                if !line.is_empty() {
+                    boxes.push(commit_linebox(&mut line, &p.props, font, col_left, col_width, first_line, is_list));
+                    first_line = false;
+                    line_w = 0.0;
+                }
+                let (mut iw, mut ih) = (width, height);
+                if iw > col_width && iw > 0.0 {
+                    let s = col_width / iw;
+                    iw *= s;
+                    ih *= s;
+                }
+                let x = col_left + p.props.indent_left_pt;
+                boxes.push(LineBox {
+                    runs: vec![],
+                    ascent: ih,
+                    height: ih,
+                    images: vec![PlacedImage { x, w: iw, h: ih, data }],
+                });
+            }
         }
     }
     if !line.is_empty() {
@@ -321,8 +387,6 @@ fn space_w(font: &FontSet, p: &RunProps) -> f32 {
     font.measure_width(" ", p.size_pt, p.bold, p.italic)
 }
 
-/// Place accumulated slots into a [`LineBox`] with alignment + (first-line)
-/// bullet. Clears `line`.
 #[allow(clippy::too_many_arguments)]
 fn commit_linebox(
     line: &mut Vec<Slot>,
@@ -399,7 +463,7 @@ fn commit_linebox(
         );
     }
 
-    LineBox { runs, ascent: max_ascent, height: max_lh * pp.line_spacing.max(0.1) }
+    LineBox { runs, ascent: max_ascent, height: max_lh * pp.line_spacing.max(0.1), images: vec![] }
 }
 
 fn next_tab(pen: f32) -> f32 {
@@ -442,6 +506,10 @@ fn tokenize(inlines: &[Inline], font: &FontSet) -> Vec<Item> {
                 out.push(Item::Break);
                 pending_space = false;
             }
+            Inline::Image(img) => {
+                out.push(Item::Image { width: img.width_pt, height: img.height_pt, data: img.data.clone() });
+                pending_space = false;
+            }
         }
     }
     out
@@ -455,7 +523,7 @@ fn push_word(out: &mut Vec<Item>, word: &str, props: &RunProps, space_before: bo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::oxml::model::{Cell, ListMarker, PageMetrics, ParaProps, Row, TextRun};
+    use crate::oxml::model::{Cell, ImageRef, ListMarker, PageMetrics, ParaProps, Row, TextRun};
 
     fn text_para(s: &str, align: Align) -> Block {
         Block::Paragraph(Paragraph {
@@ -496,16 +564,24 @@ mod tests {
 
     #[test]
     fn table_emits_lines_and_border_rects() {
-        let cell = |s: &str| Cell {
-            blocks: vec![text_para(s, Align::Left)],
-            grid_span: 1,
-        };
+        let cell = |s: &str| Cell { blocks: vec![text_para(s, Align::Left)], grid_span: 1 };
         let table = Block::Table(Table {
             col_widths_pt: vec![100.0, 100.0],
             rows: vec![Row { cells: vec![cell("A"), cell("B")] }],
         });
         let res = layout_document(&doc(vec![table]), &FontSet::default_set());
-        assert!(!res.pages[0].rects.is_empty(), "table cells should produce border rects");
-        assert!(res.pages[0].lines.len() >= 2, "two cells of text → ≥2 lines");
+        assert!(!res.pages[0].rects.is_empty());
+        assert!(res.pages[0].lines.len() >= 2);
+    }
+
+    #[test]
+    fn image_inline_is_placed() {
+        let para = Block::Paragraph(Paragraph {
+            props: ParaProps::default(),
+            inlines: vec![Inline::Image(ImageRef { width_pt: 72.0, height_pt: 48.0, data: vec![1, 2, 3] })],
+        });
+        let res = layout_document(&doc(vec![para]), &FontSet::default_set());
+        assert_eq!(res.pages[0].images.len(), 1);
+        assert_eq!(res.pages[0].images[0].w, 72.0);
     }
 }

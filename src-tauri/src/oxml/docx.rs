@@ -6,18 +6,23 @@
 //! ponytail: matches the qualified `w:`-prefixed names real Word files use
 //! rather than resolving XML namespaces — a later hardening task.
 
+use std::collections::HashMap;
+
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::reader::Reader;
 
 use super::model::{
-    twips_to_pt, Block, Cell, Document, Inline, ListMarker, PageMetrics, Paragraph, Row, Table,
-    TextRun,
+    emu_to_pt, twips_to_pt, Block, Cell, Document, ImageRef, Inline, ListMarker, PageMetrics,
+    Paragraph, Row, Table, TextRun,
 };
 use super::styles::{
     apply_para_partial, apply_run_partial, attr_f32, attr_str, para_prop, run_prop,
     ParaPropsPartial, RunPropsPartial, Styles,
 };
 use super::{Package, PackageError};
+
+/// Relationship-id → encoded image bytes, resolved from the package.
+type MediaMap = HashMap<String, Vec<u8>>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DocxError {
@@ -44,7 +49,7 @@ struct CellB {
     grid_span: u32,
 }
 
-/// Load a `.docx` and parse its main document, resolving styles if present.
+/// Load a `.docx` and parse its main document, resolving styles + media.
 pub fn open(bytes: &[u8]) -> Result<Document, DocxError> {
     let pkg = Package::load(bytes)?;
     let styles = pkg
@@ -52,13 +57,59 @@ pub fn open(bytes: &[u8]) -> Result<Document, DocxError> {
         .and_then(|p| std::str::from_utf8(&p.data).ok())
         .map(Styles::parse)
         .unwrap_or_else(Styles::empty);
+    let media = load_media(&pkg);
     let part = pkg.part("word/document.xml").ok_or(DocxError::MissingDocument)?;
     let xml = std::str::from_utf8(&part.data).map_err(|_| DocxError::MissingDocument)?;
-    parse_document_xml(xml, &styles)
+    parse_document_xml(xml, &styles, &media)
 }
 
-/// Parse document XML against a resolved style table.
-pub fn parse_document_xml(xml: &str, styles: &Styles) -> Result<Document, DocxError> {
+/// Resolve `word/_rels/document.xml.rels` into a relationship-id → image-bytes
+/// map. Non-image or unresolvable relationships are skipped.
+fn load_media(pkg: &Package) -> MediaMap {
+    let mut map = MediaMap::new();
+    let Some(rels) = pkg
+        .part("word/_rels/document.xml.rels")
+        .and_then(|p| std::str::from_utf8(&p.data).ok())
+    else {
+        return map;
+    };
+
+    let mut reader = Reader::from_str(rels);
+    let mut buf = Vec::new();
+    loop {
+        let ev = match reader.read_event_into(&mut buf) {
+            Ok(ev) => ev,
+            Err(_) => break,
+        };
+        match ev {
+            Event::Empty(e) | Event::Start(e) if e.name().as_ref() == b"Relationship" => {
+                if let (Some(id), Some(target)) = (attr_str(&e, b"Id"), attr_str(&e, b"Target")) {
+                    let path = normalize_rel_target(&target);
+                    if let Some(part) = pkg.part(&path) {
+                        map.insert(id, part.data.clone());
+                    }
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    map
+}
+
+/// Resolve a relationship `Target` (relative to `word/`) to a package path.
+fn normalize_rel_target(target: &str) -> String {
+    let t = target.trim_start_matches('/');
+    if let Some(rest) = t.strip_prefix("../") {
+        rest.to_string() // e.g. "../media/x.png" → "media/x.png" (rare)
+    } else {
+        format!("word/{t}")
+    }
+}
+
+/// Parse document XML against a resolved style table and media map.
+pub fn parse_document_xml(xml: &str, styles: &Styles, media: &MediaMap) -> Result<Document, DocxError> {
     let mut reader = Reader::from_str(xml);
     let mut buf = Vec::new();
 
@@ -66,6 +117,7 @@ pub fn parse_document_xml(xml: &str, styles: &Styles) -> Result<Document, DocxEr
     let mut blocks: Vec<Block> = Vec::new();
     let mut stack: Vec<Vec<u8>> = Vec::new();
     let mut tables: Vec<TableB> = Vec::new();
+    let mut cur_ext: Option<(f32, f32)> = None;
 
     // Paragraph-in-progress state.
     let mut style_id: Option<String> = None;
@@ -111,6 +163,7 @@ pub fn parse_document_xml(xml: &str, styles: &Styles) -> Result<Document, DocxEr
                     _ => {}
                 }
                 if !handle_table_leaf(&name, &e, &mut tables)
+                    && !handle_image_leaf(&name, &e, media, &mut cur_ext, &mut inlines, in_para)
                     && !try_page_break(&name, &e, styles, &style_id, &para_direct, &list, &mut inlines, &mut tables, &mut blocks)
                 {
                     apply_leaf(&name, &e, &stack, &mut page, &mut style_id, &mut para_direct, &mut run_direct, &mut list, &mut inlines, in_para);
@@ -194,6 +247,39 @@ fn emit_block(block: Block, tables: &mut [TableB], blocks: &mut Vec<Block>) {
         }
     }
     blocks.push(block);
+}
+
+/// Handle DrawingML image leaves: `wp:extent` (size in EMUs) then `a:blip`
+/// (`r:embed` relationship). On a resolvable blip, push an inline image into the
+/// current paragraph. Returns true if consumed.
+fn handle_image_leaf(
+    name: &[u8],
+    e: &BytesStart,
+    media: &MediaMap,
+    cur_ext: &mut Option<(f32, f32)>,
+    inlines: &mut Vec<Inline>,
+    in_para: bool,
+) -> bool {
+    match name {
+        b"wp:extent" => {
+            if let (Some(cx), Some(cy)) = (attr_f32(e, b"cx"), attr_f32(e, b"cy")) {
+                *cur_ext = Some((emu_to_pt(cx), emu_to_pt(cy)));
+            }
+            true
+        }
+        b"a:blip" => {
+            if let Some(rid) = attr_str(e, b"r:embed") {
+                if let Some(bytes) = media.get(&rid) {
+                    let (w, h) = cur_ext.take().unwrap_or((96.0, 96.0));
+                    if in_para {
+                        inlines.push(Inline::Image(ImageRef { width_pt: w, height_pt: h, data: bytes.clone() }));
+                    }
+                }
+            }
+            true
+        }
+        _ => false,
+    }
 }
 
 /// Handle table-grid leaves (`w:gridCol` widths, `w:gridSpan`). Returns true if
@@ -347,7 +433,7 @@ mod tests {
           <w:r><w:t xml:space="preserve">Hello </w:t></w:r>
           <w:r><w:rPr><w:b/><w:sz w:val="28"/><w:color w:val="FF0000"/></w:rPr><w:t>World</w:t></w:r>
           </w:p></w:body></w:document>"#;
-        let doc = parse_document_xml(xml, &Styles::empty()).expect("parse");
+        let doc = parse_document_xml(xml, &Styles::empty(), &MediaMap::new()).expect("parse");
         let p = first_para(&doc);
         assert_eq!(p.props.align, Align::Center);
         assert_eq!(run_texts(p), vec!["Hello ", "World"]);
@@ -363,7 +449,7 @@ mod tests {
             r#"<w:styles xmlns:w="x"><w:style w:type="paragraph" w:styleId="Heading1"><w:rPr><w:sz w:val="48"/></w:rPr></w:style></w:styles>"#,
         );
         let xml = r#"<w:document xmlns:w="x"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Title</w:t></w:r></w:p></w:body></w:document>"#;
-        let doc = parse_document_xml(xml, &styles).expect("parse");
+        let doc = parse_document_xml(xml, &styles, &MediaMap::new()).expect("parse");
         let Inline::Text(t) = &first_para(&doc).inlines[0] else { panic!() };
         assert_eq!(t.props.size_pt, 24.0);
     }
@@ -375,7 +461,7 @@ mod tests {
           <w:p><w:r><w:br w:type="page"/></w:r></w:p>
           <w:p><w:r><w:t>After</w:t></w:r></w:p>
           </w:body></w:document>"#;
-        let doc = parse_document_xml(xml, &Styles::empty()).expect("parse");
+        let doc = parse_document_xml(xml, &Styles::empty(), &MediaMap::new()).expect("parse");
         assert!(doc.blocks.iter().any(|b| matches!(b, Block::PageBreak)));
     }
 
@@ -392,7 +478,7 @@ mod tests {
             <w:tc><w:p><w:r><w:t>B2</w:t></w:r></w:p></w:tc>
           </w:tr>
         </w:tbl></w:body></w:document>"#;
-        let doc = parse_document_xml(xml, &Styles::empty()).expect("parse");
+        let doc = parse_document_xml(xml, &Styles::empty(), &MediaMap::new()).expect("parse");
         let Block::Table(t) = &doc.blocks[0] else { panic!("expected table") };
         assert_eq!(t.col_widths_pt.len(), 2);
         assert_eq!(t.col_widths_pt[0], twips_to_pt(2880.0)); // 144pt

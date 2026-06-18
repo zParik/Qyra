@@ -1,7 +1,7 @@
 //! Rasterize a laid-out page to an RGBA8 buffer. White background; per-run face
 //! (regular/bold/italic), colour, underline, and strikethrough.
 
-use super::engine::{LaidPage, LaidRect, LineRun};
+use super::engine::{LaidImage, LaidPage, LaidRect, LineRun};
 use super::font::FontSet;
 
 /// Render one laid-out page at `scale` device pixels per point.
@@ -14,6 +14,9 @@ pub fn render_page(page: &LaidPage, font: &FontSet, scale: f32) -> (u32, u32, Ve
     for rect in &page.rects {
         stroke_rect(&mut buf, w, h, rect, scale);
     }
+    for img in &page.images {
+        blit_image(&mut buf, w, h, img, scale);
+    }
 
     for line in &page.lines {
         let baseline = line.baseline_y * scale;
@@ -22,6 +25,32 @@ pub fn render_page(page: &LaidPage, font: &FontSet, scale: f32) -> (u32, u32, Ve
         }
     }
     (w, h, buf)
+}
+
+/// Decode an embedded image, scale to its laid size, and composite onto the page.
+fn blit_image(buf: &mut [u8], w: u32, h: u32, img: &LaidImage, scale: f32) {
+    let dw = ((img.w * scale).round() as u32).max(1);
+    let dh = ((img.h * scale).round() as u32).max(1);
+    let decoded = match image::load_from_memory(&img.data) {
+        Ok(d) => d.to_rgba8(),
+        Err(_) => return, // unsupported/corrupt image → skip, don't fail the page
+    };
+    let resized = image::imageops::resize(&decoded, dw, dh, image::imageops::FilterType::Triangle);
+    let x0 = (img.x * scale).round() as i32;
+    let y0 = (img.y * scale).round() as i32;
+    for (px, py, pixel) in resized.enumerate_pixels() {
+        let dx = x0 + px as i32;
+        let dy = y0 + py as i32;
+        if dx < 0 || dx >= w as i32 || dy < 0 || dy >= h as i32 {
+            continue;
+        }
+        let [r, g, b, a] = pixel.0;
+        if a == 0 {
+            continue;
+        }
+        let idx = ((dy as u32 * w + dx as u32) * 4) as usize;
+        blend(buf, idx, [r, g, b], a as u32);
+    }
 }
 
 /// Draw the four edges of a cell border.
@@ -123,6 +152,7 @@ mod tests {
             width: 200.0,
             height: 80.0,
             rects: vec![],
+            images: vec![],
             lines: vec![Line {
                 baseline_y: 40.0,
                 runs: vec![LineRun {
