@@ -21,6 +21,9 @@ pub fn emu_to_pt(emu: f32) -> f32 {
 pub struct Document {
     pub page: PageMetrics,
     pub blocks: Vec<Block>,
+    /// Default-section header/footer block content (rendered on every page).
+    pub header: Vec<Block>,
+    pub footer: Vec<Block>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

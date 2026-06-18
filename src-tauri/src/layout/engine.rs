@@ -8,7 +8,7 @@
 //! justify renders as left; cells don't split across pages (whole row paginates);
 //! each inline image is placed on its own line, left-aligned.
 
-use crate::oxml::model::{Align, Block, Document, Inline, ParaProps, Paragraph, RunProps, Row, Table};
+use crate::oxml::model::{Align, Block, Document, Inline, PageMetrics, ParaProps, Paragraph, RunProps, Row, Table};
 
 use super::font::FontSet;
 
@@ -127,7 +127,37 @@ pub fn layout_document(doc: &Document, font: &FontSet) -> LayoutResult {
     if lay.pages.is_empty() {
         lay.pages.push(LaidPage { width: lay.page_w, height: lay.page_h, lines: vec![], rects: vec![], images: vec![] });
     }
+    stamp_strip(&mut lay.pages, &doc.header, font, &doc.page, true);
+    stamp_strip(&mut lay.pages, &doc.footer, font, &doc.page, false);
     LayoutResult { pages: lay.pages }
+}
+
+/// Lay header/footer blocks once and stamp them onto every page, positioned in
+/// the top/bottom margin.
+fn stamp_strip(pages: &mut [LaidPage], blocks: &[Block], font: &FontSet, page: &PageMetrics, header: bool) {
+    if blocks.is_empty() || pages.is_empty() {
+        return;
+    }
+    let (mut lines, mut rects, mut images, h) = layout_column(blocks, font, page.margin_left, page.content_width());
+    let top = if header {
+        (page.margin_top - h).max(0.0) * 0.5
+    } else {
+        page.height - page.margin_bottom + (page.margin_bottom - h).max(0.0) * 0.5
+    };
+    for ln in &mut lines {
+        ln.baseline_y += top;
+    }
+    for r in &mut rects {
+        r.y += top;
+    }
+    for im in &mut images {
+        im.y += top;
+    }
+    for pg in pages.iter_mut() {
+        pg.lines.extend(lines.iter().cloned());
+        pg.rects.extend(rects.iter().cloned());
+        pg.images.extend(images.iter().cloned());
+    }
 }
 
 struct Layouter<'a> {
@@ -555,7 +585,7 @@ mod tests {
     }
 
     fn doc(blocks: Vec<Block>) -> Document {
-        Document { page: PageMetrics::us_letter(), blocks }
+        Document { page: PageMetrics::us_letter(), blocks, header: vec![], footer: vec![] }
     }
 
     #[test]

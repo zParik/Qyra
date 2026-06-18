@@ -53,7 +53,8 @@ struct CellB {
     grid_span: u32,
 }
 
-/// Load a `.docx` and parse its main document, resolving styles + media.
+/// Load a `.docx` and parse its main document, resolving styles, media,
+/// numbering, and default header/footer.
 pub fn open(bytes: &[u8]) -> Result<Document, DocxError> {
     let pkg = Package::load(bytes)?;
     let styles = pkg
@@ -61,7 +62,8 @@ pub fn open(bytes: &[u8]) -> Result<Document, DocxError> {
         .and_then(|p| std::str::from_utf8(&p.data).ok())
         .map(Styles::parse)
         .unwrap_or_else(Styles::empty);
-    let media = load_media(&pkg);
+    let rels = load_rels(&pkg);
+    let media = load_media(&pkg, &rels);
     let numbering = pkg
         .part("word/numbering.xml")
         .and_then(|p| std::str::from_utf8(&p.data).ok())
@@ -69,20 +71,27 @@ pub fn open(bytes: &[u8]) -> Result<Document, DocxError> {
         .unwrap_or_else(Numbering::empty);
     let part = pkg.part("word/document.xml").ok_or(DocxError::MissingDocument)?;
     let xml = std::str::from_utf8(&part.data).map_err(|_| DocxError::MissingDocument)?;
-    parse_document_xml(xml, &styles, &media, &numbering)
+
+    let mut doc = parse_document_xml(xml, &styles, &media, &numbering)?;
+    let (hdr, ftr) = scan_section_refs(xml);
+    if let Some(b) = hdr.and_then(|rid| part_blocks(&pkg, &rels, &rid, &styles, &media, &numbering)) {
+        doc.header = b;
+    }
+    if let Some(b) = ftr.and_then(|rid| part_blocks(&pkg, &rels, &rid, &styles, &media, &numbering)) {
+        doc.footer = b;
+    }
+    Ok(doc)
 }
 
-/// Resolve `word/_rels/document.xml.rels` into a relationship-id → image-bytes
-/// map. Non-image or unresolvable relationships are skipped.
-fn load_media(pkg: &Package) -> MediaMap {
-    let mut map = MediaMap::new();
+/// Parse `word/_rels/document.xml.rels` into a relationship-id → package-path map.
+fn load_rels(pkg: &Package) -> HashMap<String, String> {
+    let mut map = HashMap::new();
     let Some(rels) = pkg
         .part("word/_rels/document.xml.rels")
         .and_then(|p| std::str::from_utf8(&p.data).ok())
     else {
         return map;
     };
-
     let mut reader = Reader::from_str(rels);
     let mut buf = Vec::new();
     loop {
@@ -93,10 +102,7 @@ fn load_media(pkg: &Package) -> MediaMap {
         match ev {
             Event::Empty(e) | Event::Start(e) if e.name().as_ref() == b"Relationship" => {
                 if let (Some(id), Some(target)) = (attr_str(&e, b"Id"), attr_str(&e, b"Target")) {
-                    let path = normalize_rel_target(&target);
-                    if let Some(part) = pkg.part(&path) {
-                        map.insert(id, part.data.clone());
-                    }
+                    map.insert(id, normalize_rel_target(&target));
                 }
             }
             Event::Eof => break,
@@ -105,6 +111,85 @@ fn load_media(pkg: &Package) -> MediaMap {
         buf.clear();
     }
     map
+}
+
+/// Relationship-id → image bytes, for media parts only.
+fn load_media(pkg: &Package, rels: &HashMap<String, String>) -> MediaMap {
+    let mut map = MediaMap::new();
+    for (rid, path) in rels {
+        if path.starts_with("word/media/") {
+            if let Some(part) = pkg.part(path) {
+                map.insert(rid.clone(), part.data.clone());
+            }
+        }
+    }
+    map
+}
+
+/// Find the default-section header/footer relationship ids in the document.
+fn scan_section_refs(xml: &str) -> (Option<String>, Option<String>) {
+    let (mut header_any, mut footer_any) = (None, None);
+    let (mut header_def, mut footer_def) = (None, None);
+    let mut reader = Reader::from_str(xml);
+    let mut buf = Vec::new();
+    loop {
+        let ev = match reader.read_event_into(&mut buf) {
+            Ok(ev) => ev,
+            Err(_) => break,
+        };
+        match ev {
+            Event::Empty(e) | Event::Start(e) => match e.name().as_ref() {
+                b"w:headerReference" => {
+                    let id = attr_str(&e, b"r:id");
+                    if attr_str(&e, b"w:type").as_deref() == Some("default") {
+                        header_def = id.clone();
+                    }
+                    if header_any.is_none() {
+                        header_any = id;
+                    }
+                }
+                b"w:footerReference" => {
+                    let id = attr_str(&e, b"r:id");
+                    if attr_str(&e, b"w:type").as_deref() == Some("default") {
+                        footer_def = id.clone();
+                    }
+                    if footer_any.is_none() {
+                        footer_any = id;
+                    }
+                }
+                _ => {}
+            },
+            Event::Eof => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    (header_def.or(header_any), footer_def.or(footer_any))
+}
+
+/// Parse a referenced part (header/footer) into its block content.
+fn part_blocks(
+    pkg: &Package,
+    rels: &HashMap<String, String>,
+    rid: &str,
+    styles: &Styles,
+    media: &MediaMap,
+    numbering: &Numbering,
+) -> Option<Vec<Block>> {
+    let path = rels.get(rid)?;
+    let part = pkg.part(path)?;
+    let xml = std::str::from_utf8(&part.data).ok()?;
+    parse_document_xml(xml, styles, media, numbering).ok().map(|d| d.blocks)
+}
+
+/// Resolve a relationship `Target` (relative to `word/`) to a package path.
+fn normalize_rel_target(target: &str) -> String {
+    let t = target.trim_start_matches('/');
+    if let Some(rest) = t.strip_prefix("../") {
+        rest.to_string() // e.g. "../media/x.png" → "media/x.png" (rare)
+    } else {
+        format!("word/{t}")
+    }
 }
 
 /// Resolve a relationship `Target` (relative to `word/`) to a package path.
@@ -256,7 +341,7 @@ pub fn parse_document_xml(
         buf.clear();
     }
 
-    Ok(Document { page, blocks })
+    Ok(Document { page, blocks, header: Vec::new(), footer: Vec::new() })
 }
 
 /// Route a finished block into the current table cell, or the document body.
