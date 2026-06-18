@@ -30,7 +30,7 @@ pub enum PackageError {
 }
 
 /// One part of an OPC package: its path within the ZIP plus its raw bytes.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Part {
     pub name: String,
     pub data: Vec<u8>,

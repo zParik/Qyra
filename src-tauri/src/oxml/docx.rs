@@ -192,16 +192,6 @@ fn normalize_rel_target(target: &str) -> String {
     }
 }
 
-/// Resolve a relationship `Target` (relative to `word/`) to a package path.
-fn normalize_rel_target(target: &str) -> String {
-    let t = target.trim_start_matches('/');
-    if let Some(rest) = t.strip_prefix("../") {
-        rest.to_string() // e.g. "../media/x.png" → "media/x.png" (rare)
-    } else {
-        format!("word/{t}")
-    }
-}
-
 /// Parse document XML against a resolved style table, media map, and numbering.
 pub fn parse_document_xml(
     xml: &str,
