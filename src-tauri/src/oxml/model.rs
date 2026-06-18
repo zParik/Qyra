@@ -26,8 +26,28 @@ pub struct Document {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Block {
     Paragraph(Paragraph),
+    Table(Table),
     /// Explicit page break (`<w:br w:type="page"/>`).
     PageBreak,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Table {
+    pub rows: Vec<Row>,
+    /// Column widths in points from `w:tblGrid`; empty → distribute equally.
+    pub col_widths_pt: Vec<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Row {
+    pub cells: Vec<Cell>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Cell {
+    pub blocks: Vec<Block>,
+    /// Horizontal cell span (`w:gridSpan`); 1 = no span.
+    pub grid_span: u32,
 }
 
 #[derive(Debug, Clone, PartialEq)]

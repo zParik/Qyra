@@ -1,7 +1,7 @@
 //! Rasterize a laid-out page to an RGBA8 buffer. White background; per-run face
 //! (regular/bold/italic), colour, underline, and strikethrough.
 
-use super::engine::{LaidPage, LineRun};
+use super::engine::{LaidPage, LaidRect, LineRun};
 use super::font::FontSet;
 
 /// Render one laid-out page at `scale` device pixels per point.
@@ -10,6 +10,11 @@ pub fn render_page(page: &LaidPage, font: &FontSet, scale: f32) -> (u32, u32, Ve
     let h = ((page.height * scale).round() as u32).max(1);
     let mut buf = vec![255u8; (w as usize) * (h as usize) * 4]; // opaque white
 
+    // Table borders first (under text).
+    for rect in &page.rects {
+        stroke_rect(&mut buf, w, h, rect, scale);
+    }
+
     for line in &page.lines {
         let baseline = line.baseline_y * scale;
         for run in &line.runs {
@@ -17,6 +22,19 @@ pub fn render_page(page: &LaidPage, font: &FontSet, scale: f32) -> (u32, u32, Ve
         }
     }
     (w, h, buf)
+}
+
+/// Draw the four edges of a cell border.
+fn stroke_rect(buf: &mut [u8], w: u32, h: u32, rect: &LaidRect, scale: f32) {
+    let x = rect.x * scale;
+    let y = rect.y * scale;
+    let rw = rect.w * scale;
+    let rh = rect.h * scale;
+    let t = scale.max(1.0); // ~1pt border
+    fill_rect(buf, w, h, x, y, rw, t, rect.color); // top
+    fill_rect(buf, w, h, x, y + rh - t, rw, t, rect.color); // bottom
+    fill_rect(buf, w, h, x, y, t, rh, rect.color); // left
+    fill_rect(buf, w, h, x + rw - t, y, t, rh, rect.color); // right
 }
 
 fn draw_run(buf: &mut [u8], w: u32, h: u32, run: &LineRun, baseline: f32, scale: f32, font: &FontSet) {
@@ -104,6 +122,7 @@ mod tests {
         let page = LaidPage {
             width: 200.0,
             height: 80.0,
+            rects: vec![],
             lines: vec![Line {
                 baseline_y: 40.0,
                 runs: vec![LineRun {

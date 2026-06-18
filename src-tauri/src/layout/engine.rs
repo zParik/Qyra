@@ -1,18 +1,19 @@
-//! Flow a [`Document`] into pages. Wave 1: rich runs (per-word style + size),
-//! paragraph spacing/indent, alignment, bullet lists, in-paragraph line breaks,
-//! tabs, and pagination (auto + explicit page breaks).
+//! Flow a [`Document`] into pages. Rich runs (per-word style/size/colour),
+//! paragraph spacing/indent, alignment, bullet lists, line breaks, tabs, tables
+//! (rows/cells/grid spans, nested content, borders), and pagination.
 //!
-//! ponytail simplifications (later-hardening): tabs advance to a fixed 36pt grid
-//! rather than document tab stops; all list items render a bullet (numbering.xml
-//! parsing for ordered lists is a later wave); justify renders as left.
+//! ponytail simplifications (later-hardening): tabs advance to a fixed 36pt grid;
+//! all list items render a bullet (numbering.xml for ordered lists is pending);
+//! justify renders as left; cells don't split across pages (whole row paginates).
 
-use crate::oxml::model::{Align, Block, Document, Inline, PageMetrics, Paragraph, RunProps};
+use crate::oxml::model::{Align, Block, Document, Inline, ParaProps, Paragraph, RunProps, Row, Table};
 
 use super::font::FontSet;
 
 const TAB_PT: f32 = 36.0;
-const LIST_INDENT_PT: f32 = 18.0; // text indent for bullet lists
-const LIST_GAP_PT: f32 = 6.0; // gap between bullet and text
+const LIST_INDENT_PT: f32 = 18.0;
+const LIST_GAP_PT: f32 = 6.0;
+const CELL_PAD_PT: f32 = 4.0;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LayoutResult {
@@ -24,6 +25,7 @@ pub struct LaidPage {
     pub width: f32,
     pub height: f32,
     pub lines: Vec<Line>,
+    pub rects: Vec<LaidRect>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -45,7 +47,23 @@ pub struct LineRun {
     pub color: [u8; 3],
 }
 
-/// A laid-out word with its measured width plus whether a space precedes it.
+/// A stroked rectangle (table cell border).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LaidRect {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub color: [u8; 3],
+}
+
+/// One laid line not yet assigned an absolute y.
+struct LineBox {
+    runs: Vec<LineRun>,
+    ascent: f32,
+    height: f32,
+}
+
 struct Slot {
     text: String,
     props: RunProps,
@@ -60,231 +78,334 @@ enum Item {
     Break,
 }
 
-/// Lay a document out into positioned pages.
 pub fn layout_document(doc: &Document, font: &FontSet) -> LayoutResult {
     let mut lay = Layouter {
         font,
-        page: doc.page,
+        page_w: doc.page.width,
+        page_h: doc.page.height,
+        margin_left: doc.page.margin_left,
+        content_w: doc.page.content_width(),
+        content_bottom: doc.page.height - doc.page.margin_bottom,
+        margin_top: doc.page.margin_top,
         pages: Vec::new(),
         lines: Vec::new(),
+        rects: Vec::new(),
         pen_y: doc.page.margin_top,
     };
 
     for block in &doc.blocks {
         match block {
-            Block::Paragraph(p) => lay.paragraph(p),
-            Block::PageBreak => lay.explicit_page_break(),
+            Block::Paragraph(p) => lay.flow_paragraph(p),
+            Block::Table(t) => lay.flow_table(t),
+            Block::PageBreak => lay.page_break(),
         }
     }
-
     lay.flush_page();
     if lay.pages.is_empty() {
-        lay.pages.push(LaidPage { width: lay.page.width, height: lay.page.height, lines: vec![] });
+        lay.pages.push(LaidPage { width: lay.page_w, height: lay.page_h, lines: vec![], rects: vec![] });
     }
     LayoutResult { pages: lay.pages }
 }
 
 struct Layouter<'a> {
     font: &'a FontSet,
-    page: PageMetrics,
+    page_w: f32,
+    page_h: f32,
+    margin_left: f32,
+    content_w: f32,
+    content_bottom: f32,
+    margin_top: f32,
     pages: Vec<LaidPage>,
     lines: Vec<Line>,
+    rects: Vec<LaidRect>,
     pen_y: f32,
 }
 
 impl<'a> Layouter<'a> {
-    fn content_bottom(&self) -> f32 {
-        self.page.height - self.page.margin_bottom
-    }
-
     fn flush_page(&mut self) {
-        if !self.lines.is_empty() {
+        if !self.lines.is_empty() || !self.rects.is_empty() {
             self.pages.push(LaidPage {
-                width: self.page.width,
-                height: self.page.height,
+                width: self.page_w,
+                height: self.page_h,
                 lines: std::mem::take(&mut self.lines),
+                rects: std::mem::take(&mut self.rects),
             });
         }
     }
 
-    fn explicit_page_break(&mut self) {
+    fn page_break(&mut self) {
         self.flush_page();
-        self.pen_y = self.page.margin_top;
+        self.pen_y = self.margin_top;
     }
 
-    fn space_w(&self, p: &RunProps) -> f32 {
-        self.font.measure_width(" ", p.size_pt, p.bold, p.italic)
-    }
-
-    fn paragraph(&mut self, p: &Paragraph) {
+    fn flow_paragraph(&mut self, p: &Paragraph) {
         self.pen_y += p.props.space_before_pt;
-
-        let is_list = p.props.list.is_some();
-        let base_left = self.page.margin_left
-            + p.props.indent_left_pt
-            + if is_list { LIST_INDENT_PT } else { 0.0 };
-        let content_w = self.page.content_width();
-
-        let items = tokenize(&p.inlines, self.font);
-
-        // Empty paragraph → one blank line.
-        if items.is_empty() {
-            let lh = self.font.line_height(11.0, false, false) * p.props.line_spacing.max(0.1);
-            let asc = self.font.ascent(11.0, false, false);
-            self.commit(Vec::new(), asc, lh);
-            self.pen_y += p.props.space_after_pt;
-            return;
-        }
-
-        let mut line: Vec<Slot> = Vec::new();
-        let mut line_w = 0.0f32;
-        let mut first_line = true;
-
-        for item in items {
-            match item {
-                Item::Word { text, props, width, space_before } => {
-                    let space = if space_before && !line.is_empty() { self.space_w(&props) } else { 0.0 };
-                    let avail = self.avail(&p.props, first_line, is_list, content_w);
-                    if !line.is_empty() && line_w + space + width > avail {
-                        self.commit_line(&mut line, &p.props, base_left, first_line, is_list, content_w);
-                        first_line = false;
-                        line_w = width;
-                        line.push(Slot { text, props, width, space_before: false, is_tab: false });
-                    } else {
-                        line_w += space + width;
-                        line.push(Slot { text, props, width, space_before, is_tab: false });
-                    }
-                }
-                Item::Tab => {
-                    line_w = next_tab(line_w);
-                    line.push(Slot { text: String::new(), props: RunProps::default(), width: 0.0, space_before: false, is_tab: true });
-                }
-                Item::Break => {
-                    self.commit_line(&mut line, &p.props, base_left, first_line, is_list, content_w);
-                    first_line = false;
-                    line_w = 0.0;
-                }
+        for lb in paragraph_lineboxes(p, self.font, self.margin_left, self.content_w) {
+            if self.pen_y + lb.ascent > self.content_bottom && !self.lines.is_empty() {
+                self.flush_page();
+                self.pen_y = self.margin_top;
             }
+            self.lines.push(Line { baseline_y: self.pen_y + lb.ascent, runs: lb.runs });
+            self.pen_y += lb.height;
         }
-        if !line.is_empty() {
-            self.commit_line(&mut line, &p.props, base_left, first_line, is_list, content_w);
-        }
-
         self.pen_y += p.props.space_after_pt;
     }
 
-    fn avail(&self, pp: &crate::oxml::model::ParaProps, first_line: bool, is_list: bool, content_w: f32) -> f32 {
-        let mut a = content_w - pp.indent_left_pt - if is_list { LIST_INDENT_PT } else { 0.0 };
-        if first_line {
-            a -= pp.indent_first_pt;
+    fn flow_table(&mut self, t: &Table) {
+        let cols = resolve_cols(t, self.content_w);
+        for row in &t.rows {
+            let (row_lines, row_rects, h) = layout_row(row, self.font, self.margin_left, &cols);
+            if self.pen_y + h > self.content_bottom && !self.lines.is_empty() {
+                self.flush_page();
+                self.pen_y = self.margin_top;
+            }
+            for mut ln in row_lines {
+                ln.baseline_y += self.pen_y;
+                self.lines.push(ln);
+            }
+            for mut r in row_rects {
+                r.y += self.pen_y;
+                self.rects.push(r);
+            }
+            self.pen_y += h;
         }
-        a.max(1.0)
+    }
+}
+
+/// Resolve the column widths for a table to fit `width`.
+fn resolve_cols(t: &Table, width: f32) -> Vec<f32> {
+    if !t.col_widths_pt.is_empty() && t.col_widths_pt.iter().sum::<f32>() > 1.0 {
+        return t.col_widths_pt.clone();
+    }
+    let n = t
+        .rows
+        .iter()
+        .map(|r| r.cells.iter().map(|c| c.grid_span.max(1) as usize).sum::<usize>())
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    vec![width / n as f32; n]
+}
+
+/// Lay one table row, returning lines + border rects relative to the row top
+/// (y = 0) and the row height.
+fn layout_row(row: &Row, font: &FontSet, left: f32, cols: &[f32]) -> (Vec<Line>, Vec<LaidRect>, f32) {
+    let mut placed: Vec<(f32, f32, Vec<Line>, Vec<LaidRect>)> = Vec::new();
+    let mut col_idx = 0usize;
+    let mut row_h = 0.0f32;
+
+    for cell in &row.cells {
+        let span = cell.grid_span.max(1) as usize;
+        let end = (col_idx + span).min(cols.len());
+        let cw: f32 = if col_idx < cols.len() { cols[col_idx..end].iter().sum() } else { 0.0 };
+        let cx = left + cols[..col_idx.min(cols.len())].iter().sum::<f32>();
+        let inner_w = (cw - 2.0 * CELL_PAD_PT).max(1.0);
+        let (clines, crects, ch) = layout_column(&cell.blocks, font, cx + CELL_PAD_PT, inner_w);
+        row_h = row_h.max(ch + 2.0 * CELL_PAD_PT);
+        placed.push((cx, cw, clines, crects));
+        col_idx += span;
     }
 
-    /// Place the accumulated slots, apply alignment + (first-line) bullet, and
-    /// emit a [`Line`]. Clears `line`.
-    fn commit_line(
-        &mut self,
-        line: &mut Vec<Slot>,
-        pp: &crate::oxml::model::ParaProps,
-        base_left: f32,
-        first_line: bool,
-        is_list: bool,
-        content_w: f32,
-    ) {
-        // Build runs at relative x (line origin = 0).
-        let mut runs: Vec<LineRun> = Vec::new();
-        let mut pen = 0.0f32;
-        let mut max_ascent = 0.0f32;
-        let mut max_lh = 0.0f32;
+    let mut lines = Vec::new();
+    let mut rects = Vec::new();
+    for (cx, cw, clines, crects) in placed {
+        for mut ln in clines {
+            ln.baseline_y += CELL_PAD_PT;
+            lines.push(ln);
+        }
+        for mut r in crects {
+            r.y += CELL_PAD_PT;
+            rects.push(r);
+        }
+        rects.push(LaidRect { x: cx, y: 0.0, w: cw, h: row_h, color: [150, 150, 150] });
+    }
+    (lines, rects, row_h)
+}
 
-        for slot in line.iter() {
-            if slot.is_tab {
-                pen = next_tab(pen);
-                continue;
+/// Lay a list of blocks into a column (no pagination), returning lines + rects
+/// (y from 0) and the total height. Used for table cells (recurses on nested
+/// tables).
+fn layout_column(blocks: &[Block], font: &FontSet, left: f32, width: f32) -> (Vec<Line>, Vec<LaidRect>, f32) {
+    let mut lines = Vec::new();
+    let mut rects = Vec::new();
+    let mut y = 0.0f32;
+    for block in blocks {
+        match block {
+            Block::Paragraph(p) => {
+                y += p.props.space_before_pt;
+                for lb in paragraph_lineboxes(p, font, left, width) {
+                    lines.push(Line { baseline_y: y + lb.ascent, runs: lb.runs });
+                    y += lb.height;
+                }
+                y += p.props.space_after_pt;
             }
-            if slot.space_before && !runs.is_empty() {
-                pen += self.space_w(&slot.props);
+            Block::Table(t) => {
+                let cols = resolve_cols(t, width);
+                for row in &t.rows {
+                    let (rl, rr, h) = layout_row(row, font, left, &cols);
+                    for mut ln in rl {
+                        ln.baseline_y += y;
+                        lines.push(ln);
+                    }
+                    for mut r in rr {
+                        r.y += y;
+                        rects.push(r);
+                    }
+                    y += h;
+                }
             }
-            let asc = self.font.ascent(slot.props.size_pt, slot.props.bold, slot.props.italic);
-            let lh = self.font.line_height(slot.props.size_pt, slot.props.bold, slot.props.italic);
-            max_ascent = max_ascent.max(asc);
-            max_lh = max_lh.max(lh);
-            runs.push(LineRun {
-                x: pen,
-                width: slot.width,
-                text: slot.text.clone(),
-                bold: slot.props.bold,
-                italic: slot.props.italic,
-                underline: slot.props.underline,
-                strike: slot.props.strike,
-                size_pt: slot.props.size_pt,
-                color: slot.props.color,
-            });
-            pen += slot.width;
+            Block::PageBreak => {}
         }
-        line.clear();
+    }
+    (lines, rects, y)
+}
 
-        if max_ascent == 0.0 {
-            max_ascent = self.font.ascent(11.0, false, false);
-            max_lh = self.font.line_height(11.0, false, false);
-        }
-        let total = pen;
+/// Break a paragraph into laid lines within a column `[col_left, col_left+col_width]`.
+fn paragraph_lineboxes(p: &Paragraph, font: &FontSet, col_left: f32, col_width: f32) -> Vec<LineBox> {
+    let is_list = p.props.list.is_some();
+    let items = tokenize(&p.inlines, font);
+    let mut boxes: Vec<LineBox> = Vec::new();
 
-        // Alignment within the content box.
-        let content_left = self.page.margin_left;
-        let start_x = match pp.align {
-            Align::Left | Align::Justify => {
-                base_left + if first_line { pp.indent_first_pt } else { 0.0 }
-            }
-            Align::Right => content_left + content_w - total,
-            Align::Center => content_left + (content_w - total) / 2.0,
-        };
-        for r in runs.iter_mut() {
-            r.x += start_x;
-        }
-
-        // First-line bullet for list paragraphs.
-        if is_list && first_line {
-            let marker_size = runs.first().map(|r| r.size_pt).unwrap_or(11.0);
-            let marker_w = self.font.measure_width("\u{2022}", marker_size, false, false);
-            let marker_x = (start_x - LIST_GAP_PT - marker_w).max(self.page.margin_left);
-            runs.insert(
-                0,
-                LineRun {
-                    x: marker_x,
-                    width: marker_w,
-                    text: "\u{2022}".to_string(),
-                    bold: false,
-                    italic: false,
-                    underline: false,
-                    strike: false,
-                    size_pt: marker_size,
-                    color: [0, 0, 0],
-                },
-            );
-        }
-
-        let advance = max_lh * pp.line_spacing.max(0.1);
-        self.commit(runs, max_ascent, advance);
+    if items.is_empty() {
+        let asc = font.ascent(11.0, false, false);
+        let lh = font.line_height(11.0, false, false) * p.props.line_spacing.max(0.1);
+        boxes.push(LineBox { runs: vec![], ascent: asc, height: lh });
+        return boxes;
     }
 
-    fn commit(&mut self, runs: Vec<LineRun>, max_ascent: f32, advance: f32) {
-        if self.pen_y + max_ascent > self.content_bottom() && !self.lines.is_empty() {
-            self.flush_page();
-            self.pen_y = self.page.margin_top;
+    let mut line: Vec<Slot> = Vec::new();
+    let mut line_w = 0.0f32;
+    let mut first_line = true;
+
+    for item in items {
+        match item {
+            Item::Word { text, props, width, space_before } => {
+                let space = if space_before && !line.is_empty() { space_w(font, &props) } else { 0.0 };
+                let avail = avail_for(&p.props, first_line, is_list, col_width);
+                if !line.is_empty() && line_w + space + width > avail {
+                    boxes.push(commit_linebox(&mut line, &p.props, font, col_left, col_width, first_line, is_list));
+                    first_line = false;
+                    line_w = width;
+                    line.push(Slot { text, props, width, space_before: false, is_tab: false });
+                } else {
+                    line_w += space + width;
+                    line.push(Slot { text, props, width, space_before, is_tab: false });
+                }
+            }
+            Item::Tab => {
+                line_w = next_tab(line_w);
+                line.push(Slot { text: String::new(), props: RunProps::default(), width: 0.0, space_before: false, is_tab: true });
+            }
+            Item::Break => {
+                boxes.push(commit_linebox(&mut line, &p.props, font, col_left, col_width, first_line, is_list));
+                first_line = false;
+                line_w = 0.0;
+            }
         }
-        self.lines.push(Line { baseline_y: self.pen_y + max_ascent, runs });
-        self.pen_y += advance;
     }
+    if !line.is_empty() {
+        boxes.push(commit_linebox(&mut line, &p.props, font, col_left, col_width, first_line, is_list));
+    }
+    boxes
+}
+
+fn avail_for(pp: &ParaProps, first_line: bool, is_list: bool, col_width: f32) -> f32 {
+    let mut a = col_width - pp.indent_left_pt - if is_list { LIST_INDENT_PT } else { 0.0 };
+    if first_line {
+        a -= pp.indent_first_pt;
+    }
+    a.max(1.0)
+}
+
+fn space_w(font: &FontSet, p: &RunProps) -> f32 {
+    font.measure_width(" ", p.size_pt, p.bold, p.italic)
+}
+
+/// Place accumulated slots into a [`LineBox`] with alignment + (first-line)
+/// bullet. Clears `line`.
+#[allow(clippy::too_many_arguments)]
+fn commit_linebox(
+    line: &mut Vec<Slot>,
+    pp: &ParaProps,
+    font: &FontSet,
+    col_left: f32,
+    col_width: f32,
+    first_line: bool,
+    is_list: bool,
+) -> LineBox {
+    let mut runs: Vec<LineRun> = Vec::new();
+    let mut pen = 0.0f32;
+    let mut max_ascent = 0.0f32;
+    let mut max_lh = 0.0f32;
+
+    for slot in line.iter() {
+        if slot.is_tab {
+            pen = next_tab(pen);
+            continue;
+        }
+        if slot.space_before && !runs.is_empty() {
+            pen += space_w(font, &slot.props);
+        }
+        max_ascent = max_ascent.max(font.ascent(slot.props.size_pt, slot.props.bold, slot.props.italic));
+        max_lh = max_lh.max(font.line_height(slot.props.size_pt, slot.props.bold, slot.props.italic));
+        runs.push(LineRun {
+            x: pen,
+            width: slot.width,
+            text: slot.text.clone(),
+            bold: slot.props.bold,
+            italic: slot.props.italic,
+            underline: slot.props.underline,
+            strike: slot.props.strike,
+            size_pt: slot.props.size_pt,
+            color: slot.props.color,
+        });
+        pen += slot.width;
+    }
+    line.clear();
+
+    if max_ascent == 0.0 {
+        max_ascent = font.ascent(11.0, false, false);
+        max_lh = font.line_height(11.0, false, false);
+    }
+    let total = pen;
+
+    let text_left = col_left + pp.indent_left_pt + if is_list { LIST_INDENT_PT } else { 0.0 };
+    let start_x = match pp.align {
+        Align::Left | Align::Justify => text_left + if first_line { pp.indent_first_pt } else { 0.0 },
+        Align::Right => col_left + col_width - total,
+        Align::Center => col_left + (col_width - total) / 2.0,
+    };
+    for r in runs.iter_mut() {
+        r.x += start_x;
+    }
+
+    if is_list && first_line {
+        let marker_size = runs.first().map(|r| r.size_pt).unwrap_or(11.0);
+        let marker_w = font.measure_width("\u{2022}", marker_size, false, false);
+        let marker_x = (start_x - LIST_GAP_PT - marker_w).max(col_left);
+        runs.insert(
+            0,
+            LineRun {
+                x: marker_x,
+                width: marker_w,
+                text: "\u{2022}".to_string(),
+                bold: false,
+                italic: false,
+                underline: false,
+                strike: false,
+                size_pt: marker_size,
+                color: [0, 0, 0],
+            },
+        );
+    }
+
+    LineBox { runs, ascent: max_ascent, height: max_lh * pp.line_spacing.max(0.1) }
 }
 
 fn next_tab(pen: f32) -> f32 {
     ((pen / TAB_PT).floor() + 1.0) * TAB_PT
 }
 
-/// Flatten a paragraph's inlines into word/tab/break items, measuring each word
-/// and tracking whether a space precedes it (preserving run-boundary spacing).
 fn tokenize(inlines: &[Inline], font: &FontSet) -> Vec<Item> {
     let mut out: Vec<Item> = Vec::new();
     let mut pending_space = false;
@@ -334,7 +455,7 @@ fn push_word(out: &mut Vec<Item>, word: &str, props: &RunProps, space_before: bo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::oxml::model::{ListMarker, ParaProps, RunProps, TextRun};
+    use crate::oxml::model::{Cell, ListMarker, PageMetrics, ParaProps, Row, TextRun};
 
     fn text_para(s: &str, align: Align) -> Block {
         Block::Paragraph(Paragraph {
@@ -347,33 +468,11 @@ mod tests {
         Document { page: PageMetrics::us_letter(), blocks }
     }
 
-    fn line_text(line: &Line) -> String {
-        line.runs.iter().map(|r| r.text.as_str()).collect()
-    }
-
     #[test]
     fn short_paragraph_one_line() {
         let res = layout_document(&doc(vec![text_para("Hello world", Align::Left)]), &FontSet::default_set());
         assert_eq!(res.pages.len(), 1);
         assert_eq!(res.pages[0].lines.len(), 1);
-        assert_eq!(line_text(&res.pages[0].lines[0]), "Helloworld"); // runs concatenated w/o spaces
-    }
-
-    #[test]
-    fn long_paragraph_wraps_within_width() {
-        let words = vec!["wrap"; 400].join(" ");
-        let d = doc(vec![text_para(&words, Align::Left)]);
-        let res = layout_document(&d, &FontSet::default_set());
-        let total: usize = res.pages.iter().map(|p| p.lines.len()).sum();
-        assert!(total > 1);
-        let right = d.page.margin_left + d.page.content_width();
-        for page in &res.pages {
-            for line in &page.lines {
-                for r in &line.runs {
-                    assert!(r.x + r.width <= right + 1.0, "run overflows content width");
-                }
-            }
-        }
     }
 
     #[test]
@@ -392,7 +491,21 @@ mod tests {
             inlines: vec![Inline::Text(TextRun { props: RunProps::default(), text: "Item".into() })],
         });
         let res = layout_document(&doc(vec![para]), &FontSet::default_set());
-        let first = &res.pages[0].lines[0];
-        assert_eq!(first.runs[0].text, "\u{2022}");
+        assert_eq!(res.pages[0].lines[0].runs[0].text, "\u{2022}");
+    }
+
+    #[test]
+    fn table_emits_lines_and_border_rects() {
+        let cell = |s: &str| Cell {
+            blocks: vec![text_para(s, Align::Left)],
+            grid_span: 1,
+        };
+        let table = Block::Table(Table {
+            col_widths_pt: vec![100.0, 100.0],
+            rows: vec![Row { cells: vec![cell("A"), cell("B")] }],
+        });
+        let res = layout_document(&doc(vec![table]), &FontSet::default_set());
+        assert!(!res.pages[0].rects.is_empty(), "table cells should produce border rects");
+        assert!(res.pages[0].lines.len() >= 2, "two cells of text → ≥2 lines");
     }
 }

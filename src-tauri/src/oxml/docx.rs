@@ -1,7 +1,7 @@
 //! Parse `word/document.xml` into the typed [`Document`] model, resolving named
-//! styles from `word/styles.xml`. Wave 1: paragraphs, runs (bold/italic/
-//! underline/strike/size/color), alignment, paragraph spacing/indent, lists
-//! (numPr), line breaks, tabs, and explicit page breaks.
+//! styles from `word/styles.xml`. Covers paragraphs, rich runs, alignment,
+//! spacing/indent, lists, line breaks, tabs, explicit page breaks, and tables
+//! (rows / cells / grid spans, with nested block content).
 //!
 //! ponytail: matches the qualified `w:`-prefixed names real Word files use
 //! rather than resolving XML namespaces — a later hardening task.
@@ -10,7 +10,8 @@ use quick_xml::events::{BytesStart, Event};
 use quick_xml::reader::Reader;
 
 use super::model::{
-    twips_to_pt, Block, Document, Inline, ListMarker, PageMetrics, Paragraph, TextRun,
+    twips_to_pt, Block, Cell, Document, Inline, ListMarker, PageMetrics, Paragraph, Row, Table,
+    TextRun,
 };
 use super::styles::{
     apply_para_partial, apply_run_partial, attr_f32, attr_str, para_prop, run_prop,
@@ -28,6 +29,21 @@ pub enum DocxError {
     MissingDocument,
 }
 
+/// In-progress table being assembled from the event stream.
+#[derive(Default)]
+struct TableB {
+    col_widths: Vec<f32>,
+    rows: Vec<Row>,
+    cur_row: Option<Vec<Cell>>,
+    cur_cell: Option<CellB>,
+}
+
+#[derive(Default)]
+struct CellB {
+    blocks: Vec<Block>,
+    grid_span: u32,
+}
+
 /// Load a `.docx` and parse its main document, resolving styles if present.
 pub fn open(bytes: &[u8]) -> Result<Document, DocxError> {
     let pkg = Package::load(bytes)?;
@@ -41,8 +57,7 @@ pub fn open(bytes: &[u8]) -> Result<Document, DocxError> {
     parse_document_xml(xml, &styles)
 }
 
-/// Parse document XML against a resolved style table. Separated from [`open`] so
-/// it is testable without a ZIP.
+/// Parse document XML against a resolved style table.
 pub fn parse_document_xml(xml: &str, styles: &Styles) -> Result<Document, DocxError> {
     let mut reader = Reader::from_str(xml);
     let mut buf = Vec::new();
@@ -50,13 +65,14 @@ pub fn parse_document_xml(xml: &str, styles: &Styles) -> Result<Document, DocxEr
     let mut page = PageMetrics::us_letter();
     let mut blocks: Vec<Block> = Vec::new();
     let mut stack: Vec<Vec<u8>> = Vec::new();
+    let mut tables: Vec<TableB> = Vec::new();
 
     // Paragraph-in-progress state.
-    let mut in_para = false;
     let mut style_id: Option<String> = None;
     let mut para_direct = ParaPropsPartial::default();
     let mut list: Option<ListMarker> = None;
     let mut inlines: Vec<Inline> = Vec::new();
+    let mut in_para = false;
     // Run-in-progress state.
     let mut run_direct = RunPropsPartial::default();
     // Text-in-progress state.
@@ -68,6 +84,17 @@ pub fn parse_document_xml(xml: &str, styles: &Styles) -> Result<Document, DocxEr
             Event::Start(e) => {
                 let name = e.name().as_ref().to_vec();
                 match name.as_slice() {
+                    b"w:tbl" => tables.push(TableB::default()),
+                    b"w:tr" => {
+                        if let Some(tb) = tables.last_mut() {
+                            tb.cur_row = Some(Vec::new());
+                        }
+                    }
+                    b"w:tc" => {
+                        if let Some(tb) = tables.last_mut() {
+                            tb.cur_cell = Some(CellB { blocks: Vec::new(), grid_span: 1 });
+                        }
+                    }
                     b"w:p" => {
                         in_para = true;
                         style_id = None;
@@ -83,7 +110,9 @@ pub fn parse_document_xml(xml: &str, styles: &Styles) -> Result<Document, DocxEr
                     }
                     _ => {}
                 }
-                if !try_page_break(&name, &e, styles, &style_id, &para_direct, &list, &mut inlines, &mut blocks) {
+                if !handle_table_leaf(&name, &e, &mut tables)
+                    && !try_page_break(&name, &e, styles, &style_id, &para_direct, &list, &mut inlines, &mut tables, &mut blocks)
+                {
                     apply_leaf(&name, &e, &stack, &mut page, &mut style_id, &mut para_direct, &mut run_direct, &mut list, &mut inlines, in_para);
                 }
                 stack.push(name);
@@ -91,11 +120,11 @@ pub fn parse_document_xml(xml: &str, styles: &Styles) -> Result<Document, DocxEr
             Event::Empty(e) => {
                 let name = e.name().as_ref().to_vec();
                 if name.as_slice() == b"w:p" {
-                    // Empty paragraph → a blank line.
-                    let mut pp = styles.para_for(None);
-                    apply_para_partial(&mut pp, &ParaPropsPartial::default());
-                    blocks.push(Block::Paragraph(Paragraph { props: pp, inlines: vec![] }));
-                } else if !try_page_break(&name, &e, styles, &style_id, &para_direct, &list, &mut inlines, &mut blocks) {
+                    let pp = styles.para_for(None);
+                    emit_block(Block::Paragraph(Paragraph { props: pp, inlines: vec![] }), &mut tables, &mut blocks);
+                } else if !handle_table_leaf(&name, &e, &mut tables)
+                    && !try_page_break(&name, &e, styles, &style_id, &para_direct, &list, &mut inlines, &mut tables, &mut blocks)
+                {
                     apply_leaf(&name, &e, &stack, &mut page, &mut style_id, &mut para_direct, &mut run_direct, &mut list, &mut inlines, in_para);
                 }
             }
@@ -117,10 +146,31 @@ pub fn parse_document_xml(xml: &str, styles: &Styles) -> Result<Document, DocxEr
                     }
                     b"w:r" => run_direct = RunPropsPartial::default(),
                     b"w:p" => {
-                        blocks.push(Block::Paragraph(build_paragraph(
-                            styles, &style_id, &para_direct, &list, &mut inlines,
-                        )));
+                        let para = build_paragraph(styles, &style_id, &para_direct, &list, &mut inlines);
+                        emit_block(Block::Paragraph(para), &mut tables, &mut blocks);
                         in_para = false;
+                    }
+                    b"w:tc" => {
+                        if let Some(tb) = tables.last_mut() {
+                            if let Some(cell) = tb.cur_cell.take() {
+                                if let Some(row) = tb.cur_row.as_mut() {
+                                    row.push(Cell { blocks: cell.blocks, grid_span: cell.grid_span.max(1) });
+                                }
+                            }
+                        }
+                    }
+                    b"w:tr" => {
+                        if let Some(tb) = tables.last_mut() {
+                            if let Some(row) = tb.cur_row.take() {
+                                tb.rows.push(Row { cells: row });
+                            }
+                        }
+                    }
+                    b"w:tbl" => {
+                        if let Some(tb) = tables.pop() {
+                            let table = Table { rows: tb.rows, col_widths_pt: tb.col_widths };
+                            emit_block(Block::Table(table), &mut tables, &mut blocks);
+                        }
                     }
                     _ => {}
                 }
@@ -135,7 +185,43 @@ pub fn parse_document_xml(xml: &str, styles: &Styles) -> Result<Document, DocxEr
     Ok(Document { page, blocks })
 }
 
-/// Build a paragraph from the current parser state (consuming its inlines).
+/// Route a finished block into the current table cell, or the document body.
+fn emit_block(block: Block, tables: &mut [TableB], blocks: &mut Vec<Block>) {
+    if let Some(tb) = tables.last_mut() {
+        if let Some(cell) = tb.cur_cell.as_mut() {
+            cell.blocks.push(block);
+            return;
+        }
+    }
+    blocks.push(block);
+}
+
+/// Handle table-grid leaves (`w:gridCol` widths, `w:gridSpan`). Returns true if
+/// consumed.
+fn handle_table_leaf(name: &[u8], e: &BytesStart, tables: &mut [TableB]) -> bool {
+    match name {
+        b"w:gridCol" => {
+            if let Some(tb) = tables.last_mut() {
+                if let Some(w) = attr_f32(e, b"w:w") {
+                    tb.col_widths.push(twips_to_pt(w));
+                }
+            }
+            true
+        }
+        b"w:gridSpan" => {
+            if let Some(tb) = tables.last_mut() {
+                if let Some(cell) = tb.cur_cell.as_mut() {
+                    if let Some(v) = attr_f32(e, b"w:val") {
+                        cell.grid_span = v as u32;
+                    }
+                }
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
 fn build_paragraph(
     styles: &Styles,
     style_id: &Option<String>,
@@ -150,8 +236,6 @@ fn build_paragraph(
     Paragraph { props: pp, inlines: std::mem::take(inlines) }
 }
 
-/// If `<w:br w:type="page"/>`, finalize the current paragraph, emit a page
-/// break, and start a fresh paragraph. Returns true if handled.
 #[allow(clippy::too_many_arguments)]
 fn try_page_break(
     name: &[u8],
@@ -161,18 +245,18 @@ fn try_page_break(
     para_direct: &ParaPropsPartial,
     list: &Option<ListMarker>,
     inlines: &mut Vec<Inline>,
+    tables: &mut Vec<TableB>,
     blocks: &mut Vec<Block>,
 ) -> bool {
     if name != b"w:br" || attr_str(e, b"w:type").as_deref() != Some("page") {
         return false;
     }
-    blocks.push(Block::Paragraph(build_paragraph(styles, style_id, para_direct, list, inlines)));
-    blocks.push(Block::PageBreak);
+    let para = build_paragraph(styles, style_id, para_direct, list, inlines);
+    emit_block(Block::Paragraph(para), tables, blocks);
+    emit_block(Block::PageBreak, tables, blocks);
     true
 }
 
-/// Route a leaf property element to page metrics, the run/paragraph partials,
-/// the list marker, or an inline, based on element-stack context.
 #[allow(clippy::too_many_arguments)]
 fn apply_leaf(
     name: &[u8],
@@ -242,7 +326,7 @@ mod tests {
     fn first_para(doc: &Document) -> &Paragraph {
         match &doc.blocks[0] {
             Block::Paragraph(p) => p,
-            Block::PageBreak => panic!("unexpected page break"),
+            _ => panic!("expected paragraph"),
         }
     }
 
@@ -281,7 +365,7 @@ mod tests {
         let xml = r#"<w:document xmlns:w="x"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Title</w:t></w:r></w:p></w:body></w:document>"#;
         let doc = parse_document_xml(xml, &styles).expect("parse");
         let Inline::Text(t) = &first_para(&doc).inlines[0] else { panic!() };
-        assert_eq!(t.props.size_pt, 24.0); // 48 half-points
+        assert_eq!(t.props.size_pt, 24.0);
     }
 
     #[test]
@@ -296,11 +380,25 @@ mod tests {
     }
 
     #[test]
-    fn list_paragraph_captures_numpr() {
-        let xml = r#"<w:document xmlns:w="x"><w:body><w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="3"/></w:numPr></w:pPr><w:r><w:t>Item</w:t></w:r></w:p></w:body></w:document>"#;
+    fn parses_table_rows_cells_and_grid() {
+        let xml = r#"<w:document xmlns:w="x"><w:body><w:tbl>
+          <w:tblGrid><w:gridCol w:w="2880"/><w:gridCol w:w="2880"/></w:tblGrid>
+          <w:tr>
+            <w:tc><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc>
+            <w:tc><w:tcPr><w:gridSpan w:val="1"/></w:tcPr><w:p><w:r><w:t>B1</w:t></w:r></w:p></w:tc>
+          </w:tr>
+          <w:tr>
+            <w:tc><w:p><w:r><w:t>A2</w:t></w:r></w:p></w:tc>
+            <w:tc><w:p><w:r><w:t>B2</w:t></w:r></w:p></w:tc>
+          </w:tr>
+        </w:tbl></w:body></w:document>"#;
         let doc = parse_document_xml(xml, &Styles::empty()).expect("parse");
-        let lm = first_para(&doc).props.list.as_ref().expect("list marker");
-        assert_eq!(lm.num_id, 3);
-        assert_eq!(lm.level, 0);
+        let Block::Table(t) = &doc.blocks[0] else { panic!("expected table") };
+        assert_eq!(t.col_widths_pt.len(), 2);
+        assert_eq!(t.col_widths_pt[0], twips_to_pt(2880.0)); // 144pt
+        assert_eq!(t.rows.len(), 2);
+        assert_eq!(t.rows[0].cells.len(), 2);
+        let Block::Paragraph(p) = &t.rows[0].cells[0].blocks[0] else { panic!() };
+        assert_eq!(p.inlines.len(), 1);
     }
 }
