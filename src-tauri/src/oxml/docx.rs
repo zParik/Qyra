@@ -463,7 +463,12 @@ fn try_page_break(
     numbering: &Numbering,
     counters: &mut Counters,
 ) -> bool {
-    if name != b"w:br" || attr_str(e, b"w:type").as_deref() != Some("page") {
+    // A manual page break (<w:br w:type="page"/>) or Word's rendered-break hint
+    // (<w:lastRenderedPageBreak/>) both split the page. Honoring the latter makes
+    // a viewer's pagination match how Word laid the document out.
+    let is_manual = name == b"w:br" && attr_str(e, b"w:type").as_deref() == Some("page");
+    let is_rendered = name == b"w:lastRenderedPageBreak";
+    if !is_manual && !is_rendered {
         return false;
     }
     let para = build_paragraph(styles, style_id, para_direct, list, inlines, numbering, counters);

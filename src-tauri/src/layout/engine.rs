@@ -596,6 +596,22 @@ mod tests {
     }
 
     #[test]
+    fn long_document_paginates() {
+        let blocks: Vec<Block> = (0..300)
+            .map(|i| text_para(&format!("Paragraph {i} with enough words to fill a full line across the page width nicely"), Align::Left))
+            .collect();
+        let res = layout_document(&doc(blocks), &FontSet::default_set());
+        println!("LONG_DOC_PAGES: {}", res.pages.len());
+        let bottom = PageMetrics::us_letter().height - PageMetrics::us_letter().margin_bottom;
+        for page in &res.pages {
+            for line in &page.lines {
+                assert!(line.baseline_y <= bottom + 1.0, "line past content bottom: {}", line.baseline_y);
+            }
+        }
+        assert!(res.pages.len() > 1, "300 paragraphs must span multiple pages");
+    }
+
+    #[test]
     fn explicit_page_break_forces_new_page() {
         let res = layout_document(
             &doc(vec![text_para("Top", Align::Left), Block::PageBreak, text_para("Next", Align::Left)]),

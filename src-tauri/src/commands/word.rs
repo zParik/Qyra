@@ -60,6 +60,15 @@ fn load_layout(engine: &WordEngine, path: &str) -> AppResult<Arc<LayoutResult>> 
     let bytes = std::fs::read(path)?;
     let doc = crate::oxml::docx::open(&bytes).map_err(|e| AppError::Invalid(e.to_string()))?;
     let layout = Arc::new(layout_document(&doc, &engine.font));
+    eprintln!(
+        "[docx] {} body blocks, page {:.0}x{:.0}pt, header={} footer={} -> {} pages",
+        doc.blocks.len(),
+        doc.page.width,
+        doc.page.height,
+        doc.header.len(),
+        doc.footer.len(),
+        layout.pages.len(),
+    );
     if let Ok(mut map) = engine.docs.lock() {
         map.insert(path.to_string(), layout.clone());
     }
