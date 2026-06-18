@@ -329,7 +329,7 @@ fn paragraph_lineboxes(p: &Paragraph, font: &FontSet, col_left: f32, col_width: 
                 let space = if space_before && !line.is_empty() { space_w(font, &props) } else { 0.0 };
                 let avail = avail_for(&p.props, first_line, is_list, col_width);
                 if !line.is_empty() && line_w + space + width > avail {
-                    boxes.push(commit_linebox(&mut line, &p.props, font, col_left, col_width, first_line, is_list));
+                    boxes.push(commit_linebox(&mut line, &p.props, font, col_left, col_width, first_line, is_list, false));
                     first_line = false;
                     line_w = width;
                     line.push(Slot { text, props, width, space_before: false, is_tab: false });
@@ -343,13 +343,13 @@ fn paragraph_lineboxes(p: &Paragraph, font: &FontSet, col_left: f32, col_width: 
                 line.push(Slot { text: String::new(), props: RunProps::default(), width: 0.0, space_before: false, is_tab: true });
             }
             Item::Break => {
-                boxes.push(commit_linebox(&mut line, &p.props, font, col_left, col_width, first_line, is_list));
+                boxes.push(commit_linebox(&mut line, &p.props, font, col_left, col_width, first_line, is_list, false));
                 first_line = false;
                 line_w = 0.0;
             }
             Item::Image { width, height, data } => {
                 if !line.is_empty() {
-                    boxes.push(commit_linebox(&mut line, &p.props, font, col_left, col_width, first_line, is_list));
+                    boxes.push(commit_linebox(&mut line, &p.props, font, col_left, col_width, first_line, is_list, false));
                     first_line = false;
                     line_w = 0.0;
                 }
@@ -370,7 +370,7 @@ fn paragraph_lineboxes(p: &Paragraph, font: &FontSet, col_left: f32, col_width: 
         }
     }
     if !line.is_empty() {
-        boxes.push(commit_linebox(&mut line, &p.props, font, col_left, col_width, first_line, is_list));
+        boxes.push(commit_linebox(&mut line, &p.props, font, col_left, col_width, first_line, is_list, true));
     }
     boxes
 }
@@ -396,6 +396,7 @@ fn commit_linebox(
     col_width: f32,
     first_line: bool,
     is_list: bool,
+    is_last: bool,
 ) -> LineBox {
     let mut runs: Vec<LineRun> = Vec::new();
     let mut pen = 0.0f32;
@@ -441,6 +442,17 @@ fn commit_linebox(
     };
     for r in runs.iter_mut() {
         r.x += start_x;
+    }
+
+    // Justify non-final lines by spreading slack across word gaps.
+    if matches!(pp.align, Align::Justify) && !is_last && runs.len() > 1 {
+        let slack = (col_left + col_width) - (start_x + total);
+        if slack > 0.0 {
+            let n = runs.len();
+            for (i, r) in runs.iter_mut().enumerate() {
+                r.x += slack * (i as f32) / ((n - 1) as f32);
+            }
+        }
     }
 
     if is_list && first_line {

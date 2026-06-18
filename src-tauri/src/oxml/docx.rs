@@ -194,6 +194,11 @@ pub fn parse_document_xml(xml: &str, styles: &Styles, media: &MediaMap) -> Resul
                         if !text.is_empty() {
                             let mut rp = styles.run_for(style_id.as_deref());
                             apply_run_partial(&mut rp, &run_direct);
+                            // A run inside <w:hyperlink> renders as a link.
+                            if stack.iter().any(|n| n.as_slice() == b"w:hyperlink") {
+                                rp.color = [0, 0, 238];
+                                rp.underline = true;
+                            }
                             inlines.push(Inline::Text(TextRun { props: rp, text: std::mem::take(&mut text) }));
                         }
                     }
