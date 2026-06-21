@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   openWord, renderWordPage, replaceInWord,
-  getWordParagraphs, setWordParagraph, type WordDocInfo,
+  getWordParagraphs, setWordParagraph, getWordHtml, type WordDocInfo,
 } from "../lib/tauri";
 import { UI } from "../lib/tokens";
 
@@ -32,16 +32,17 @@ export default function WordViewer() {
   const [status, setStatus] = useState<string | null>(null);
 
   const [editing, setEditing] = useState(false);
-  const [paras, setParas] = useState<string[]>([]);
-  const [draft, setDraft] = useState<string[]>([]);
+  const [origParas, setOrigParas] = useState<string[]>([]);
+  const [editHtml, setEditHtml] = useState("");
   const [savingAll, setSavingAll] = useState(false);
+  const editRef = useRef<HTMLDivElement>(null);
 
   async function enterEdit() {
     if (!path) return;
     try {
-      const ps = await getWordParagraphs(path);
-      setParas(ps);
-      setDraft([...ps]);
+      const [html, ps] = await Promise.all([getWordHtml(path), getWordParagraphs(path)]);
+      setOrigParas(ps);
+      setEditHtml(html);
       setEditing(true);
       setStatus(null);
       setError(null);
@@ -50,20 +51,35 @@ export default function WordViewer() {
     }
   }
 
+  // Inject the document HTML into the contenteditable surface once per edit.
+  useEffect(() => {
+    if (editing && editRef.current) {
+      editRef.current.innerHTML = editHtml;
+    }
+  }, [editing, editHtml]);
+
   async function saveAll() {
-    if (!path || savingAll) return;
+    if (!path || savingAll || !editRef.current) return;
     setSavingAll(true);
     setError(null);
     try {
+      const edited: Record<number, string> = {};
+      editRef.current.querySelectorAll<HTMLElement>("[data-p]").forEach((n) => {
+        const idx = parseInt(n.getAttribute("data-p") || "-1", 10);
+        if (idx < 0) return;
+        const clone = n.cloneNode(true) as HTMLElement;
+        clone.querySelectorAll(".qyra-marker, .qyra-tab").forEach((m) => m.remove());
+        edited[idx] = clone.textContent || "";
+      });
       let changed = 0;
-      for (let i = 0; i < draft.length; i++) {
-        if (draft[i] !== paras[i]) {
-          await setWordParagraph(path, i, draft[i]!, path);
+      for (let i = 0; i < origParas.length; i++) {
+        if (i in edited && edited[i] !== origParas[i]) {
+          await setWordParagraph(path, i, edited[i]!, path);
           changed++;
         }
       }
       setEditing(false);
-      setStatus(changed ? `Saved ${changed} paragraph edit${changed === 1 ? "" : "s"}.` : "No changes.");
+      setStatus(changed ? `Saved ${changed} edit${changed === 1 ? "" : "s"}.` : "No changes.");
       setVersion((v) => v + 1);
     } catch (e) {
       setError(String(e));
@@ -229,39 +245,28 @@ export default function WordViewer() {
         )}
 
         {editing ? (
-          <div className="flex flex-col" style={{ gap: 10, maxWidth: 820, margin: "0 auto" }}>
-            <div style={{ color: "var(--fg2)", fontSize: 12 }}>
-              Editing body paragraphs (text only — a paragraph's mixed formatting collapses to its first run).
-              Changed paragraphs are outlined; “Save all” writes them back losslessly.
+          <div style={{ maxWidth: 860, margin: "0 auto" }}>
+            <div style={{ color: "var(--fg2)", fontSize: 12, marginBottom: 10 }}>
+              Click anywhere and type — like a document. “Save all” writes edited paragraph text back losslessly.
+              Structural changes (new paragraphs, tables, images) aren’t saved yet.
             </div>
-            {draft.map((t, i) => (
-              <textarea
-                key={i}
-                value={t}
-                onChange={(e) =>
-                  setDraft((d) => {
-                    const n = [...d];
-                    n[i] = e.target.value;
-                    return n;
-                  })
-                }
-                rows={Math.min(8, Math.max(1, Math.ceil((t.length || 1) / 90)))}
-                style={{
-                  width: "100%",
-                  background: "var(--bg1)",
-                  color: "var(--fg0)",
-                  border: `1px solid ${t !== paras[i] ? "var(--accent, #3b6ea5)" : "var(--line)"}`,
-                  borderRadius: 6,
-                  padding: "6px 9px",
-                  fontFamily: UI,
-                  fontSize: 13,
-                  resize: "vertical",
-                }}
-              />
-            ))}
-            {draft.length === 0 && (
-              <div style={{ color: "var(--fg2)", fontSize: 13 }}>No editable body paragraphs found.</div>
-            )}
+            <div
+              ref={editRef}
+              contentEditable
+              suppressContentEditableWarning
+              spellCheck={false}
+              style={{
+                background: "#fff",
+                color: "#111",
+                padding: "56px 64px",
+                minHeight: 500,
+                boxShadow: "0 1px 6px rgba(0,0,0,0.25)",
+                borderRadius: 2,
+                outline: "none",
+                fontFamily: "Arial, Helvetica, sans-serif",
+                lineHeight: 1.3,
+              }}
+            />
           </div>
         ) : (
           <div className="flex flex-col items-center" style={{ gap: 20 }}>

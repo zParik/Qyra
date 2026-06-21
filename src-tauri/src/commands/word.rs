@@ -153,6 +153,18 @@ pub async fn replace_in_word(
     Ok(output)
 }
 
+/// Render the document body to styled HTML for the in-place editor surface.
+#[tauri::command]
+pub async fn get_word_html(path: String) -> AppResult<String> {
+    tokio::task::spawn_blocking(move || -> AppResult<String> {
+        let bytes = std::fs::read(&path)?;
+        let doc = crate::oxml::docx::open(&bytes).map_err(|e| AppError::Invalid(e.to_string()))?;
+        Ok(crate::oxml::html::to_html(&doc))
+    })
+    .await
+    .map_err(|e| AppError::Other(e.to_string()))?
+}
+
 /// The text of each top-level body paragraph, for paragraph-level editing.
 #[tauri::command]
 pub async fn get_word_paragraphs(path: String) -> AppResult<Vec<String>> {

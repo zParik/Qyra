@@ -14,6 +14,7 @@
 
 pub mod docx;
 pub mod editor;
+pub mod html;
 pub mod model;
 pub mod numbering;
 pub mod styles;

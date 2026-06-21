@@ -210,6 +210,10 @@ export const replaceInWord = (path: string, find: string, replace: string, outpu
 export const getWordParagraphs = (path: string) =>
   invoke<string[]>("get_word_paragraphs", { path });
 
+/** Styled HTML of the document body for the contenteditable editing surface. */
+export const getWordHtml = (path: string) =>
+  invoke<string>("get_word_html", { path });
+
 /** Replace body paragraph `index`'s text and save to `output` (lossless). */
 export const setWordParagraph = (path: string, index: number, text: string, output: string) =>
   invoke<string>("set_word_paragraph", { path, index, text, output });
