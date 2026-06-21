@@ -212,6 +212,7 @@ pub fn parse_document_xml(
     // page break after the paragraph). ponytail: treats every in-pPr section
     // break as next-page; the rarer "continuous" type also breaks here.
     let mut para_sectpr_break = false;
+    let mut cur_tab_stops: Vec<f32> = Vec::new();
 
     // Paragraph-in-progress state.
     let mut style_id: Option<String> = None;
@@ -249,6 +250,7 @@ pub fn parse_document_xml(
                         inlines.clear();
                         run_direct = RunPropsPartial::default();
                         para_sectpr_break = false;
+                        cur_tab_stops.clear();
                     }
                     b"w:sectPr" if stack.iter().any(|n| n.as_slice() == b"w:pPr") => {
                         para_sectpr_break = true;
@@ -262,9 +264,9 @@ pub fn parse_document_xml(
                 }
                 if !handle_table_leaf(&name, &e, &mut tables)
                     && !handle_image_leaf(&name, &e, media, &mut cur_ext, &mut inlines, in_para)
-                    && !try_page_break(&name, &e, styles, &style_id, &para_direct, &list, &mut inlines, &mut tables, &mut blocks, numbering, &mut counters)
+                    && !try_page_break(&name, &e, styles, &style_id, &para_direct, &list, &mut inlines, &mut tables, &mut blocks, numbering, &mut counters, &cur_tab_stops)
                 {
-                    apply_leaf(&name, &e, &stack, &mut page, &mut style_id, &mut para_direct, &mut run_direct, &mut list, &mut inlines, in_para);
+                    apply_leaf(&name, &e, &stack, &mut page, &mut style_id, &mut para_direct, &mut run_direct, &mut list, &mut inlines, &mut cur_tab_stops, in_para);
                 }
                 stack.push(name);
             }
@@ -275,9 +277,9 @@ pub fn parse_document_xml(
                     emit_block(Block::Paragraph(Paragraph { props: pp, inlines: vec![] }), &mut tables, &mut blocks);
                 } else if !handle_table_leaf(&name, &e, &mut tables)
                     && !handle_image_leaf(&name, &e, media, &mut cur_ext, &mut inlines, in_para)
-                    && !try_page_break(&name, &e, styles, &style_id, &para_direct, &list, &mut inlines, &mut tables, &mut blocks, numbering, &mut counters)
+                    && !try_page_break(&name, &e, styles, &style_id, &para_direct, &list, &mut inlines, &mut tables, &mut blocks, numbering, &mut counters, &cur_tab_stops)
                 {
-                    apply_leaf(&name, &e, &stack, &mut page, &mut style_id, &mut para_direct, &mut run_direct, &mut list, &mut inlines, in_para);
+                    apply_leaf(&name, &e, &stack, &mut page, &mut style_id, &mut para_direct, &mut run_direct, &mut list, &mut inlines, &mut cur_tab_stops, in_para);
                 }
             }
             Event::Text(e) => {
@@ -303,7 +305,7 @@ pub fn parse_document_xml(
                     }
                     b"w:r" => run_direct = RunPropsPartial::default(),
                     b"w:p" => {
-                        let para = build_paragraph(styles, &style_id, &para_direct, &list, &mut inlines, numbering, &mut counters);
+                        let para = build_paragraph(styles, &style_id, &para_direct, &list, &mut inlines, numbering, &mut counters, &cur_tab_stops);
                         emit_block(Block::Paragraph(para), &mut tables, &mut blocks);
                         if para_sectpr_break {
                             emit_block(Block::PageBreak, &mut tables, &mut blocks);
@@ -425,6 +427,7 @@ fn build_paragraph(
     inlines: &mut Vec<Inline>,
     numbering: &Numbering,
     counters: &mut Counters,
+    tab_stops: &[f32],
 ) -> Paragraph {
     let mut pp = styles.para_for(style_id.as_deref());
     apply_para_partial(&mut pp, para_direct);
@@ -432,6 +435,8 @@ fn build_paragraph(
     if let Some(lm) = list {
         pp.list_marker = Some(compute_marker(numbering, counters, lm.num_id, lm.level));
     }
+    pp.tab_stops = tab_stops.to_vec();
+    pp.tab_stops.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     pp.style_id = style_id.clone();
     Paragraph { props: pp, inlines: std::mem::take(inlines) }
 }
@@ -474,6 +479,7 @@ fn try_page_break(
     blocks: &mut Vec<Block>,
     numbering: &Numbering,
     counters: &mut Counters,
+    tab_stops: &[f32],
 ) -> bool {
     // Only a manual page break is a hard break. <w:lastRenderedPageBreak/> is
     // just a hint of where Word last broke; honoring it double-breaks against our
@@ -481,7 +487,7 @@ fn try_page_break(
     if name != b"w:br" || attr_str(e, b"w:type").as_deref() != Some("page") {
         return false;
     }
-    let para = build_paragraph(styles, style_id, para_direct, list, inlines, numbering, counters);
+    let para = build_paragraph(styles, style_id, para_direct, list, inlines, numbering, counters, tab_stops);
     emit_block(Block::Paragraph(para), tables, blocks);
     emit_block(Block::PageBreak, tables, blocks);
     true
@@ -498,6 +504,7 @@ fn apply_leaf(
     run_direct: &mut RunPropsPartial,
     list: &mut Option<ListMarker>,
     inlines: &mut Vec<Inline>,
+    tab_stops: &mut Vec<f32>,
     in_para: bool,
 ) {
     let has = |n: &[u8]| stack.iter().any(|x| x.as_slice() == n);
@@ -542,7 +549,14 @@ fn apply_leaf(
                 page.margin_left = twips_to_pt(v);
             }
         }
-        b"w:tab" if in_para => inlines.push(Inline::Tab),
+        // A tab-stop definition inside <w:tabs> (not a tab character).
+        b"w:tab" if has(b"w:tabs") => {
+            if let Some(pos) = attr_f32(e, b"w:pos") {
+                tab_stops.push(twips_to_pt(pos));
+            }
+        }
+        // A tab character inside a run.
+        b"w:tab" if has(b"w:r") => inlines.push(Inline::Tab),
         b"w:br" if in_para => inlines.push(Inline::LineBreak),
         _ => {}
     }

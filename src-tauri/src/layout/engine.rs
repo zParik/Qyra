@@ -369,7 +369,7 @@ fn paragraph_lineboxes(p: &Paragraph, font: &FontSet, col_left: f32, col_width: 
                 }
             }
             Item::Tab => {
-                line_w = next_tab(line_w);
+                line_w = next_tab(line_w, &p.props.tab_stops);
                 line.push(Slot { text: String::new(), props: RunProps::default(), width: 0.0, space_before: false, is_tab: true });
             }
             Item::Break => {
@@ -464,7 +464,7 @@ fn commit_linebox(
 
     for slot in line.iter() {
         if slot.is_tab {
-            pen = next_tab(pen);
+            pen = next_tab(pen, &pp.tab_stops);
             continue;
         }
         if slot.space_before && !runs.is_empty() {
@@ -518,7 +518,14 @@ fn commit_linebox(
     LineBox { runs, ascent: max_ascent, height: max_lh * pp.line_spacing.max(0.1), images: vec![] }
 }
 
-fn next_tab(pen: f32) -> f32 {
+/// Next tab position after `pen`: the first document tab stop beyond it, else
+/// the next 36pt default-grid stop.
+fn next_tab(pen: f32, stops: &[f32]) -> f32 {
+    for &s in stops {
+        if s > pen + 0.01 {
+            return s;
+        }
+    }
     ((pen / TAB_PT).floor() + 1.0) * TAB_PT
 }
 

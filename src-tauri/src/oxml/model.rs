@@ -72,6 +72,8 @@ pub struct ParaProps {
     pub list: Option<ListMarker>,
     /// Resolved list-marker text (bullet or ordered number); set by the parser.
     pub list_marker: Option<String>,
+    /// Tab-stop positions in points (sorted), from `w:tabs`.
+    pub tab_stops: Vec<f32>,
     pub style_id: Option<String>,
 }
 
@@ -86,6 +88,7 @@ impl Default for ParaProps {
             indent_first_pt: 0.0,
             list: None,
             list_marker: None,
+            tab_stops: Vec::new(),
             style_id: None,
         }
     }
