@@ -374,6 +374,8 @@ pub fn run() {
             word::open_word,
             word::render_word_page,
             word::replace_in_word,
+            word::get_word_paragraphs,
+            word::set_word_paragraph,
             links::add_link,
             links::remove_link,
             create::images_to_pdf,

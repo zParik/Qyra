@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { open } from "@tauri-apps/plugin-dialog";
-import { openWord, renderWordPage, replaceInWord, type WordDocInfo } from "../lib/tauri";
+import {
+  openWord, renderWordPage, replaceInWord,
+  getWordParagraphs, setWordParagraph, type WordDocInfo,
+} from "../lib/tauri";
 import { UI } from "../lib/tokens";
 
 const SCALE = 1.5; // device px per point (~108 DPI)
@@ -27,6 +30,47 @@ export default function WordViewer() {
   const [replace, setReplace] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+
+  const [editing, setEditing] = useState(false);
+  const [paras, setParas] = useState<string[]>([]);
+  const [draft, setDraft] = useState<string[]>([]);
+  const [savingAll, setSavingAll] = useState(false);
+
+  async function enterEdit() {
+    if (!path) return;
+    try {
+      const ps = await getWordParagraphs(path);
+      setParas(ps);
+      setDraft([...ps]);
+      setEditing(true);
+      setStatus(null);
+      setError(null);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function saveAll() {
+    if (!path || savingAll) return;
+    setSavingAll(true);
+    setError(null);
+    try {
+      let changed = 0;
+      for (let i = 0; i < draft.length; i++) {
+        if (draft[i] !== paras[i]) {
+          await setWordParagraph(path, i, draft[i]!, path);
+          changed++;
+        }
+      }
+      setEditing(false);
+      setStatus(changed ? `Saved ${changed} paragraph edit${changed === 1 ? "" : "s"}.` : "No changes.");
+      setVersion((v) => v + 1);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSavingAll(false);
+    }
+  }
 
   async function browse() {
     try {
@@ -103,6 +147,40 @@ export default function WordViewer() {
         <span style={{ fontWeight: 600, fontSize: 13.5 }}>{name ?? "Word viewer"}</span>
         {info && <span style={{ color: "var(--fg2)", fontSize: 12 }}>{info.pageCount} page{info.pageCount === 1 ? "" : "s"}</span>}
         <span style={{ flex: 1 }} />
+        {path && !editing && (
+          <button
+            onClick={enterEdit}
+            style={{
+              background: "var(--bg1)", border: "1px solid var(--line)", borderRadius: 6,
+              color: "var(--fg0)", cursor: "pointer", fontSize: 12.5, padding: "5px 12px",
+            }}
+          >
+            Edit text
+          </button>
+        )}
+        {path && editing && (
+          <>
+            <button
+              onClick={saveAll}
+              disabled={savingAll}
+              style={{
+                background: "var(--accent, #3b6ea5)", border: "1px solid var(--line)", borderRadius: 6,
+                color: "#fff", cursor: savingAll ? "default" : "pointer", fontSize: 12.5, padding: "5px 12px",
+              }}
+            >
+              {savingAll ? "Saving…" : "Save all"}
+            </button>
+            <button
+              onClick={() => setEditing(false)}
+              style={{
+                background: "transparent", border: "1px solid var(--line)", borderRadius: 6,
+                color: "var(--fg1)", cursor: "pointer", fontSize: 12.5, padding: "5px 12px",
+              }}
+            >
+              Cancel
+            </button>
+          </>
+        )}
         <button
           onClick={browse}
           style={{
@@ -114,12 +192,12 @@ export default function WordViewer() {
         </button>
       </header>
 
-      {path && (
+      {path && !editing && (
         <div
           className="flex items-center gap-2 shrink-0 flex-wrap"
           style={{ padding: "8px 14px", borderBottom: "1px solid var(--line2)" }}
         >
-          <span style={{ color: "var(--fg2)", fontSize: 12 }}>Edit:</span>
+          <span style={{ color: "var(--fg2)", fontSize: 12 }}>Find/replace:</span>
           <input style={inputStyle} placeholder="Find" value={find} onChange={(e) => setFind(e.target.value)} />
           <input style={inputStyle} placeholder="Replace with" value={replace} onChange={(e) => setReplace(e.target.value)} />
           <button
@@ -150,39 +228,76 @@ export default function WordViewer() {
           </div>
         )}
 
-        <div className="flex flex-col items-center" style={{ gap: 20 }}>
-          {pages.map((b64, i) => {
-            const size = info?.pages[i];
-            const wPx = size ? size.width * SCALE : 612 * SCALE;
-            const hPx = size ? size.height * SCALE : 792 * SCALE;
-            return (
-              <div
+        {editing ? (
+          <div className="flex flex-col" style={{ gap: 10, maxWidth: 820, margin: "0 auto" }}>
+            <div style={{ color: "var(--fg2)", fontSize: 12 }}>
+              Editing body paragraphs (text only — a paragraph's mixed formatting collapses to its first run).
+              Changed paragraphs are outlined; “Save all” writes them back losslessly.
+            </div>
+            {draft.map((t, i) => (
+              <textarea
                 key={i}
+                value={t}
+                onChange={(e) =>
+                  setDraft((d) => {
+                    const n = [...d];
+                    n[i] = e.target.value;
+                    return n;
+                  })
+                }
+                rows={Math.min(8, Math.max(1, Math.ceil((t.length || 1) / 90)))}
                 style={{
-                  width: wPx,
-                  maxWidth: "100%",
-                  aspectRatio: `${wPx} / ${hPx}`,
-                  background: "#fff",
-                  boxShadow: "0 1px 6px rgba(0,0,0,0.25)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  overflow: "hidden",
+                  width: "100%",
+                  background: "var(--bg1)",
+                  color: "var(--fg0)",
+                  border: `1px solid ${t !== paras[i] ? "var(--accent, #3b6ea5)" : "var(--line)"}`,
+                  borderRadius: 6,
+                  padding: "6px 9px",
+                  fontFamily: UI,
+                  fontSize: 13,
+                  resize: "vertical",
                 }}
-              >
-                {b64 ? (
-                  <img
-                    src={`data:image/png;base64,${b64}`}
-                    alt={`Page ${i + 1}`}
-                    style={{ width: "100%", height: "100%", display: "block" }}
-                  />
-                ) : (
-                  <span style={{ color: "#999", fontSize: 12 }}>Rendering page {i + 1}…</span>
-                )}
-              </div>
-            );
-          })}
-        </div>
+              />
+            ))}
+            {draft.length === 0 && (
+              <div style={{ color: "var(--fg2)", fontSize: 13 }}>No editable body paragraphs found.</div>
+            )}
+          </div>
+        ) : (
+          <div className="flex flex-col items-center" style={{ gap: 20 }}>
+            {pages.map((b64, i) => {
+              const size = info?.pages[i];
+              const wPx = size ? size.width * SCALE : 612 * SCALE;
+              const hPx = size ? size.height * SCALE : 792 * SCALE;
+              return (
+                <div
+                  key={i}
+                  style={{
+                    width: wPx,
+                    maxWidth: "100%",
+                    aspectRatio: `${wPx} / ${hPx}`,
+                    background: "#fff",
+                    boxShadow: "0 1px 6px rgba(0,0,0,0.25)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    overflow: "hidden",
+                  }}
+                >
+                  {b64 ? (
+                    <img
+                      src={`data:image/png;base64,${b64}`}
+                      alt={`Page ${i + 1}`}
+                      style={{ width: "100%", height: "100%", display: "block" }}
+                    />
+                  ) : (
+                    <span style={{ color: "#999", fontSize: 12 }}>Rendering page {i + 1}…</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

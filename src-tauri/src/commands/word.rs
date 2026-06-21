@@ -152,3 +152,41 @@ pub async fn replace_in_word(
     engine.invalidate(&output);
     Ok(output)
 }
+
+/// The text of each top-level body paragraph, for paragraph-level editing.
+#[tauri::command]
+pub async fn get_word_paragraphs(path: String) -> AppResult<Vec<String>> {
+    tokio::task::spawn_blocking(move || -> AppResult<Vec<String>> {
+        let bytes = std::fs::read(&path)?;
+        crate::oxml::editor::paragraph_texts_in_package(&bytes)
+            .map_err(|e| AppError::Invalid(e.to_string()))
+    })
+    .await
+    .map_err(|e| AppError::Other(e.to_string()))?
+}
+
+/// Replace body paragraph `index`'s text and save to `output` (lossless).
+#[tauri::command]
+pub async fn set_word_paragraph(
+    engine: tauri::State<'_, WordEngine>,
+    path: String,
+    index: usize,
+    text: String,
+    output: String,
+) -> AppResult<String> {
+    let in_path = path.clone();
+    let out_path = output.clone();
+    tokio::task::spawn_blocking(move || -> AppResult<()> {
+        let bytes = std::fs::read(&in_path)?;
+        let out = crate::oxml::editor::set_paragraph_in_package(&bytes, index, &text)
+            .map_err(|e| AppError::Invalid(e.to_string()))?;
+        std::fs::write(&out_path, &out)?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| AppError::Other(e.to_string()))??;
+
+    engine.invalidate(&path);
+    engine.invalidate(&output);
+    Ok(output)
+}

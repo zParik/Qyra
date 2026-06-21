@@ -44,6 +44,118 @@ pub fn replace_in_package(bytes: &[u8], find: &str, replace: &str) -> Result<Vec
     Ok(pkg.save()?)
 }
 
+/// The concatenated text of each top-level body paragraph (paragraphs inside
+/// tables are skipped). Index = position in this list, matching
+/// [`set_paragraph_in_package`].
+pub fn paragraph_texts_in_package(bytes: &[u8]) -> Result<Vec<String>, EditError> {
+    let pkg = Package::load(bytes)?;
+    let part = pkg.part("word/document.xml").ok_or(EditError::MissingDocument)?;
+    let xml = std::str::from_utf8(&part.data).map_err(|_| EditError::MissingDocument)?;
+
+    let mut reader = Reader::from_str(xml);
+    let mut buf = Vec::new();
+    let mut out: Vec<String> = Vec::new();
+    let mut tbl_depth = 0i32;
+    let mut in_p = false;
+    let mut in_t = false;
+    let mut cur = String::new();
+
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Start(e) => match e.name().as_ref() {
+                b"w:tbl" => tbl_depth += 1,
+                b"w:p" if tbl_depth == 0 => {
+                    in_p = true;
+                    cur.clear();
+                }
+                b"w:t" if in_p => in_t = true,
+                _ => {}
+            },
+            Event::Empty(e) if e.name().as_ref() == b"w:p" && tbl_depth == 0 => {
+                out.push(String::new());
+            }
+            Event::Text(e) if in_t => {
+                cur.push_str(&e.unescape().unwrap_or_default());
+            }
+            Event::End(e) => match e.name().as_ref() {
+                b"w:tbl" => tbl_depth -= 1,
+                b"w:t" => in_t = false,
+                b"w:p" if tbl_depth == 0 && in_p => {
+                    out.push(std::mem::take(&mut cur));
+                    in_p = false;
+                }
+                _ => {}
+            },
+            Event::Eof => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(out)
+}
+
+/// Replace the text of top-level body paragraph `index` with `text`: the new
+/// text goes into the paragraph's first `w:t`, later `w:t`s are emptied.
+/// Lossless for everything except intra-paragraph run formatting (which collapses
+/// to the first run). Returns the repackaged `.docx` bytes.
+pub fn set_paragraph_in_package(bytes: &[u8], index: usize, text: &str) -> Result<Vec<u8>, EditError> {
+    let mut pkg = Package::load(bytes)?;
+    let idx = pkg
+        .parts
+        .iter()
+        .position(|p| p.name == "word/document.xml")
+        .ok_or(EditError::MissingDocument)?;
+    let xml = std::str::from_utf8(&pkg.parts[idx].data).map_err(|_| EditError::MissingDocument)?;
+
+    let mut reader = Reader::from_str(xml);
+    let mut writer = Writer::new(Cursor::new(Vec::new()));
+    let mut buf = Vec::new();
+    let mut tbl_depth = 0i32;
+    let mut p_index = 0usize;
+    let mut in_target = false;
+    let mut in_t = false;
+    let mut first_t_done = false;
+
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Start(e) => {
+                match e.name().as_ref() {
+                    b"w:tbl" => tbl_depth += 1,
+                    b"w:p" if tbl_depth == 0 => {
+                        in_target = p_index == index;
+                        p_index += 1;
+                        first_t_done = false;
+                    }
+                    b"w:t" if in_target => in_t = true,
+                    _ => {}
+                }
+                writer.write_event(Event::Start(e))?;
+            }
+            Event::End(e) => {
+                match e.name().as_ref() {
+                    b"w:tbl" => tbl_depth -= 1,
+                    b"w:t" => in_t = false,
+                    b"w:p" if tbl_depth == 0 => in_target = false,
+                    _ => {}
+                }
+                writer.write_event(Event::End(e))?;
+            }
+            Event::Text(e) if in_t => {
+                // First w:t of the target paragraph carries all the new text.
+                let replacement = if first_t_done { "" } else { text };
+                first_t_done = true;
+                writer.write_event(Event::Text(BytesText::new(replacement)))?;
+            }
+            Event::Eof => break,
+            other => writer.write_event(other)?,
+        }
+        buf.clear();
+    }
+
+    pkg.parts[idx].data = writer.into_inner().into_inner();
+    Ok(pkg.save()?)
+}
+
 /// Echo `document.xml`, transforming the text inside each `w:t` with `f`.
 fn rewrite_text(xml: &str, f: impl Fn(&str) -> String) -> Result<String, EditError> {
     let mut reader = Reader::from_str(xml);

@@ -206,6 +206,14 @@ export const renderWordPage = (path: string, page: number, scale: number) =>
 export const replaceInWord = (path: string, find: string, replace: string, output: string) =>
   invoke<string>("replace_in_word", { path, find, replace, output });
 
+/** Text of each top-level body paragraph (index-aligned with setWordParagraph). */
+export const getWordParagraphs = (path: string) =>
+  invoke<string[]>("get_word_paragraphs", { path });
+
+/** Replace body paragraph `index`'s text and save to `output` (lossless). */
+export const setWordParagraph = (path: string, index: number, text: string, output: string) =>
+  invoke<string>("set_word_paragraph", { path, index, text, output });
+
 export const setStarred = (path: string, name: string, starred: boolean) =>
   invoke<void>("set_starred", { path, name, starred });
 
