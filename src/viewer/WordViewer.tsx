@@ -3,9 +3,48 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   openWord, renderWordPage, replaceInWord,
-  getWordParagraphs, setWordParagraph, getWordHtml, type WordDocInfo,
+  getWordHtml, setWordParagraphRuns, type WordDocInfo, type RunEdit,
 } from "../lib/tauri";
 import { UI } from "../lib/tokens";
+
+function rgbToHex(rgb: string): string | undefined {
+  const m = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  if (!m) return undefined;
+  const hex = (n: string) => parseInt(n, 10).toString(16).padStart(2, "0");
+  return (hex(m[1]!) + hex(m[2]!) + hex(m[3]!)).toUpperCase();
+}
+
+function pxToPt(px: string): number | undefined {
+  const v = parseFloat(px);
+  return Number.isNaN(v) ? undefined : Math.round((v / 1.333) * 10) / 10;
+}
+
+/** Serialize a paragraph element's text into formatting-grouped runs. */
+function collectRuns(p: HTMLElement): RunEdit[] {
+  const runs: RunEdit[] = [];
+  const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+  let node: Node | null;
+  while ((node = walker.nextNode())) {
+    const parent = node.parentElement;
+    if (!parent) continue;
+    if (parent.closest(".qyra-marker") || parent.closest(".qyra-tab")) continue;
+    const text = node.textContent || "";
+    if (!text) continue;
+    const cs = getComputedStyle(parent);
+    const bold = cs.fontWeight === "bold" || parseInt(cs.fontWeight, 10) >= 600;
+    const italic = cs.fontStyle === "italic";
+    const underline = (cs.textDecorationLine || cs.textDecoration || "").includes("underline");
+    const color = rgbToHex(cs.color);
+    const size_pt = pxToPt(cs.fontSize);
+    const last = runs[runs.length - 1];
+    if (last && !!last.bold === bold && !!last.italic === italic && !!last.underline === underline && last.color === color && last.size_pt === size_pt) {
+      last.text += text;
+    } else {
+      runs.push({ text, bold, italic, underline, color, size_pt });
+    }
+  }
+  return runs;
+}
 
 const SCALE = 1.5; // device px per point (~108 DPI)
 
@@ -32,16 +71,24 @@ export default function WordViewer() {
   const [status, setStatus] = useState<string | null>(null);
 
   const [editing, setEditing] = useState(false);
-  const [origParas, setOrigParas] = useState<string[]>([]);
   const [editHtml, setEditHtml] = useState("");
   const [savingAll, setSavingAll] = useState(false);
   const editRef = useRef<HTMLDivElement>(null);
+  const origHtmlRef = useRef<Record<number, string>>({});
 
   async function enterEdit() {
     if (!path) return;
     try {
-      const [html, ps] = await Promise.all([getWordHtml(path), getWordParagraphs(path)]);
-      setOrigParas(ps);
+      const html = await getWordHtml(path);
+      // Snapshot each paragraph's original innerHTML to detect edits on save.
+      const tmp = document.createElement("div");
+      tmp.innerHTML = html;
+      const map: Record<number, string> = {};
+      tmp.querySelectorAll<HTMLElement>("[data-p]").forEach((n) => {
+        const i = parseInt(n.getAttribute("data-p") || "-1", 10);
+        if (i >= 0) map[i] = n.innerHTML;
+      });
+      origHtmlRef.current = map;
       setEditHtml(html);
       setEditing(true);
       setStatus(null);
@@ -58,25 +105,23 @@ export default function WordViewer() {
     }
   }, [editing, editHtml]);
 
+  function format(cmd: "bold" | "italic" | "underline") {
+    document.execCommand(cmd);
+    editRef.current?.focus();
+  }
+
   async function saveAll() {
     if (!path || savingAll || !editRef.current) return;
     setSavingAll(true);
     setError(null);
     try {
-      const edited: Record<number, string> = {};
-      editRef.current.querySelectorAll<HTMLElement>("[data-p]").forEach((n) => {
-        const idx = parseInt(n.getAttribute("data-p") || "-1", 10);
-        if (idx < 0) return;
-        const clone = n.cloneNode(true) as HTMLElement;
-        clone.querySelectorAll(".qyra-marker, .qyra-tab").forEach((m) => m.remove());
-        edited[idx] = clone.textContent || "";
-      });
       let changed = 0;
-      for (let i = 0; i < origParas.length; i++) {
-        if (i in edited && edited[i] !== origParas[i]) {
-          await setWordParagraph(path, i, edited[i]!, path);
-          changed++;
-        }
+      for (const n of Array.from(editRef.current.querySelectorAll<HTMLElement>("[data-p]"))) {
+        const idx = parseInt(n.getAttribute("data-p") || "-1", 10);
+        if (idx < 0) continue;
+        if (n.innerHTML === origHtmlRef.current[idx]) continue; // unchanged → byte-preserved
+        await setWordParagraphRuns(path, idx, collectRuns(n), path);
+        changed++;
       }
       setEditing(false);
       setStatus(changed ? `Saved ${changed} edit${changed === 1 ? "" : "s"}.` : "No changes.");
@@ -246,9 +291,29 @@ export default function WordViewer() {
 
         {editing ? (
           <div style={{ maxWidth: 860, margin: "0 auto" }}>
-            <div style={{ color: "var(--fg2)", fontSize: 12, marginBottom: 10 }}>
-              Click anywhere and type — like a document. “Save all” writes edited paragraph text back losslessly.
-              Structural changes (new paragraphs, tables, images) aren’t saved yet.
+            <div className="flex items-center gap-1" style={{ marginBottom: 10 }}>
+              {([["bold", "B"], ["italic", "I"], ["underline", "U"]] as const).map(([cmd, label]) => (
+                <button
+                  key={cmd}
+                  onMouseDown={(e) => {
+                    e.preventDefault(); // keep the editor selection
+                    format(cmd);
+                  }}
+                  title={cmd}
+                  style={{
+                    width: 30, height: 28, background: "var(--bg1)", border: "1px solid var(--line)",
+                    borderRadius: 5, color: "var(--fg0)", cursor: "pointer", fontSize: 13,
+                    fontWeight: cmd === "bold" ? 700 : 400,
+                    fontStyle: cmd === "italic" ? "italic" : "normal",
+                    textDecoration: cmd === "underline" ? "underline" : "none",
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+              <span style={{ color: "var(--fg2)", fontSize: 12, marginLeft: 8 }}>
+                Click and type like a document. Bold/italic/underline persist on save; edited paragraphs keep formatting, untouched ones stay byte-identical. New paragraphs/tables not saved yet.
+              </span>
             </div>
             <div
               ref={editRef}

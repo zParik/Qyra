@@ -153,6 +153,33 @@ pub async fn replace_in_word(
     Ok(output)
 }
 
+/// Rich edit: replace body paragraph `index`'s runs (formatting-preserving) and
+/// save to `output`. Untouched paragraphs stay byte-identical.
+#[tauri::command]
+pub async fn set_word_paragraph_runs(
+    engine: tauri::State<'_, WordEngine>,
+    path: String,
+    index: usize,
+    runs: Vec<crate::oxml::editor::RunEdit>,
+    output: String,
+) -> AppResult<String> {
+    let in_path = path.clone();
+    let out_path = output.clone();
+    tokio::task::spawn_blocking(move || -> AppResult<()> {
+        let bytes = std::fs::read(&in_path)?;
+        let out = crate::oxml::editor::set_paragraph_runs_in_package(&bytes, index, &runs)
+            .map_err(|e| AppError::Invalid(e.to_string()))?;
+        std::fs::write(&out_path, &out)?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| AppError::Other(e.to_string()))??;
+
+    engine.invalidate(&path);
+    engine.invalidate(&output);
+    Ok(output)
+}
+
 /// Render the document body to styled HTML for the in-place editor surface.
 #[tauri::command]
 pub async fn get_word_html(path: String) -> AppResult<String> {

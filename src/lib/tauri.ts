@@ -214,6 +214,19 @@ export const getWordParagraphs = (path: string) =>
 export const getWordHtml = (path: string) =>
   invoke<string>("get_word_html", { path });
 
+export interface RunEdit {
+  text: string;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  color?: string;   // "RRGGBB"
+  size_pt?: number;
+}
+
+/** Rich edit: replace body paragraph `index`'s runs (keeps formatting), save. */
+export const setWordParagraphRuns = (path: string, index: number, runs: RunEdit[], output: string) =>
+  invoke<string>("set_word_paragraph_runs", { path, index, runs, output });
+
 /** Replace body paragraph `index`'s text and save to `output` (lossless). */
 export const setWordParagraph = (path: string, index: number, text: string, output: string) =>
   invoke<string>("set_word_paragraph", { path, index, text, output });

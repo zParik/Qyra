@@ -376,6 +376,7 @@ pub fn run() {
             word::replace_in_word,
             word::get_word_paragraphs,
             word::set_word_paragraph,
+            word::set_word_paragraph_runs,
             word::get_word_html,
             links::add_link,
             links::remove_link,
