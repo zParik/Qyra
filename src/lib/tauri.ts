@@ -229,6 +229,13 @@ export const setWordParagraphRuns = (
   path: string, index: number, runs: RunEdit[], align: string | null, output: string,
 ) => invoke<string>("set_word_paragraph_runs", { path, index, runs, align, output });
 
+export interface ParaEdit { runs: RunEdit[]; align?: string | null }
+
+/** Structural save: regenerate the whole body (add/remove/reorder paragraphs).
+ *  Rejected for documents containing tables. */
+export const saveWordBody = (path: string, paras: ParaEdit[], output: string) =>
+  invoke<string>("save_word_body", { path, paras, output });
+
 /** Replace body paragraph `index`'s text and save to `output` (lossless). */
 export const setWordParagraph = (path: string, index: number, text: string, output: string) =>
   invoke<string>("set_word_paragraph", { path, index, text, output });

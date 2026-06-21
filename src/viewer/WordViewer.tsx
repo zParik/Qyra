@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   openWord, renderWordPage, replaceInWord,
-  getWordHtml, setWordParagraphRuns, type WordDocInfo, type RunEdit,
+  getWordHtml, setWordParagraphRuns, saveWordBody, type WordDocInfo, type RunEdit,
 } from "../lib/tauri";
 import { UI } from "../lib/tokens";
 
@@ -109,6 +109,8 @@ export default function WordViewer() {
   useEffect(() => {
     if (editing && editRef.current) {
       editRef.current.innerHTML = editHtml;
+      // Make Enter create a <p> (so new paragraphs are top-level + serializable).
+      try { document.execCommand("defaultParagraphSeparator", false, "p"); } catch { /* ignore */ }
     }
   }, [editing, editHtml]);
 
@@ -122,17 +124,31 @@ export default function WordViewer() {
     setSavingAll(true);
     setError(null);
     try {
-      let changed = 0;
-      for (const n of Array.from(editRef.current.querySelectorAll<HTMLElement>("[data-p]"))) {
-        const idx = parseInt(n.getAttribute("data-p") || "-1", 10);
-        if (idx < 0) continue;
-        if (n.innerHTML === origHtmlRef.current[idx]) continue; // unchanged → byte-preserved
-        const align = mapAlign(getComputedStyle(n).textAlign);
-        await setWordParagraphRuns(path, idx, collectRuns(n), align, path);
-        changed++;
+      const topParas = Array.from(editRef.current.querySelectorAll<HTMLElement>(":scope > p"));
+      const origCount = Object.keys(origHtmlRef.current).length;
+
+      if (topParas.length !== origCount) {
+        // Paragraph count changed → structural full-body save (table-free only).
+        const paras = topParas.map((p) => ({
+          runs: collectRuns(p),
+          align: mapAlign(getComputedStyle(p).textAlign),
+        }));
+        await saveWordBody(path, paras, path);
+        setStatus(`Saved (${paras.length} paragraphs).`);
+      } else {
+        // Same structure → per-paragraph rich save (untouched paragraphs/tables preserved).
+        let changed = 0;
+        for (const n of Array.from(editRef.current.querySelectorAll<HTMLElement>("[data-p]"))) {
+          const idx = parseInt(n.getAttribute("data-p") || "-1", 10);
+          if (idx < 0) continue;
+          if (n.innerHTML === origHtmlRef.current[idx]) continue; // unchanged → byte-preserved
+          const align = mapAlign(getComputedStyle(n).textAlign);
+          await setWordParagraphRuns(path, idx, collectRuns(n), align, path);
+          changed++;
+        }
+        setStatus(changed ? `Saved ${changed} edit${changed === 1 ? "" : "s"}.` : "No changes.");
       }
       setEditing(false);
-      setStatus(changed ? `Saved ${changed} edit${changed === 1 ? "" : "s"}.` : "No changes.");
       setVersion((v) => v + 1);
     } catch (e) {
       setError(String(e));
@@ -340,7 +356,7 @@ export default function WordViewer() {
                 />
               ))}
               <span style={{ color: "var(--fg2)", fontSize: 12, marginLeft: 8 }}>
-                Type like a document — bold/italic/underline, alignment, and color persist on save (edited paragraphs); untouched ones stay byte-identical.
+                Type like a document. Formatting, alignment, color, and adding/removing paragraphs all save. (Structural edits unsupported in docs with tables.)
               </span>
             </div>
             <div

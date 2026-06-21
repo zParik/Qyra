@@ -181,6 +181,33 @@ pub async fn set_word_paragraph_runs(
     Ok(output)
 }
 
+/// Structural save: regenerate the whole body from `paras` (supports adding/
+/// removing/reordering paragraphs), preserving page geometry. Refuses docs with
+/// tables. Returns the output path.
+#[tauri::command]
+pub async fn save_word_body(
+    engine: tauri::State<'_, WordEngine>,
+    path: String,
+    paras: Vec<crate::oxml::editor::ParaEdit>,
+    output: String,
+) -> AppResult<String> {
+    let in_path = path.clone();
+    let out_path = output.clone();
+    tokio::task::spawn_blocking(move || -> AppResult<()> {
+        let bytes = std::fs::read(&in_path)?;
+        let out = crate::oxml::editor::save_body_in_package(&bytes, &paras)
+            .map_err(|e| AppError::Invalid(e.to_string()))?;
+        std::fs::write(&out_path, &out)?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| AppError::Other(e.to_string()))??;
+
+    engine.invalidate(&path);
+    engine.invalidate(&output);
+    Ok(output)
+}
+
 /// Render the document body to styled HTML for the in-place editor surface.
 #[tauri::command]
 pub async fn get_word_html(path: String) -> AppResult<String> {

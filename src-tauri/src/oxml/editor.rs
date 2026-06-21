@@ -38,6 +38,16 @@ pub enum EditError {
     Io(#[from] std::io::Error),
     #[error("missing word/document.xml")]
     MissingDocument,
+    #[error("unsupported: {0}")]
+    Unsupported(String),
+}
+
+/// A paragraph as edited in the WYSIWYG surface (for structural/full-body save).
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ParaEdit {
+    pub runs: Vec<RunEdit>,
+    #[serde(default)]
+    pub align: Option<String>,
 }
 
 /// Replace every occurrence of `find` with `replace` in the document body text,
@@ -340,31 +350,107 @@ fn build_ppr(pp_bytes: &[u8], align: Option<&str>) -> Vec<u8> {
 }
 
 fn write_run(main: &mut Writer<Cursor<Vec<u8>>>, r: &RunEdit) -> Result<(), EditError> {
-    let w = main.get_mut();
-    w.write_all(b"<w:r>")?;
+    main.get_mut().write_all(run_xml(r).as_bytes())?;
+    Ok(())
+}
+
+/// Serialize one run to `<w:r>…</w:r>` with its run properties.
+fn run_xml(r: &RunEdit) -> String {
+    let mut s = String::from("<w:r>");
     if r.bold || r.italic || r.underline || r.color.is_some() || r.size_pt.is_some() {
-        w.write_all(b"<w:rPr>")?;
+        s.push_str("<w:rPr>");
         if r.bold {
-            w.write_all(b"<w:b/>")?;
+            s.push_str("<w:b/>");
         }
         if r.italic {
-            w.write_all(b"<w:i/>")?;
+            s.push_str("<w:i/>");
         }
         if r.underline {
-            w.write_all(b"<w:u w:val=\"single\"/>")?;
+            s.push_str("<w:u w:val=\"single\"/>");
         }
         if let Some(sz) = r.size_pt {
-            w.write_all(format!("<w:sz w:val=\"{}\"/>", (sz * 2.0).round() as i32).as_bytes())?;
+            s.push_str(&format!("<w:sz w:val=\"{}\"/>", (sz * 2.0).round() as i32));
         }
         if let Some(c) = &r.color {
-            w.write_all(format!("<w:color w:val=\"{}\"/>", c.trim_start_matches('#')).as_bytes())?;
+            s.push_str(&format!("<w:color w:val=\"{}\"/>", c.trim_start_matches('#')));
         }
-        w.write_all(b"</w:rPr>")?;
+        s.push_str("</w:rPr>");
     }
-    w.write_all(b"<w:t xml:space=\"preserve\">")?;
-    w.write_all(xml_escape(&r.text).as_bytes())?;
-    w.write_all(b"</w:t></w:r>")?;
-    Ok(())
+    s.push_str("<w:t xml:space=\"preserve\">");
+    s.push_str(&xml_escape(&r.text));
+    s.push_str("</w:t></w:r>");
+    s
+}
+
+fn jc_val(align: &str) -> &'static str {
+    match align {
+        "center" => "center",
+        "right" => "right",
+        "justify" | "both" => "both",
+        _ => "left",
+    }
+}
+
+/// Regenerate the whole `<w:body>` from `paras` (for structural edits: adding/
+/// removing/reordering paragraphs), preserving the document root (namespaces)
+/// and the body's trailing `sectPr` (page size/margins). Refuses if the body
+/// contains a table, to avoid silently dropping it.
+///
+/// This rebuilds the body from the visible runs only, so paragraph styles,
+/// bookmarks, fields, and other body content are not preserved — it is the
+/// heavier save used only when paragraph structure changed.
+pub fn save_body_in_package(bytes: &[u8], paras: &[ParaEdit]) -> Result<Vec<u8>, EditError> {
+    let mut pkg = Package::load(bytes)?;
+    let idx = pkg
+        .parts
+        .iter()
+        .position(|p| p.name == "word/document.xml")
+        .ok_or(EditError::MissingDocument)?;
+    let xml = std::str::from_utf8(&pkg.parts[idx].data).map_err(|_| EditError::MissingDocument)?;
+
+    let body_open = xml.find("<w:body").ok_or(EditError::MissingDocument)?;
+    let body_open_end = body_open + xml[body_open..].find('>').ok_or(EditError::MissingDocument)? + 1;
+    let body_close = xml.rfind("</w:body>").ok_or(EditError::MissingDocument)?;
+    let middle = &xml[body_open_end..body_close];
+
+    if middle.contains("<w:tbl") {
+        return Err(EditError::Unsupported(
+            "structural editing of documents with tables is not supported yet".into(),
+        ));
+    }
+
+    // Preserve the trailing body-level sectPr (page geometry).
+    let sectpr = middle
+        .rfind("<w:sectPr")
+        .map(|s| {
+            let rest = &middle[s..];
+            if let Some(e) = rest.find("</w:sectPr>") {
+                &rest[..e + "</w:sectPr>".len()]
+            } else if let Some(e) = rest.find("/>") {
+                &rest[..e + 2]
+            } else {
+                ""
+            }
+        })
+        .unwrap_or("");
+
+    let mut body = String::new();
+    body.push_str(&xml[..body_open_end]);
+    for p in paras {
+        body.push_str("<w:p>");
+        if let Some(a) = &p.align {
+            body.push_str(&format!("<w:pPr><w:jc w:val=\"{}\"/></w:pPr>", jc_val(a)));
+        }
+        for r in &p.runs {
+            body.push_str(&run_xml(r));
+        }
+        body.push_str("</w:p>");
+    }
+    body.push_str(sectpr);
+    body.push_str(&xml[body_close..]);
+
+    pkg.parts[idx].data = body.into_bytes();
+    Ok(pkg.save()?)
 }
 
 fn xml_escape(s: &str) -> String {
@@ -466,6 +552,27 @@ mod tests {
         assert!(text.contains("<w:jc w:val=\"center\"/>"), "pPr preserved");
         assert!(!text.contains(">old<"), "old run text replaced");
         assert!(text.contains("keep"), "other paragraph untouched");
+    }
+
+    #[test]
+    fn full_body_save_rebuilds_paragraphs_and_keeps_sectpr() {
+        let xml = r#"<w:document xmlns:w="x"><w:body><w:p><w:r><w:t>one</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>"#;
+        let paras = vec![
+            ParaEdit { runs: vec![RunEdit { text: "one".into(), bold: false, italic: false, underline: false, color: None, size_pt: None }], align: None },
+            ParaEdit { runs: vec![RunEdit { text: "two".into(), bold: true, italic: false, underline: false, color: None, size_pt: None }], align: Some("center".into()) },
+        ];
+        let out = save_body_in_package(&docx_with(xml), &paras).unwrap();
+        let text = document_text(&out);
+        assert_eq!(text.matches("<w:p>").count(), 2, "two paragraphs rebuilt");
+        assert!(text.contains("two"));
+        assert!(text.contains("<w:jc w:val=\"center\"/>"), "alignment on new paragraph");
+        assert!(text.contains("<w:pgSz"), "trailing sectPr preserved");
+    }
+
+    #[test]
+    fn full_body_save_refuses_tables() {
+        let xml = r#"<w:document xmlns:w="x"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:sectPr/></w:body></w:document>"#;
+        assert!(matches!(save_body_in_package(&docx_with(xml), &[]), Err(EditError::Unsupported(_))));
     }
 
     #[test]
