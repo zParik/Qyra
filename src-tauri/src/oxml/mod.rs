@@ -13,6 +13,7 @@
 //! ponytail: module-in-crate until it earns a workspace split; no premature crate.
 
 pub mod docx;
+pub mod editor;
 pub mod model;
 pub mod numbering;
 pub mod styles;

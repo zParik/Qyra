@@ -29,6 +29,13 @@ impl WordEngine {
             docs: Mutex::new(HashMap::new()),
         }
     }
+
+    /// Drop the cached layout for a path (after the file changes on disk).
+    pub fn invalidate(&self, path: &str) {
+        if let Ok(mut map) = self.docs.lock() {
+            map.remove(path);
+        }
+    }
 }
 
 impl Default for WordEngine {
@@ -115,4 +122,33 @@ pub async fn render_word_page(
     })
     .await
     .map_err(|e| AppError::Other(e.to_string()))?
+}
+
+/// Basic editing: replace `find` with `replace` in the document body text and
+/// write the result to `output` (may equal `path` to edit in place). Lossless —
+/// only `w:t` text changes. Returns the output path.
+#[tauri::command]
+pub async fn replace_in_word(
+    engine: tauri::State<'_, WordEngine>,
+    path: String,
+    find: String,
+    replace: String,
+    output: String,
+) -> AppResult<String> {
+    let in_path = path.clone();
+    let out_path = output.clone();
+    tokio::task::spawn_blocking(move || -> AppResult<()> {
+        let bytes = std::fs::read(&in_path)?;
+        let out = crate::oxml::editor::replace_in_package(&bytes, &find, &replace)
+            .map_err(|e| AppError::Invalid(e.to_string()))?;
+        std::fs::write(&out_path, &out)?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| AppError::Other(e.to_string()))??;
+
+    // The on-disk file changed; drop stale cached layouts.
+    engine.invalidate(&path);
+    engine.invalidate(&output);
+    Ok(output)
 }

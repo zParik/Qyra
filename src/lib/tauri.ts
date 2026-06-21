@@ -202,6 +202,10 @@ export const openWord = (path: string) =>
 export const renderWordPage = (path: string, page: number, scale: number) =>
   invoke<string>("render_word_page", { path, page, scale });
 
+/** Basic edit: replace text in the body and save to `output` (lossless). */
+export const replaceInWord = (path: string, find: string, replace: string, output: string) =>
+  invoke<string>("replace_in_word", { path, find, replace, output });
+
 export const setStarred = (path: string, name: string, starred: boolean) =>
   invoke<void>("set_starred", { path, name, starred });
 

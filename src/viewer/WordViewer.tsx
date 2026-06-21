@@ -1,15 +1,15 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { open } from "@tauri-apps/plugin-dialog";
-import { openWord, renderWordPage, type WordDocInfo } from "../lib/tauri";
+import { openWord, renderWordPage, replaceInWord, type WordDocInfo } from "../lib/tauri";
 import { UI } from "../lib/tokens";
 
 const SCALE = 1.5; // device px per point (~108 DPI)
 
 /**
- * Minimal read-only .docx viewer. Opens a document via the native Word engine
+ * .docx viewer + basic editor. Opens a document via the native Word engine
  * (Rust: parse → layout → rasterize) and shows each page as a rendered PNG.
- * P1: text only, single font. No editing.
+ * Basic editing: find & replace in the body, saved losslessly in place.
  */
 export default function WordViewer() {
   const location = useLocation();
@@ -21,6 +21,12 @@ export default function WordViewer() {
   const [info, setInfo] = useState<WordDocInfo | null>(null);
   const [pages, setPages] = useState<(string | null)[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [version, setVersion] = useState(0); // bump to force a reload after edits
+
+  const [find, setFind] = useState("");
+  const [replace, setReplace] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
 
   async function browse() {
     try {
@@ -29,7 +35,24 @@ export default function WordViewer() {
       const p = Array.isArray(sel) ? sel[0]! : sel;
       setPath(p);
       setName(p.split(/[\\/]/).pop() ?? p);
+      setStatus(null);
     } catch { /* dismissed */ }
+  }
+
+  async function doReplace() {
+    if (!path || !find || busy) return;
+    setBusy(true);
+    setStatus(null);
+    setError(null);
+    try {
+      await replaceInWord(path, find, replace, path);
+      setStatus(`Replaced “${find}” → “${replace}” and saved.`);
+      setVersion((v) => v + 1); // reload rendered pages from the edited file
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
   }
 
   useEffect(() => {
@@ -58,7 +81,12 @@ export default function WordViewer() {
       }
     })();
     return () => { cancelled = true; };
-  }, [path]);
+  }, [path, version]);
+
+  const inputStyle: React.CSSProperties = {
+    background: "var(--bg0)", border: "1px solid var(--line)", borderRadius: 5,
+    color: "var(--fg0)", fontSize: 12.5, padding: "4px 8px", width: 140, fontFamily: UI,
+  };
 
   return (
     <div className="flex flex-col" style={{ height: "100dvh", background: "var(--bg0)", fontFamily: UI }}>
@@ -86,6 +114,31 @@ export default function WordViewer() {
         </button>
       </header>
 
+      {path && (
+        <div
+          className="flex items-center gap-2 shrink-0 flex-wrap"
+          style={{ padding: "8px 14px", borderBottom: "1px solid var(--line2)" }}
+        >
+          <span style={{ color: "var(--fg2)", fontSize: 12 }}>Edit:</span>
+          <input style={inputStyle} placeholder="Find" value={find} onChange={(e) => setFind(e.target.value)} />
+          <input style={inputStyle} placeholder="Replace with" value={replace} onChange={(e) => setReplace(e.target.value)} />
+          <button
+            onClick={doReplace}
+            disabled={!find || busy}
+            style={{
+              background: find && !busy ? "var(--accent, #3b6ea5)" : "var(--bg1)",
+              border: "1px solid var(--line)", borderRadius: 6,
+              color: find && !busy ? "#fff" : "var(--fg2)",
+              cursor: find && !busy ? "pointer" : "default",
+              fontSize: 12.5, padding: "5px 12px",
+            }}
+          >
+            {busy ? "Saving…" : "Replace & save"}
+          </button>
+          {status && <span style={{ color: "var(--fg2)", fontSize: 12 }}>{status}</span>}
+        </div>
+      )}
+
       <div className="flex-1 overflow-auto" style={{ padding: 24 }}>
         {error && (
           <div role="alert" style={{ color: "#e07070", fontSize: 13, marginBottom: 16 }}>{error}</div>
@@ -93,7 +146,7 @@ export default function WordViewer() {
 
         {!path && !error && (
           <div style={{ color: "var(--fg2)", fontSize: 14, textAlign: "center", marginTop: 80 }}>
-            Open a Word document to view it.
+            Open a Word document to view and edit it.
           </div>
         )}
 

@@ -373,6 +373,7 @@ pub fn run() {
             render::get_page_links,
             word::open_word,
             word::render_word_page,
+            word::replace_in_word,
             links::add_link,
             links::remove_link,
             create::images_to_pdf,
