@@ -161,13 +161,14 @@ pub async fn set_word_paragraph_runs(
     path: String,
     index: usize,
     runs: Vec<crate::oxml::editor::RunEdit>,
+    align: Option<String>,
     output: String,
 ) -> AppResult<String> {
     let in_path = path.clone();
     let out_path = output.clone();
     tokio::task::spawn_blocking(move || -> AppResult<()> {
         let bytes = std::fs::read(&in_path)?;
-        let out = crate::oxml::editor::set_paragraph_runs_in_package(&bytes, index, &runs)
+        let out = crate::oxml::editor::set_paragraph_runs_in_package(&bytes, index, &runs, align.as_deref())
             .map_err(|e| AppError::Invalid(e.to_string()))?;
         std::fs::write(&out_path, &out)?;
         Ok(())

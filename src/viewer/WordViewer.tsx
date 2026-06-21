@@ -19,6 +19,13 @@ function pxToPt(px: string): number | undefined {
   return Number.isNaN(v) ? undefined : Math.round((v / 1.333) * 10) / 10;
 }
 
+function mapAlign(ta: string): string {
+  if (ta === "center") return "center";
+  if (ta === "right" || ta === "end") return "right";
+  if (ta === "justify") return "justify";
+  return "left";
+}
+
 /** Serialize a paragraph element's text into formatting-grouped runs. */
 function collectRuns(p: HTMLElement): RunEdit[] {
   const runs: RunEdit[] = [];
@@ -105,8 +112,8 @@ export default function WordViewer() {
     }
   }, [editing, editHtml]);
 
-  function format(cmd: "bold" | "italic" | "underline") {
-    document.execCommand(cmd);
+  function exec(cmd: string, value?: string) {
+    document.execCommand(cmd, false, value);
     editRef.current?.focus();
   }
 
@@ -120,7 +127,8 @@ export default function WordViewer() {
         const idx = parseInt(n.getAttribute("data-p") || "-1", 10);
         if (idx < 0) continue;
         if (n.innerHTML === origHtmlRef.current[idx]) continue; // unchanged → byte-preserved
-        await setWordParagraphRuns(path, idx, collectRuns(n), path);
+        const align = mapAlign(getComputedStyle(n).textAlign);
+        await setWordParagraphRuns(path, idx, collectRuns(n), align, path);
         changed++;
       }
       setEditing(false);
@@ -291,14 +299,11 @@ export default function WordViewer() {
 
         {editing ? (
           <div style={{ maxWidth: 860, margin: "0 auto" }}>
-            <div className="flex items-center gap-1" style={{ marginBottom: 10 }}>
+            <div className="flex items-center gap-1 flex-wrap" style={{ marginBottom: 10 }}>
               {([["bold", "B"], ["italic", "I"], ["underline", "U"]] as const).map(([cmd, label]) => (
                 <button
                   key={cmd}
-                  onMouseDown={(e) => {
-                    e.preventDefault(); // keep the editor selection
-                    format(cmd);
-                  }}
+                  onMouseDown={(e) => { e.preventDefault(); exec(cmd); }}
                   title={cmd}
                   style={{
                     width: 30, height: 28, background: "var(--bg1)", border: "1px solid var(--line)",
@@ -311,8 +316,31 @@ export default function WordViewer() {
                   {label}
                 </button>
               ))}
+              <span style={{ width: 1, height: 20, background: "var(--line)", margin: "0 4px" }} />
+              {([["justifyLeft", "L", "Align left"], ["justifyCenter", "C", "Align center"], ["justifyRight", "R", "Align right"], ["justifyFull", "J", "Justify"]] as const).map(([cmd, label, title]) => (
+                <button
+                  key={cmd}
+                  onMouseDown={(e) => { e.preventDefault(); exec(cmd); }}
+                  title={title}
+                  style={{
+                    width: 30, height: 28, background: "var(--bg1)", border: "1px solid var(--line)",
+                    borderRadius: 5, color: "var(--fg0)", cursor: "pointer", fontSize: 12,
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+              <span style={{ width: 1, height: 20, background: "var(--line)", margin: "0 4px" }} />
+              {["000000", "C00000", "2E5BBA", "2E7D32"].map((c) => (
+                <button
+                  key={c}
+                  onMouseDown={(e) => { e.preventDefault(); exec("foreColor", "#" + c); }}
+                  title={"Color #" + c}
+                  style={{ width: 22, height: 22, background: "#" + c, border: "1px solid var(--line)", borderRadius: 4, cursor: "pointer" }}
+                />
+              ))}
               <span style={{ color: "var(--fg2)", fontSize: 12, marginLeft: 8 }}>
-                Click and type like a document. Bold/italic/underline persist on save; edited paragraphs keep formatting, untouched ones stay byte-identical. New paragraphs/tables not saved yet.
+                Type like a document — bold/italic/underline, alignment, and color persist on save (edited paragraphs); untouched ones stay byte-identical.
               </span>
             </div>
             <div

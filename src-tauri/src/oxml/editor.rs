@@ -180,7 +180,12 @@ pub fn set_paragraph_in_package(bytes: &[u8], index: usize, text: &str) -> Resul
 /// trips its styling. Other run-level content of the edited paragraph
 /// (bookmarks, fields, hyperlinks) is dropped — acceptable for an edited
 /// paragraph; untouched paragraphs stay byte-identical.
-pub fn set_paragraph_runs_in_package(bytes: &[u8], index: usize, runs: &[RunEdit]) -> Result<Vec<u8>, EditError> {
+pub fn set_paragraph_runs_in_package(
+    bytes: &[u8],
+    index: usize,
+    runs: &[RunEdit],
+    align: Option<&str>,
+) -> Result<Vec<u8>, EditError> {
     let mut pkg = Package::load(bytes)?;
     let idx = pkg
         .parts
@@ -229,7 +234,7 @@ pub fn set_paragraph_runs_in_package(bytes: &[u8], index: usize, runs: &[RunEdit
                     skip_depth += 1;
                 } else {
                     if !emitted {
-                        emit_runs(&mut main, &ppw, runs)?;
+                        emit_runs(&mut main, &ppw, runs, align)?;
                         emitted = true;
                     }
                     skip_depth = 1;
@@ -249,7 +254,7 @@ pub fn set_paragraph_runs_in_package(bytes: &[u8], index: usize, runs: &[RunEdit
                     skip_depth -= 1;
                 } else if n == b"w:p" {
                     if !emitted {
-                        emit_runs(&mut main, &ppw, runs)?;
+                        emit_runs(&mut main, &ppw, runs, align)?;
                         emitted = true;
                     }
                     main.write_event(Event::End(e))?;
@@ -263,7 +268,7 @@ pub fn set_paragraph_runs_in_package(bytes: &[u8], index: usize, runs: &[RunEdit
                     ppw.write_event(Event::Empty(e))?;
                 } else if skip_depth == 0 {
                     if !emitted {
-                        emit_runs(&mut main, &ppw, runs)?;
+                        emit_runs(&mut main, &ppw, runs, align)?;
                         emitted = true;
                     }
                 }
@@ -293,13 +298,45 @@ fn emit_runs(
     main: &mut Writer<Cursor<Vec<u8>>>,
     ppw: &Writer<Cursor<Vec<u8>>>,
     runs: &[RunEdit],
+    align: Option<&str>,
 ) -> Result<(), EditError> {
-    let pp_bytes = ppw.get_ref().get_ref().clone();
-    main.get_mut().write_all(&pp_bytes)?;
+    let pp_bytes = ppw.get_ref().get_ref();
+    let ppr = build_ppr(pp_bytes, align);
+    main.get_mut().write_all(&ppr)?;
     for r in runs {
         write_run(main, r)?;
     }
     Ok(())
+}
+
+/// Return the paragraph's `pPr` bytes, setting/replacing `w:jc` when `align` is
+/// given (creating a `pPr` if there wasn't one).
+fn build_ppr(pp_bytes: &[u8], align: Option<&str>) -> Vec<u8> {
+    let Some(a) = align else {
+        return pp_bytes.to_vec();
+    };
+    let val = match a {
+        "center" => "center",
+        "right" => "right",
+        "justify" | "both" => "both",
+        _ => "left",
+    };
+    let mut s = String::from_utf8_lossy(pp_bytes).into_owned();
+    // Drop any existing <w:jc .../>.
+    while let Some(start) = s.find("<w:jc") {
+        if let Some(rel) = s[start..].find("/>") {
+            s.replace_range(start..start + rel + 2, "");
+        } else {
+            break;
+        }
+    }
+    let jc = format!("<w:jc w:val=\"{val}\"/>");
+    if s.is_empty() {
+        s = format!("<w:pPr>{jc}</w:pPr>");
+    } else if let Some(open_end) = s.find('>') {
+        s.insert_str(open_end + 1, &jc);
+    }
+    s.into_bytes()
 }
 
 fn write_run(main: &mut Writer<Cursor<Vec<u8>>>, r: &RunEdit) -> Result<(), EditError> {
@@ -421,7 +458,7 @@ mod tests {
             RunEdit { text: "New ".into(), bold: true, italic: false, underline: false, color: None, size_pt: None },
             RunEdit { text: "text".into(), bold: false, italic: true, underline: false, color: None, size_pt: None },
         ];
-        let out = set_paragraph_runs_in_package(&docx_with(xml), 0, &runs).unwrap();
+        let out = set_paragraph_runs_in_package(&docx_with(xml), 0, &runs, None).unwrap();
         let text = document_text(&out);
         assert!(text.contains("<w:b/>"), "bold run prop emitted");
         assert!(text.contains("<w:i/>"), "italic run prop emitted");
@@ -429,6 +466,14 @@ mod tests {
         assert!(text.contains("<w:jc w:val=\"center\"/>"), "pPr preserved");
         assert!(!text.contains(">old<"), "old run text replaced");
         assert!(text.contains("keep"), "other paragraph untouched");
+    }
+
+    #[test]
+    fn sets_paragraph_alignment() {
+        let xml = r#"<w:document xmlns:w="x"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let runs = vec![RunEdit { text: "x".into(), bold: false, italic: false, underline: false, color: None, size_pt: None }];
+        let out = set_paragraph_runs_in_package(&docx_with(xml), 0, &runs, Some("center")).unwrap();
+        assert!(document_text(&out).contains("<w:jc w:val=\"center\"/>"), "alignment injected into pPr");
     }
 
     #[test]

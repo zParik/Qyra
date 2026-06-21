@@ -223,9 +223,11 @@ export interface RunEdit {
   size_pt?: number;
 }
 
-/** Rich edit: replace body paragraph `index`'s runs (keeps formatting), save. */
-export const setWordParagraphRuns = (path: string, index: number, runs: RunEdit[], output: string) =>
-  invoke<string>("set_word_paragraph_runs", { path, index, runs, output });
+/** Rich edit: replace body paragraph `index`'s runs (keeps formatting) + set
+ *  alignment ("left"|"center"|"right"|"justify"), then save. */
+export const setWordParagraphRuns = (
+  path: string, index: number, runs: RunEdit[], align: string | null, output: string,
+) => invoke<string>("set_word_paragraph_runs", { path, index, runs, align, output });
 
 /** Replace body paragraph `index`'s text and save to `output` (lossless). */
 export const setWordParagraph = (path: string, index: number, text: string, output: string) =>
