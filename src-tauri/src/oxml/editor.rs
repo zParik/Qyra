@@ -17,6 +17,8 @@ pub enum EditError {
     Package(#[from] PackageError),
     #[error("xml error: {0}")]
     Xml(#[from] quick_xml::Error),
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
     #[error("missing word/document.xml")]
     MissingDocument,
 }
