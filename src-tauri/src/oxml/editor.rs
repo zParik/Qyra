@@ -140,8 +140,9 @@ pub fn set_paragraph_in_package(bytes: &[u8], index: usize, text: &str) -> Resul
                 }
                 writer.write_event(Event::End(e))?;
             }
-            Event::Text(e) if in_t => {
-                // First w:t of the target paragraph carries all the new text.
+            Event::Text(_) if in_t => {
+                // First w:t of the target paragraph carries all the new text;
+                // the original text is dropped.
                 let replacement = if first_t_done { "" } else { text };
                 first_t_done = true;
                 writer.write_event(Event::Text(BytesText::new(replacement)))?;
