@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { ViewerTool } from "../ToolSidebar";
-import { AnnotationTool } from "../AnnotationToolbar";
 
 /**
  * Tool-mode state: which sidebar tool is active, page-selection set for
@@ -14,10 +13,8 @@ export function useToolMode(initialSplitAfter: number) {
   // Annotation tool pills (activate draw mode)
   const [activeAnnot, setActiveAnnot] = useState<string | null>(null);
 
-  // Standard PDF annotation mode
-  const [activeAnnotTool, setActiveAnnotTool] = useState<AnnotationTool | null>(null);
-  const [annotColor, setAnnotColor] = useState<string>("#ffeb3b");
-  const [annotRefreshKey, setAnnotRefreshKey] = useState<number>(0);
+  // Markup color for the text-selection popup (highlight/underline/strikeout).
+  const [annotColor, setAnnotColor] = useState<string>("#000000");
 
   return {
     activeTool,
@@ -28,11 +25,7 @@ export function useToolMode(initialSplitAfter: number) {
     setSplitAfter,
     activeAnnot,
     setActiveAnnot,
-    activeAnnotTool,
-    setActiveAnnotTool,
     annotColor,
     setAnnotColor,
-    annotRefreshKey,
-    setAnnotRefreshKey,
   };
 }

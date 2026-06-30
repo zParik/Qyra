@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { renderPage } from "./usePageThumbnails";
+import { renderPage, seedThumbnailsForEdit } from "./usePageThumbnails";
 import { mockCommands, tauriCalls } from "../test/mockTauri";
 
 // renderPage is the single funnel every page render goes through. The viewer
@@ -37,5 +37,36 @@ describe("renderPage cancellation", () => {
 
     expect(url).toBe("data:image/jpeg;base64,QQ==");
     expect(tauriCalls().some((c) => c.cmd === "render_page")).toBe(true);
+  });
+});
+
+// Seeding copies unchanged pages to the new path so an in-place edit re-renders
+// only the changed page. Regression guard: the cache's keys() is a live Map
+// iterator and get()/set() reorder it, so iterating it while reading/writing
+// looped forever (the page "crashed"/hung). This test would time out under that bug.
+describe("seedThumbnailsForEdit", () => {
+  it("seeds unchanged pages under the new path and terminates", async () => {
+    mockCommands({
+      cache_get: () => null,
+      thumb_get: () => null,
+      render_page: () => "QQ==",
+      cache_put: () => undefined,
+      thumb_put: () => undefined,
+    });
+
+    // Populate two pages of the old document into the in-memory cache.
+    await renderPage("/seed-old.pdf", 1, 2, () => false);
+    await renderPage("/seed-old.pdf", 2, 2, () => false);
+
+    // Page 2 changed, page 1 unchanged. Must return (no infinite loop).
+    seedThumbnailsForEdit("/seed-old.pdf", "/seed-new.pdf", new Set([2]));
+
+    // Unchanged page 1 is now a layer-1 cache hit under the new path — returns
+    // even with the cancel predicate true (the hit precedes the cancel check).
+    await expect(renderPage("/seed-new.pdf", 1, 2, () => true))
+      .resolves.toBe("data:image/jpeg;base64,QQ==");
+    // Changed page 2 was NOT seeded → no hit → the cancel predicate trips.
+    await expect(renderPage("/seed-new.pdf", 2, 2, () => true))
+      .rejects.toThrow("Cancelled");
   });
 });

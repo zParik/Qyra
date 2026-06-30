@@ -3,13 +3,13 @@ import { useNavigate } from "react-router-dom";
 import { useAppStore } from "../store/useAppStore";
 import { useNotesStore, PageTemplate, VirtualPage } from "../store/useNotesStore";
 
-import { usePageThumbnails, evictPathFromThumbnailCache, freePathMemoryThumbnails } from "../hooks/usePageThumbnails";
+import { usePageThumbnails, evictPathFromThumbnailCache, freePathMemoryThumbnails, seedThumbnailsForEdit } from "../hooks/usePageThumbnails";
 import { PageStrip } from "./PageStrip";
 import { ScrollPageIndicator } from "./ScrollPageIndicator";
 import { ZoomFab } from "./ZoomFab";
 import { ToolSidebar, ViewerTool } from "./ToolSidebar";
 import { invoke } from "@tauri-apps/api/core";
-import { copyFile, showSaveDialog, bakeAnnotations, setActiveDocument, saveCompressedCopy } from "../lib/tauri";
+import { copyFile, showSaveDialog, bakeAnnotations, setActiveDocument, saveCompressedCopy, addPdfAnnotation, redactPdf } from "../lib/tauri";
 import { loadSetting, Settings } from "../lib/settings";
 import { triggerPrint } from "./tools/PrintPanel";
 import { DrawingCanvas } from "./DrawingCanvas";
@@ -21,10 +21,8 @@ import { LinkLayer } from "./LinkLayer";
 import { FindBar } from "./FindBar";
 import { CommentLayer, CommentEditor } from "./CommentLayer";
 import { FormLayer } from "./FormLayer";
-import { AnnotationLayer } from "./AnnotationLayer";
 import { SignatureLayer } from "./SignatureLayer";
 import { RedactLayer } from "./RedactLayer";
-import { AnnotationToolbar } from "./AnnotationToolbar";
 import { SignaturePanel } from "./tools/SignaturePanel";
 import { useFormFilling } from "./useFormFilling";
 import { PresentationMode } from "./PresentationMode";
@@ -34,7 +32,7 @@ import { useViewerUI } from "./hooks/useViewerUI";
 import { useToolMode } from "./hooks/useToolMode";
 import { useFindInDocument } from "./hooks/useFindInDocument";
 import { useSignatures } from "./hooks/useSignatures";
-import { useTextSelection } from "./hooks/useTextSelection";
+import { useTextSelection, getSelectionGeometry } from "./hooks/useTextSelection";
 import { useGoToPage } from "./hooks/useGoToPage";
 import { useRedactRegions } from "./hooks/useRedactRegions";
 import { useAutoSave } from "./hooks/useAutoSave";
@@ -143,9 +141,7 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
     selectedPages, setSelectedPages,
     splitAfter, setSplitAfter,
     activeAnnot, setActiveAnnot,
-    activeAnnotTool, setActiveAnnotTool,
     annotColor, setAnnotColor,
-    annotRefreshKey, setAnnotRefreshKey,
   } = useToolMode(initialSplitAfter);
 
   // Redaction state (regions + mode)
@@ -274,8 +270,6 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
     } else if (tool === "signature") {
       setShowSignaturePanel(true);
       setActiveAnnot("Sign");
-    } else if (tool === "annotate") {
-      setActiveAnnot(null);
     } else if (tool === "forms") {
       setActiveAnnot(null);
     } else {
@@ -988,6 +982,91 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
     }
   }
 
+  // --- Selection popup actions -------------------------------------------
+  const selPopupBtn: import("react").CSSProperties = {
+    background: "transparent", border: "none", color: "var(--viewer-text)",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    padding: 5, borderRadius: 5, cursor: "pointer",
+  };
+
+  function clearSelection() {
+    setSelectionPopup(null);
+    window.getSelection()?.removeAllRanges();
+  }
+
+  // Swap the viewer to an edited file IN PLACE: seed every unchanged page's raster
+  // from the old path so only the changed page(s) re-render, and keep scroll/zoom by
+  // NOT routing through handleApplied (which resets to page 1). PageCanvas holds each
+  // page's last frame until its new raster lands → no full-document flash.
+  function swapInPlaceAfterEdit(
+    vf: NonNullable<typeof viewerFile>,
+    oldPath: string,
+    newPath: string,
+    changedPages: Set<number>,
+  ) {
+    seedThumbnailsForEdit(oldPath, newPath, changedPages);
+    setUndoViewerFile(vf); // Ctrl+Z snapshot
+    setViewerFile({ ...vf, path: newPath });
+    setIsViewerDirty(true);
+    if (oldPath !== newPath) freePathMemoryThumbnails(oldPath);
+    if (autoSaveRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = window.setTimeout(triggerAutoSave, 1500);
+    }
+  }
+
+  // Apply a text-markup annotation to the live selection. One add_pdf_annotation
+  // call per page the selection touches.
+  // ponytail: O(pages) full file rewrites — fine for popup-sized selections; add
+  // a batch backend command if multi-page markup ever becomes a hot path.
+  async function applyMarkup(subtype: "Highlight" | "Underline" | "StrikeOut") {
+    const vf = viewerFile;
+    if (!vf) return;
+    const geom = getSelectionGeometry();
+    clearSelection();
+    if (!geom.length) return;
+    try {
+      const oldPath = vf.path;
+      let path = oldPath;
+      for (const g of geom) {
+        const quad_points = g.lines.flatMap((l) => [l.x0, l.y0, l.x1, l.y0, l.x0, l.y1, l.x1, l.y1]);
+        path = await addPdfAnnotation(path, {
+          subtype,
+          page: g.page,
+          rect: [g.bbox.x0, g.bbox.y0, g.bbox.x1, g.bbox.y1],
+          color: annotColor,
+          quad_points,
+        });
+      }
+      swapInPlaceAfterEdit(vf, oldPath, path, new Set(geom.map((g) => g.page)));
+    } catch { /* error surfaces via the dirty-state UI on next save */ }
+  }
+
+  // Redact the selected lines. Destructive + immediate: redact_pdf permanently
+  // destroys the underlying content and bakes a black rectangle, so the result is
+  // already part of the working file (a plain save persists it) — staging an
+  // overlay region instead would vanish on save.
+  async function applyRedactFromSelection() {
+    const vf = viewerFile;
+    if (!vf) return;
+    const geom = getSelectionGeometry();
+    clearSelection();
+    if (!geom.length) return;
+    const regions = geom.flatMap((g) =>
+      g.lines.map((l) => ({ page: g.page, x0: l.x0, y0: l.y0, x1: l.x1, y1: l.y1 }))
+    );
+    try {
+      const out = await redactPdf(vf.path, regions);
+      swapInPlaceAfterEdit(vf, vf.path, out, new Set(regions.map((r) => r.page)));
+    } catch { /* error surfaces via the dirty-state UI on next save */ }
+  }
+
+  function copySelection() {
+    const text = selectionPopup?.text ?? "";
+    clearSelection();
+    if (text) navigator.clipboard?.writeText(text).catch(() => {});
+  }
+
   function friendlySaveError(e: unknown): string {
     const msg = String(e).toLowerCase();
     if (msg.includes("permission") || msg.includes("access is denied") || msg.includes("code: 5"))
@@ -1611,19 +1690,6 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
         />
       )}
 
-      {/* Annotation toolbar — shown when annotation mode is active */}
-      {activeTool === "annotate" && (
-        <AnnotationToolbar
-          activeTool={activeAnnotTool}
-          onToolChange={setActiveAnnotTool}
-          onExit={() => handleToolChange(null)}
-          activeColor={annotColor}
-          onColorChange={setAnnotColor}
-          currentPage={currentPage}
-          pageCount={pageCount}
-        />
-      )}
-
       {/* Signature creation modal */}
       {showSignaturePanel && (
         <SignaturePanel
@@ -1638,24 +1704,74 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
         />
       )}
 
-      {/* Selection Popup Tooltip */}
+      {/* Selection Popup Tooltip — inline quick-access markup menu */}
       {selectionPopup && !selectionEditor && (
         <div
           style={{
             position: "fixed",
             left: selectionPopup.rect.left + selectionPopup.rect.width / 2,
-            top: selectionPopup.rect.top - 40,
+            top: selectionPopup.rect.top - 46,
             transform: "translateX(-50%)",
             zIndex: 1000,
             background: "var(--viewer-elevated)",
             border: "1px solid var(--viewer-border)",
-            borderRadius: 6,
-            padding: 4,
+            borderRadius: 8,
+            padding: "4px 6px",
             boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
             display: "flex",
+            alignItems: "center",
+            gap: 3,
+            maxWidth: "92vw",
+            flexWrap: "wrap",
+            justifyContent: "center",
           }}
-          onMouseDown={(e) => e.preventDefault()} // Prevent losing text selection
+          onMouseDown={(e) => e.preventDefault()} // keep the selection alive
         >
+          {/* Color swatches — pick the markup color */}
+          {["#000000", "#2563eb", "#16a34a", "#dc2626", "#ffffff"].map((c) => (
+            <button
+              key={c}
+              onClick={() => setAnnotColor(c)}
+              title={`Color ${c}`}
+              style={{
+                width: 16, height: 16, borderRadius: "50%", background: c,
+                border: "1px solid var(--viewer-border)", cursor: "pointer", flexShrink: 0,
+                outline: annotColor === c ? "2px solid var(--accent)" : "2px solid transparent",
+                outlineOffset: 1,
+              }}
+            />
+          ))}
+          <div style={{ width: 1, alignSelf: "stretch", background: "var(--viewer-border)", margin: "0 2px" }} />
+
+          {/* Markup actions — applied in the selected color */}
+          <button onClick={() => applyMarkup("Highlight")} title="Highlight" style={selPopupBtn}>
+            <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.2 5.2l3.6 3.6M9 13l-4 4 1 3 3-1 4-4M16.5 6.5l-7 7" />
+            </svg>
+          </button>
+          <button onClick={() => applyMarkup("Underline")} title="Underline" style={selPopupBtn}>
+            <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M7 5v6a5 5 0 0010 0V5M5 21h14" />
+            </svg>
+          </button>
+          <button onClick={() => applyMarkup("StrikeOut")} title="Strikeout" style={selPopupBtn}>
+            <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M8 7h8M9 17h6" />
+            </svg>
+          </button>
+          <div style={{ width: 1, alignSelf: "stretch", background: "var(--viewer-border)", margin: "0 2px" }} />
+
+          <button onClick={applyRedactFromSelection} title="Redact" style={selPopupBtn}>
+            <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <rect x={4} y={9} width={16} height={6} rx={1} fill="currentColor" />
+            </svg>
+          </button>
+          <button onClick={copySelection} title="Copy" style={selPopupBtn}>
+            <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6}>
+              <rect x={9} y={9} width={11} height={11} rx={2} strokeLinejoin="round" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 15V5a2 2 0 012-2h8" />
+            </svg>
+          </button>
           <button
             onClick={() => {
               setSelectionEditor({
@@ -1669,24 +1785,12 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
               setSelectionPopup(null);
               window.getSelection()?.removeAllRanges();
             }}
-            style={{
-              background: "transparent",
-              border: "none",
-              color: "var(--viewer-text)",
-              fontFamily: "'Inter', system-ui, sans-serif",
-              fontSize: 12,
-              fontWeight: 500,
-              padding: "4px 8px",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-            }}
+            title="Add comment"
+            style={selPopupBtn}
           >
-            <svg width={14} height={14} fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+            <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
             </svg>
-            Add Comment
           </button>
         </div>
       )}
@@ -2009,6 +2113,7 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                           }
                           isDrawingMode={activeTool === "draw"}
                           enabled={shouldRenderTextLayer}
+                          selectable={activeTool === null}
                         />
                         <LinkLayer
                           pdfPath={viewerFile.path}
@@ -2033,14 +2138,6 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                           isEnabled={activeTool === "forms"}
                           onFieldChanged={setFieldValue}
                           filledFields={fieldValues}
-                        />
-                        <AnnotationLayer
-                          pdfPath={viewerFile.path}
-                          pageNum={page}
-                          isEnabled={activeTool === "annotate"}
-                          activeAnnotTool={activeAnnotTool}
-                          onAnnotationAdded={() => setAnnotRefreshKey(k => k + 1)}
-                          key={`annot-${page}-${annotRefreshKey}`}
                         />
                         <SignatureLayer
                           pdfPath={viewerFile.path}

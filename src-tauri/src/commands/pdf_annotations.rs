@@ -284,9 +284,10 @@ pub async fn add_pdf_annotation(
             Object::Real(b),
         ]));
         annot_dict.set("F", Object::Integer(4)); // Print flag
-        annot_dict.set("CA", Object::Real(
-            if annotation.subtype == "Highlight" { 0.5_f32 } else { 1.0_f32 }
-        ));
+        // Highlight translucency is baked into the appearance stream's ExtGState
+        // (ca + Multiply) below, so the annotation alpha stays fully opaque to
+        // avoid dimming the result twice.
+        annot_dict.set("CA", Object::Real(1.0_f32));
 
         if let Some(contents) = &annotation.contents {
             annot_dict.set("Contents", Object::String(
@@ -335,22 +336,65 @@ pub async fn add_pdf_annotation(
         annot_dict.set("NM", Object::String(nm.as_bytes().to_vec(), lopdf::StringFormat::Literal));
         annot_dict.set("M", Object::String(b"D:20240101120000".to_vec(), lopdf::StringFormat::Literal));
 
-        // For Highlight annotations, add a simple appearance stream so viewers render it
-        if annotation.subtype == "Highlight" {
-            let w = x1_pdf - x0_pdf;
-            let h = y1_pdf - y0_pdf;
-            let ap_ops = vec![
-                Operation::new("q", vec![]),
-                Operation::new("rg", vec![
+        // Appearance stream for text-markup annotations so our renderer (which
+        // paints the baked /AP) shows them. Highlight = one filled rect per text
+        // line; Underline/StrikeOut = one stroked line per text line. Per-line
+        // shapes come from QuadPoints (groups of 8: UL,UR,LL,LR in normalized
+        // top-left coords). Falls back to the bounding box when no QuadPoints.
+        if matches!(annotation.subtype.as_str(), "Highlight" | "Underline" | "StrikeOut") {
+            let w = (x1_pdf - x0_pdf) as f32;
+            let h = (y1_pdf - y0_pdf) as f32;
+
+            // Per-line rects in AP-local space (bottom-left origin, relative to bbox).
+            let mut lines: Vec<(f32, f32, f32, f32)> = Vec::new(); // (x, y, width, height)
+            if let Some(qp) = &annotation.quad_points {
+                let to_local = |nx: f64, ny: f64| -> (f32, f32) {
+                    ((nx * pw - x0_pdf) as f32, ((1.0 - ny) * ph - y0_pdf) as f32)
+                };
+                for c in qp.chunks(8) {
+                    if c.len() < 8 { continue; }
+                    let (_ulx, uly) = to_local(c[0], c[1]);
+                    let (llx, lly) = to_local(c[4], c[5]);
+                    let (lrx, _lry) = to_local(c[6], c[7]);
+                    lines.push((llx, lly, lrx - llx, uly - lly));
+                }
+            }
+            if lines.is_empty() {
+                lines.push((0.0, 0.0, w, h)); // whole-bbox fallback
+            }
+
+            let mut ap_ops = vec![Operation::new("q", vec![])];
+            if annotation.subtype == "Highlight" {
+                // Translucent highlighter look: Multiply blend tints the page while
+                // keeping the text underneath readable; ca is a fallback for viewers
+                // that ignore the blend mode. Defined in the form's /Resources below.
+                ap_ops.push(Operation::new("gs", vec![Object::Name(b"GS".to_vec())]));
+                ap_ops.push(Operation::new("rg", vec![
                     Object::Real(r), Object::Real(g), Object::Real(b),
-                ]),
-                Operation::new("re", vec![
-                    Object::Real(0.0_f32), Object::Real(0.0_f32),
-                    Object::Real(w as f32), Object::Real(h as f32),
-                ]),
-                Operation::new("f", vec![]),
-                Operation::new("Q", vec![]),
-            ];
+                ]));
+                for (x, y, lw, lh) in &lines {
+                    ap_ops.push(Operation::new("re", vec![
+                        Object::Real(*x), Object::Real(*y), Object::Real(*lw), Object::Real(*lh),
+                    ]));
+                    ap_ops.push(Operation::new("f", vec![]));
+                }
+            } else {
+                ap_ops.push(Operation::new("RG", vec![
+                    Object::Real(r), Object::Real(g), Object::Real(b),
+                ]));
+                let strike = annotation.subtype == "StrikeOut";
+                for (x, y, lw, lh) in &lines {
+                    let thick = (lh * 0.07).max(0.75);
+                    // StrikeOut crosses the middle; Underline sits near the baseline.
+                    let ly = if strike { y + lh / 2.0 } else { y + lh * 0.08 };
+                    ap_ops.push(Operation::new("w", vec![Object::Real(thick)]));
+                    ap_ops.push(Operation::new("m", vec![Object::Real(*x), Object::Real(ly)]));
+                    ap_ops.push(Operation::new("l", vec![Object::Real(x + lw), Object::Real(ly)]));
+                    ap_ops.push(Operation::new("S", vec![]));
+                }
+            }
+            ap_ops.push(Operation::new("Q", vec![]));
+
             let ap_content = Content { operations: ap_ops };
             let ap_bytes = ap_content.encode()?;
             let mut ap_stream_dict = Dictionary::new();
@@ -358,8 +402,19 @@ pub async fn add_pdf_annotation(
             ap_stream_dict.set("Subtype", Object::Name(b"Form".to_vec()));
             ap_stream_dict.set("BBox", Object::Array(vec![
                 Object::Real(0.0_f32), Object::Real(0.0_f32),
-                Object::Real(w as f32), Object::Real(h as f32),
+                Object::Real(w), Object::Real(h),
             ]));
+            if annotation.subtype == "Highlight" {
+                let mut gs = Dictionary::new();
+                gs.set("Type", Object::Name(b"ExtGState".to_vec()));
+                gs.set("ca", Object::Real(0.4_f32));
+                gs.set("BM", Object::Name(b"Multiply".to_vec()));
+                let mut ext = Dictionary::new();
+                ext.set("GS", Object::Dictionary(gs));
+                let mut res = Dictionary::new();
+                res.set("ExtGState", Object::Dictionary(ext));
+                ap_stream_dict.set("Resources", Object::Dictionary(res));
+            }
             let ap_stream_id = doc.add_object(Stream::new(ap_stream_dict, ap_bytes));
             let mut ap_dict = Dictionary::new();
             ap_dict.set("N", Object::Reference(ap_stream_id));

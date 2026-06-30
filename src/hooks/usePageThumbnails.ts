@@ -77,6 +77,37 @@ export function seedThumbnailsForReorder(
   }
 }
 
+/**
+ * Seed the new path's thumbnail cache from the old path for every page EXCEPT
+ * the ones that changed. Used after an in-place edit (e.g. a text-markup
+ * annotation) that only touches a few pages: unchanged pages become instant
+ * cache hits under the new path, so swapping to it re-renders ONLY the changed
+ * page(s) instead of flashing the whole document.
+ */
+export function seedThumbnailsForEdit(oldPath: string, newPath: string, changedPages: Set<number>) {
+  if (oldPath === newPath) return;
+  // Snapshot keys BEFORE touching the cache: thumbCache.keys() is the live Map
+  // iterator and get()/set() reorder it (LRU recency + eviction), so iterating
+  // it while reading/writing would re-visit re-inserted keys forever. Read all
+  // values first, then write — never mutate the map mid-iteration.
+  const toCopy: { newKey: string; page: number; scale: number; val: string }[] = [];
+  for (const key of Array.from(thumbCache.keys())) {
+    if (!key.startsWith(`${oldPath}:`)) continue;
+    const rest = key.slice(oldPath.length + 1); // "page:scale"
+    const colon = rest.indexOf(":");
+    if (colon === -1) continue;
+    const page = parseInt(rest.slice(0, colon), 10);
+    if (Number.isNaN(page) || changedPages.has(page)) continue;
+    const val = thumbCache.get(key);
+    if (val == null) continue;
+    toCopy.push({ newKey: `${newPath}:${rest}`, page, scale: parseFloat(rest.slice(colon + 1)), val });
+  }
+  for (const c of toCopy) {
+    thumbCache.set(c.newKey, c.val);
+    if (!Number.isNaN(c.scale)) sessionCache.put(thumbKey(newPath, c.page, c.scale), c.val);
+  }
+}
+
 class SimpleSemaphore {
   private activeCount = 0;
   private queue: (() => void)[] = [];
