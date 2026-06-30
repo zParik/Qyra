@@ -55,6 +55,21 @@ jobs:
           npm version "$VERSION" --no-git-tag-version
           jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
 
+      - name: Extract changelog section
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          VERSION="${{ github.ref_name }}"
+          if ! NOTES="$(bash ./scripts/changelog-section.sh "$VERSION")"; then
+            echo "::error::no CHANGELOG.md entry for $VERSION"
+            exit 1
+          fi
+          {
+            echo "RELEASE_NOTES<<__CHANGELOG_EOF__"
+            printf '%s\n' "$NOTES"
+            echo "__CHANGELOG_EOF__"
+          } >> "$GITHUB_ENV"
+
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0
         env:
@@ -63,7 +78,7 @@ jobs:
         with:
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
           releaseName: ${{ github.ref_type == 'tag' && format('Qyra {0}', github.ref_name) || '' }}
-          releaseBody: 'macOS build for Qyra.'
+          releaseBody: ${{ github.ref_type == 'tag' && env.RELEASE_NOTES || '' }}
           releaseDraft: ${{ github.ref_type == 'tag' }}
           prerelease: false
           args: '--target universal-apple-darwin'
