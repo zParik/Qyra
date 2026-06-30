@@ -47,9 +47,13 @@ jobs:
         shell: bash
         run: |
           VERSION="${{ github.ref_name }}"
+          if ! NOTES="$(bash ./scripts/changelog-section.sh "$VERSION")"; then
+            echo "::error::no CHANGELOG.md entry for $VERSION"
+            exit 1
+          fi
           {
             echo "RELEASE_NOTES<<__CHANGELOG_EOF__"
-            bash ./scripts/changelog-section.sh "$VERSION"
+            printf '%s\n' "$NOTES"
             echo "__CHANGELOG_EOF__"
           } >> "$GITHUB_ENV"
 
