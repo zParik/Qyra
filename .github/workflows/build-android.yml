@@ -169,12 +169,24 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+      - name: Extract changelog section
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          VERSION="${{ github.ref_name }}"
+          {
+            echo "RELEASE_NOTES<<__CHANGELOG_EOF__"
+            bash ./scripts/changelog-section.sh "$VERSION"
+            echo "__CHANGELOG_EOF__"
+          } >> "$GITHUB_ENV"
+
       - name: Upload to GitHub Release
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           draft: true
           name: Qyra ${{ github.ref_name }}
+          body: ${{ env.RELEASE_NOTES }}
           files: |
             src-tauri/gen/android/app/build/outputs/apk/**/*.apk
             src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
