@@ -16,6 +16,8 @@ import { LeftRail } from "./home/LeftRail";
 import { BottomTabBar } from "./home/BottomTabBar";
 import { DropHero } from "./home/DropHero";
 import { SectionHeader, ViewToggle, EmptyRecents, QuickToolCard, RecentCard, RecentList } from "./home/RecentFiles";
+import { matchHomeShortcut } from "./home/shortcuts";
+import { shortcutLabel } from "../lib/platform";
 import type { Section } from "./home/types";
 
 const RECENT_KEY = "qyra-recent";
@@ -111,7 +113,11 @@ export default function Home({ onOpenPdf }: HomeProps = {}) {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "o") { e.preventDefault(); handleBrowse(); }
+      const action = matchHomeShortcut(e);
+      if (!action) return;
+      e.preventDefault();
+      if (action === "browse") handleBrowse();
+      else navigate(action);
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -361,7 +367,7 @@ export default function Home({ onOpenPdf }: HomeProps = {}) {
                   Icon={IcMerge}
                   title="Merge PDFs"
                   desc="Combine multiple PDFs into a single document."
-                  shortcut="Cmd+M"
+                  shortcut={shortcutLabel("M")}
                   meta="Up to 100 files"
                   onClick={() => navigate("/merge")}
                   isMobile={isMobile}
@@ -370,7 +376,7 @@ export default function Home({ onOpenPdf }: HomeProps = {}) {
                   Icon={IcImage}
                   title="Images to PDF"
                   desc="Bundle JPG, PNG, HEIC, or WebP into a paginated PDF."
-                  shortcut="Cmd+I"
+                  shortcut={shortcutLabel("I")}
                   meta="JPG, PNG, HEIC, WebP"
                   onClick={() => navigate("/images-to-pdf")}
                   isMobile={isMobile}
