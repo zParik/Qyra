@@ -236,13 +236,40 @@ export interface ParaEdit { runs: RunEdit[]; align?: string | null }
 export const saveWordBody = (path: string, paras: ParaEdit[], output: string) =>
   invoke<string>("save_word_body", { path, paras, output });
 
+/** A uniform (all-sides) cell border from the shading/border UI. */
+export interface CellBorder { style: "single" | "nil"; color?: string | null; sz?: number | null }
+
+/** One cell in an edited table.
+ *  - `verbatim`: cell unchanged → re-emit its original `<w:tc>` bytes.
+ *  - `cell`: changed / new cell; `orig_row`/`orig_col` map to the source cell for
+ *    `tcPr` reuse (null = new). `grid_span`/`v_merge` carry merges; `shd`/`border`
+ *    carry shading + borders. */
+export type CellEdit =
+  | { kind: "verbatim"; orig_row: number; orig_col: number }
+  | {
+      kind: "cell";
+      orig_row: number | null;
+      orig_col: number | null;
+      grid_span?: number | null;
+      v_merge?: "restart" | "continue" | null;
+      shd?: string | null;
+      border?: CellBorder | null;
+      blocks: ParaEdit[];
+    };
+
+/** One row in an edited table; `orig_row` maps to the source row for `trPr` reuse. */
+export interface RowEdit { orig_row: number | null; cells: CellEdit[] }
+
 /** One top-level block in the editor's save order.
  *  - `verbatim`: block unchanged → re-emit its original source bytes.
  *  - `para`: a paragraph; `orig` = original block index (keeps its pPr) or null
- *    for a newly inserted paragraph. */
+ *    for a newly inserted paragraph.
+ *  - `table`: a table; `orig` = original block index (reuses tblPr/grid/tcPr),
+ *    `cols` = current column count, `rows` = current grid. */
 export type BlockEdit =
   | { kind: "verbatim"; orig: number }
-  | { kind: "para"; orig: number | null; runs: RunEdit[]; align?: string | null };
+  | { kind: "para"; orig: number | null; runs: RunEdit[]; align?: string | null }
+  | { kind: "table"; orig: number | null; cols: number; rows: RowEdit[] };
 
 /** Structure-preserving save: rebuild the body from the ordered block list,
  *  re-emitting untouched blocks byte-for-byte and re-serializing only changed

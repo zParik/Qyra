@@ -70,6 +70,64 @@ pub enum BlockEdit {
         #[serde(default)]
         align: Option<String>,
     },
+    /// A table. `orig = Some(i)` reuses block `i`'s `tblPr`, column widths, per-row
+    /// `trPr`, and per-cell `tcPr` from the source; `cols` is the current column
+    /// count (grid regenerated to match) and `rows` the current grid.
+    Table {
+        #[serde(default)]
+        orig: Option<usize>,
+        cols: usize,
+        rows: Vec<RowEdit>,
+    },
+}
+
+/// One row in an edited table. `orig_row` maps to the source row for `trPr` reuse.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct RowEdit {
+    #[serde(default)]
+    pub orig_row: Option<usize>,
+    pub cells: Vec<CellEdit>,
+}
+
+/// One cell in an edited table.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum CellEdit {
+    /// Untouched cell — re-emit its original `<w:tc>` bytes (keeps shading, borders,
+    /// nested content, everything).
+    Verbatim { orig_row: usize, orig_col: usize },
+    /// Changed / new cell — rebuild `<w:tc>` from the reused `tcPr` (when
+    /// `orig_row`/`orig_col` are set) plus the current span/merge/shading/border and
+    /// paragraph content.
+    Cell {
+        #[serde(default)]
+        orig_row: Option<usize>,
+        #[serde(default)]
+        orig_col: Option<usize>,
+        #[serde(default)]
+        grid_span: Option<u32>,
+        #[serde(default)]
+        v_merge: Option<String>,
+        /// Cell shading fill, "RRGGBB".
+        #[serde(default)]
+        shd: Option<String>,
+        #[serde(default)]
+        border: Option<CellBorder>,
+        blocks: Vec<ParaEdit>,
+    },
+}
+
+/// A uniform (all-sides) cell border applied from the shading/border UI.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct CellBorder {
+    /// "single" to draw, "nil" to clear.
+    pub style: String,
+    /// "RRGGBB" or "auto".
+    #[serde(default)]
+    pub color: Option<String>,
+    /// Eighth-points (`w:sz` unit); defaults to 4 (½pt).
+    #[serde(default)]
+    pub sz: Option<u32>,
 }
 
 /// A captured original top-level body block: its byte span in `document.xml` and
@@ -534,6 +592,13 @@ pub fn reconcile_body_in_package(bytes: &[u8], blocks: &[BlockEdit]) -> Result<V
                     None => emit_paragraph(&mut body, "<w:p>", b"", runs, align.as_deref()),
                 }
             }
+            BlockEdit::Table { orig, cols, rows } => {
+                let skel = orig
+                    .and_then(|i| cap.blocks.get(i))
+                    .filter(|c| c.is_table)
+                    .map(|c| parse_table_skeleton(&xml[c.start..c.end]));
+                emit_table(&mut body, skel.as_ref(), *cols, rows);
+            }
         }
     }
     body.push_str(&cap.sectpr);
@@ -667,6 +732,271 @@ fn extract_ppr(block: &str) -> String {
         return rest[..e + 2].to_string();
     }
     String::new()
+}
+
+/// The original layout of a table, captured for lossless re-emission: its
+/// `tblPr`, grid columns, and per-row `trPr` + per-cell (`tcPr`, full bytes).
+struct TableSkeleton {
+    tbl_pr: String,
+    grid: Vec<String>,
+    rows: Vec<RowSkel>,
+}
+struct RowSkel {
+    tr_pr: String,
+    cells: Vec<CellSkel>,
+}
+struct CellSkel {
+    tc_pr: String,
+    full: String,
+}
+
+/// Parse a captured `<w:tbl>…</w:tbl>` into its [`TableSkeleton`]. Only the outer
+/// table's rows/cells are indexed; a nested table rides inside a cell's `full`
+/// bytes untouched.
+fn parse_table_skeleton(tbl: &str) -> TableSkeleton {
+    let mut tbl_pr = String::new();
+    let mut grid = Vec::new();
+    let mut rows = Vec::new();
+    for (name, s, e) in direct_children(tbl) {
+        match name.as_slice() {
+            b"w:tblPr" => tbl_pr = tbl[s..e].to_string(),
+            b"w:tblGrid" => {
+                let gx = &tbl[s..e];
+                for (gn, gs, ge) in direct_children(gx) {
+                    if gn == b"w:gridCol" {
+                        grid.push(gx[gs..ge].to_string());
+                    }
+                }
+            }
+            b"w:tr" => {
+                let rx = &tbl[s..e];
+                let mut tr_pr = String::new();
+                let mut cells = Vec::new();
+                for (cn, cs, ce) in direct_children(rx) {
+                    match cn.as_slice() {
+                        b"w:trPr" => tr_pr = rx[cs..ce].to_string(),
+                        b"w:tc" => {
+                            let full = rx[cs..ce].to_string();
+                            let mut tc_pr = String::new();
+                            for (dn, ds, de) in direct_children(&full) {
+                                if dn == b"w:tcPr" {
+                                    tc_pr = full[ds..de].to_string();
+                                    break;
+                                }
+                            }
+                            cells.push(CellSkel { tc_pr, full });
+                        }
+                        _ => {}
+                    }
+                }
+                rows.push(RowSkel { tr_pr, cells });
+            }
+            _ => {}
+        }
+    }
+    TableSkeleton { tbl_pr, grid, rows }
+}
+
+/// Emit a `<w:tbl>` from the edited `rows`, reusing the source skeleton (`tblPr`,
+/// grid, `trPr`, `tcPr`, verbatim cells) where the edit references it.
+fn emit_table(body: &mut String, skel: Option<&TableSkeleton>, cols: usize, rows: &[RowEdit]) {
+    body.push_str("<w:tbl>");
+    match skel {
+        Some(s) if !s.tbl_pr.is_empty() => body.push_str(&s.tbl_pr),
+        _ => body.push_str(DEFAULT_TBL_PR),
+    }
+    body.push_str("<w:tblGrid>");
+    for c in 0..cols.max(1) {
+        match skel.and_then(|s| s.grid.get(c)) {
+            Some(g) => body.push_str(g),
+            None => body.push_str("<w:gridCol w:w=\"1440\"/>"),
+        }
+    }
+    body.push_str("</w:tblGrid>");
+    for row in rows {
+        body.push_str("<w:tr>");
+        if let Some(tr) = row.orig_row.and_then(|r| skel.and_then(|s| s.rows.get(r))) {
+            body.push_str(&tr.tr_pr);
+        }
+        for cell in &row.cells {
+            match cell {
+                CellEdit::Verbatim { orig_row, orig_col } => {
+                    match skel.and_then(|s| s.rows.get(*orig_row)).and_then(|r| r.cells.get(*orig_col)) {
+                        Some(cs) => body.push_str(&cs.full),
+                        None => body.push_str("<w:tc><w:p/></w:tc>"),
+                    }
+                }
+                CellEdit::Cell { orig_row, orig_col, grid_span, v_merge, shd, border, blocks } => {
+                    body.push_str("<w:tc>");
+                    let base = (*orig_row)
+                        .zip(*orig_col)
+                        .and_then(|(r, c)| skel.and_then(|s| s.rows.get(r)).and_then(|rr| rr.cells.get(c)))
+                        .map(|cs| cs.tc_pr.clone())
+                        .unwrap_or_default();
+                    let span = grid_span.unwrap_or(1);
+                    body.push_str(&build_tcpr(&base, span, v_merge.as_deref(), shd.as_deref(), border.as_ref()));
+                    if blocks.is_empty() {
+                        body.push_str("<w:p/>"); // a cell must hold at least one block
+                    } else {
+                        for pe in blocks {
+                            emit_paragraph(body, "<w:p>", b"", &pe.runs, pe.align.as_deref());
+                        }
+                    }
+                    body.push_str("</w:tc>");
+                }
+            }
+        }
+        body.push_str("</w:tr>");
+    }
+    body.push_str("</w:tbl>");
+}
+
+const DEFAULT_TBL_PR: &str = "<w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblBorders>\
+<w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>\
+<w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>\
+<w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>\
+<w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>\
+<w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>\
+<w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>\
+</w:tblBorders></w:tblPr>";
+
+/// Rebuild a `<w:tcPr>` from the source cell's `tcPr` (`base_tcpr`), replacing the
+/// span / merge / shading / border we manage while preserving the rest (width,
+/// margins, vertical alignment, …). Returns "" when the result is empty.
+fn build_tcpr(base_tcpr: &str, grid_span: u32, v_merge: Option<&str>, shd: Option<&str>, border: Option<&CellBorder>) -> String {
+    let mut inner = tcpr_inner(base_tcpr);
+    // Keep tcW first (schema order); strip the elements we own.
+    let tcw = extract_element(&inner, "w:tcW").map(|(s, e)| inner[s..e].to_string()).unwrap_or_default();
+    for t in ["w:tcW", "w:gridSpan", "w:hMerge", "w:vMerge", "w:tcBorders", "w:shd"] {
+        remove_element(&mut inner, t);
+    }
+    let mut out = String::new();
+    out.push_str(&tcw);
+    if grid_span > 1 {
+        out.push_str(&format!("<w:gridSpan w:val=\"{grid_span}\"/>"));
+    }
+    match v_merge {
+        Some("restart") => out.push_str("<w:vMerge w:val=\"restart\"/>"),
+        Some(_) => out.push_str("<w:vMerge/>"),
+        None => {}
+    }
+    if let Some(b) = border {
+        let color = b.color.as_deref().unwrap_or("auto");
+        let color = color.trim_start_matches('#');
+        let sz = b.sz.unwrap_or(4);
+        out.push_str("<w:tcBorders>");
+        for side in ["top", "left", "bottom", "right"] {
+            out.push_str(&format!(
+                "<w:{side} w:val=\"{}\" w:sz=\"{sz}\" w:space=\"0\" w:color=\"{color}\"/>",
+                b.style
+            ));
+        }
+        out.push_str("</w:tcBorders>");
+    }
+    if let Some(fill) = shd {
+        out.push_str(&format!("<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"{}\"/>", fill.trim_start_matches('#')));
+    }
+    out.push_str(&inner);
+    if out.is_empty() {
+        String::new()
+    } else {
+        format!("<w:tcPr>{out}</w:tcPr>")
+    }
+}
+
+/// The children of `<w:tcPr>…</w:tcPr>` (or "" for none / self-closing).
+fn tcpr_inner(tcpr: &str) -> String {
+    if let (Some(s), Some(e)) = (tcpr.find('>'), tcpr.rfind("</w:tcPr>")) {
+        if s < e {
+            return tcpr[s + 1..e].to_string();
+        }
+    }
+    String::new()
+}
+
+/// Byte range of the first `<tag …/>` or `<tag …>…</tag>` element in `s`, matching
+/// the tag name exactly (not a longer name with the same prefix).
+fn extract_element(s: &str, tag: &str) -> Option<(usize, usize)> {
+    let open = format!("<{tag}");
+    let mut from = 0;
+    while let Some(rel) = s[from..].find(&open) {
+        let i = from + rel;
+        let next = s.as_bytes().get(i + open.len()).copied();
+        if matches!(next, Some(b' ') | Some(b'/') | Some(b'>')) {
+            let rest = &s[i..];
+            let open_end = rest.find('>')?;
+            if rest.as_bytes()[open_end - 1] == b'/' {
+                return Some((i, i + open_end + 1)); // self-closing
+            }
+            let close = format!("</{tag}>");
+            return match rest.find(&close) {
+                Some(ce) => Some((i, i + ce + close.len())),
+                None => Some((i, i + open_end + 1)),
+            };
+        }
+        from = i + open.len();
+    }
+    None
+}
+
+fn remove_element(s: &mut String, tag: &str) {
+    while let Some((a, b)) = extract_element(s, tag) {
+        s.replace_range(a..b, "");
+    }
+}
+
+/// The direct child elements of the single outer element in `frag` (which is
+/// `"<X …>…</X>"`), each as (qualified name, start, end) byte offsets into `frag`.
+/// Empty (self-closing) children are included; text between elements is ignored.
+fn direct_children(frag: &str) -> Vec<(Vec<u8>, usize, usize)> {
+    let mut reader = Reader::from_str(frag);
+    let mut buf = Vec::new();
+    let mut children = Vec::new();
+    let mut outer_open = false;
+    let mut child_open = 0i32;
+    let mut cur_start = 0usize;
+    let mut cur_name: Vec<u8> = Vec::new();
+    loop {
+        let pos = reader.buffer_position() as usize;
+        let ev = match reader.read_event_into(&mut buf) {
+            Ok(ev) => ev,
+            Err(_) => break,
+        };
+        let after = reader.buffer_position() as usize;
+        match ev {
+            Event::Start(e) => {
+                let name = e.name().as_ref().to_vec();
+                if !outer_open {
+                    outer_open = true;
+                } else if child_open == 0 {
+                    cur_start = pos;
+                    cur_name = name;
+                    child_open = 1;
+                } else {
+                    child_open += 1;
+                }
+            }
+            Event::Empty(e) => {
+                if outer_open && child_open == 0 {
+                    children.push((e.name().as_ref().to_vec(), pos, after));
+                }
+            }
+            Event::End(_) => {
+                if outer_open && child_open == 0 {
+                    break; // closing the outer element
+                } else if child_open > 0 {
+                    child_open -= 1;
+                    if child_open == 0 {
+                        children.push((std::mem::take(&mut cur_name), cur_start, after));
+                    }
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    children
 }
 
 fn xml_escape(s: &str) -> String {
@@ -853,6 +1183,79 @@ mod tests {
         let xml = r#"<w:document xmlns:w="x"><w:body><w:p/><w:sectPr/></w:body></w:document>"#;
         let out = reconcile_body_in_package(&docx_with(xml), &[BlockEdit::Verbatim { orig: 0 }]).unwrap();
         assert_eq!(document_text(&out), xml, "self-closing paragraph + sectPr reproduced exactly");
+    }
+
+    const TABLE_XML: &str = r#"<w:document xmlns:w="x"><w:body><w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="4680"/><w:gridCol w:w="4680"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4680" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>B1</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"#;
+
+    fn cell_v(r: usize, c: usize) -> CellEdit {
+        CellEdit::Verbatim { orig_row: r, orig_col: c }
+    }
+
+    #[test]
+    fn reconcile_table_all_verbatim_cells_is_byte_identical() {
+        let edit = vec![BlockEdit::Table {
+            orig: Some(0),
+            cols: 2,
+            rows: vec![RowEdit { orig_row: Some(0), cells: vec![cell_v(0, 0), cell_v(0, 1)] }],
+        }];
+        let out = reconcile_body_in_package(&docx_with(TABLE_XML), &edit).unwrap();
+        // Rebuilding a table from its skeleton + verbatim cells reproduces it exactly.
+        assert_eq!(document_text(&out), TABLE_XML);
+    }
+
+    #[test]
+    fn reconcile_table_edits_one_cell_keeps_others_and_tcpr() {
+        let edit = vec![BlockEdit::Table {
+            orig: Some(0),
+            cols: 2,
+            rows: vec![RowEdit {
+                orig_row: Some(0),
+                cells: vec![
+                    CellEdit::Cell {
+                        orig_row: Some(0),
+                        orig_col: Some(0),
+                        grid_span: None,
+                        v_merge: None,
+                        shd: None,
+                        border: None,
+                        blocks: vec![ParaEdit { runs: vec![run("Edited", true)], align: None }],
+                    },
+                    cell_v(0, 1),
+                ],
+            }],
+        }];
+        let out = reconcile_body_in_package(&docx_with(TABLE_XML), &edit).unwrap();
+        let text = document_text(&out);
+        assert!(text.contains("<w:tcW w:w=\"4680\" w:type=\"dxa\"/>"), "edited cell keeps its tcPr width");
+        assert!(text.contains("<w:b/>") && text.contains("Edited"), "new cell content emitted");
+        assert!(!text.contains("A1"), "old cell content replaced");
+        assert!(text.contains("<w:t>B1</w:t>"), "sibling cell untouched");
+    }
+
+    #[test]
+    fn reconcile_table_applies_span_shading_and_border() {
+        let edit = vec![BlockEdit::Table {
+            orig: Some(0),
+            cols: 2,
+            rows: vec![RowEdit {
+                orig_row: Some(0),
+                cells: vec![CellEdit::Cell {
+                    orig_row: Some(0),
+                    orig_col: Some(0),
+                    grid_span: Some(2),
+                    v_merge: None,
+                    shd: Some("FFFF00".into()),
+                    border: Some(CellBorder { style: "single".into(), color: None, sz: None }),
+                    blocks: vec![ParaEdit { runs: vec![run("wide", false)], align: None }],
+                }],
+            }],
+        }];
+        let out = reconcile_body_in_package(&docx_with(TABLE_XML), &edit).unwrap();
+        let text = document_text(&out);
+        assert!(text.contains("<w:gridSpan w:val=\"2\"/>"), "horizontal span emitted");
+        assert!(text.contains("w:fill=\"FFFF00\""), "shading fill emitted");
+        assert!(text.contains("<w:tcBorders>"), "cell borders emitted");
+        assert!(text.contains("<w:tcW w:w=\"4680\" w:type=\"dxa\"/>"), "base tcPr width preserved");
     }
 
     #[test]

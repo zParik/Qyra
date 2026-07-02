@@ -45,12 +45,7 @@ fn paragraph_html(p: &Paragraph, out: &mut String, block_idx: Option<usize>) {
 
 fn table_html(t: &Table, out: &mut String, block_idx: Option<usize>) {
     let key = block_idx.map(|i| format!(" data-block=\"{i}\"")).unwrap_or_default();
-    // Wave A: tables render read-only (cell editing lands in a later wave), so a
-    // stray keystroke can't silently drop cell content on save.
-    out.push_str(&format!(
-        "<table{} class=\"qyra-table\" contenteditable=\"false\" style=\"border-collapse:collapse\">",
-        key
-    ));
+    out.push_str(&format!("<table{} class=\"qyra-table\" style=\"border-collapse:collapse\">", key));
     for (ri, row) in t.rows.iter().enumerate() {
         out.push_str("<tr>");
         for (ci, cell) in row.cells.iter().enumerate() {

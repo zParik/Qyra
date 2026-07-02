@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
-  getWordHtml, saveWordDocument, replaceInWord, type RunEdit, type BlockEdit,
+  getWordHtml, saveWordDocument, replaceInWord,
+  type RunEdit, type BlockEdit, type ParaEdit, type RowEdit, type CellEdit, type CellBorder,
 } from "../lib/tauri";
 import { UI } from "../lib/tokens";
 
@@ -27,11 +28,11 @@ function mapAlign(ta: string): string {
 
 /**
  * Serialize the editor surface into the ordered block list the save path wants.
- * Untouched paragraphs (innerHTML matches their snapshot) become `verbatim` so
- * the backend re-emits their exact source bytes; changed / new paragraphs carry
- * their runs. Tables re-emit verbatim in this wave (read-only).
+ * Untouched blocks (innerHTML matches their snapshot) become `verbatim` so the
+ * backend re-emits their exact source bytes; changed / new paragraphs carry their
+ * runs; touched tables are walked into rows/cells (untouched cells stay verbatim).
  */
-function collectBlocks(root: HTMLElement, orig: Record<number, string>): BlockEdit[] {
+function collectBlocks(root: HTMLElement, orig: Record<number, string>, cellOrig: Record<string, string>): BlockEdit[] {
   const out: BlockEdit[] = [];
   for (const el of Array.from(root.children) as HTMLElement[]) {
     const tag = el.tagName.toLowerCase();
@@ -39,7 +40,11 @@ function collectBlocks(root: HTMLElement, orig: Record<number, string>): BlockEd
     const origIdx = dbAttr == null ? null : parseInt(dbAttr, 10);
 
     if (tag === "table") {
-      if (origIdx != null) out.push({ kind: "verbatim", orig: origIdx });
+      if (origIdx != null && el.innerHTML === orig[origIdx]) {
+        out.push({ kind: "verbatim", orig: origIdx });
+      } else {
+        out.push(collectTable(el as HTMLTableElement, origIdx, cellOrig));
+      }
       continue;
     }
     if (tag === "hr") continue; // stray page-break rule pulled out of a paragraph
@@ -56,6 +61,123 @@ function collectBlocks(root: HTMLElement, orig: Record<number, string>): BlockEd
     }
   }
   return out;
+}
+
+/** The `<tr>`s of a table, whether or not the browser inserted a `<tbody>`. */
+function tableRows(table: HTMLTableElement): HTMLTableRowElement[] {
+  return Array.from(table.querySelectorAll<HTMLTableRowElement>(":scope > tr, :scope > tbody > tr"));
+}
+
+/**
+ * Walk an edited table into the backend's row/cell model. Builds an occupancy
+ * grid from HTML colspan/rowspan, then emits one `<w:tc>` per grid column run:
+ * a colspan → `gridSpan`, a rowspan → a `vMerge` restart cell plus `continue`
+ * placeholder cells in the rows it covers. Untouched single cells stay verbatim.
+ */
+function collectTable(table: HTMLTableElement, blockIdx: number | null, cellOrig: Record<string, string>): BlockEdit {
+  const trs = tableRows(table);
+  type Origin = { td: HTMLTableCellElement; colspan: number; rowspan: number };
+  const origin: (Origin | null)[][] = [];
+  const covered: boolean[][] = [];
+  const ensure = (r: number) => { while (origin.length <= r) { origin.push([]); covered.push([]); } };
+
+  for (let r = 0; r < trs.length; r++) {
+    ensure(r);
+    const tds = Array.from(trs[r]!.children).filter((c) => c.tagName.toLowerCase() === "td") as HTMLTableCellElement[];
+    let c = 0;
+    for (const td of tds) {
+      while (covered[r]![c]) c++;
+      const colspan = Math.max(1, td.colSpan || 1);
+      const rowspan = Math.max(1, td.rowSpan || 1);
+      ensure(r + rowspan - 1);
+      origin[r]![c] = { td, colspan, rowspan };
+      for (let rr = r; rr < r + rowspan; rr++) { ensure(rr); for (let cc = c; cc < c + colspan; cc++) covered[rr]![cc] = true; }
+      c += colspan;
+    }
+  }
+  const ncol = Math.max(1, ...covered.map((row) => row.length));
+
+  const rows: RowEdit[] = [];
+  for (let r = 0; r < trs.length; r++) {
+    const cells: CellEdit[] = [];
+    let c = 0;
+    while (c < ncol) {
+      const og = origin[r]![c];
+      if (og) {
+        cells.push(makeCellEdit(og.td, blockIdx, cellOrig, og.colspan, og.rowspan > 1 ? "restart" : null));
+        c += og.colspan;
+      } else if (covered[r]![c]) {
+        // Vertical continuation of a cell that started in an earlier row.
+        let or_ = r; while (or_ >= 0 && !origin[or_]![c]) or_--;
+        const colspan = or_ >= 0 ? origin[or_]![c]!.colspan : 1;
+        cells.push({ kind: "cell", orig_row: null, orig_col: null, grid_span: colspan > 1 ? colspan : null, v_merge: "continue", shd: null, border: null, blocks: [] });
+        c += colspan;
+      } else {
+        // Ragged row shortfall — pad with an empty new cell.
+        cells.push({ kind: "cell", orig_row: null, orig_col: null, grid_span: null, v_merge: null, shd: null, border: null, blocks: [{ runs: [], align: null }] });
+        c += 1;
+      }
+    }
+    rows.push({ orig_row: rowOrig(trs[r]!), cells });
+  }
+  return { kind: "table", orig: blockIdx, cols: ncol, rows };
+}
+
+/** Original row index for a `<tr>` (from the first mapped cell), or null if new. */
+function rowOrig(tr: HTMLTableRowElement): number | null {
+  for (const td of Array.from(tr.children) as HTMLElement[]) {
+    const r = td.getAttribute("data-r");
+    if (r != null) return parseInt(r, 10);
+  }
+  return null;
+}
+
+function cellShd(td: HTMLElement): string | null {
+  return td.dataset.shd || null;
+}
+
+function cellBorder(td: HTMLElement): CellBorder | null {
+  const b = td.dataset.border;
+  if (!b) return null;
+  if (b === "nil") return { style: "nil" };
+  const [style, color, sz] = b.split(":");
+  return { style: style === "nil" ? "nil" : "single", color: color || null, sz: sz ? parseInt(sz, 10) : null };
+}
+
+/** Build a cell edit: verbatim when a mapped single cell is untouched, else a
+ *  rebuilt cell carrying its span/merge/shading/border + paragraph content. */
+function makeCellEdit(
+  td: HTMLTableCellElement, blockIdx: number | null, cellOrig: Record<string, string>,
+  colspan: number, vMerge: "restart" | null,
+): CellEdit {
+  const rAttr = td.getAttribute("data-r");
+  const cAttr = td.getAttribute("data-c");
+  const origRow = rAttr == null ? null : parseInt(rAttr, 10);
+  const origCol = cAttr == null ? null : parseInt(cAttr, 10);
+  const shd = cellShd(td);
+  const border = cellBorder(td);
+  const key = blockIdx != null && origRow != null && origCol != null ? `${blockIdx}:${origRow}:${origCol}` : null;
+
+  if (origRow != null && origCol != null && colspan === 1 && vMerge == null && !shd && !border && key != null && td.innerHTML === cellOrig[key]) {
+    return { kind: "verbatim", orig_row: origRow, orig_col: origCol };
+  }
+  return {
+    kind: "cell",
+    orig_row: origRow, orig_col: origCol,
+    grid_span: colspan > 1 ? colspan : null,
+    v_merge: vMerge,
+    shd, border,
+    blocks: collectCellParas(td),
+  };
+}
+
+/** A cell's paragraphs; a cell with only loose text becomes one paragraph. */
+function collectCellParas(td: HTMLElement): ParaEdit[] {
+  const ps = Array.from(td.querySelectorAll<HTMLElement>(":scope > p"));
+  if (ps.length === 0) {
+    return [{ runs: collectRuns(td), align: mapAlign(getComputedStyle(td).textAlign) }];
+  }
+  return ps.map((p) => ({ runs: collectRuns(p), align: mapAlign(getComputedStyle(p).textAlign) }));
 }
 
 /** Serialize a paragraph element's text into formatting-grouped runs. */
@@ -108,6 +230,7 @@ export default function WordViewer() {
 
   const editRef = useRef<HTMLDivElement>(null);
   const origHtmlRef = useRef<Record<number, string>>({});
+  const origCellRef = useRef<Record<string, string>>({}); // "blockIdx:r:c" -> cell innerHTML
 
   // Load (and reload after a save) the document as editable HTML.
   useEffect(() => {
@@ -132,11 +255,19 @@ export default function WordViewer() {
     if (html == null || !editRef.current) return;
     editRef.current.innerHTML = html;
     const map: Record<number, string> = {};
+    const cellMap: Record<string, string> = {};
     editRef.current.querySelectorAll<HTMLElement>(":scope > [data-block]").forEach((n) => {
       const i = parseInt(n.getAttribute("data-block") || "-1", 10);
-      if (i >= 0) map[i] = n.innerHTML;
+      if (i < 0) return;
+      map[i] = n.innerHTML;
+      if (n.tagName.toLowerCase() === "table") {
+        n.querySelectorAll<HTMLElement>("td[data-r][data-c]").forEach((td) => {
+          cellMap[`${i}:${td.getAttribute("data-r")}:${td.getAttribute("data-c")}`] = td.innerHTML;
+        });
+      }
     });
     origHtmlRef.current = map;
+    origCellRef.current = cellMap;
     try { document.execCommand("defaultParagraphSeparator", false, "p"); } catch { /* ignore */ }
   }, [html]);
 
@@ -160,7 +291,7 @@ export default function WordViewer() {
     setSaving(true);
     setError(null);
     try {
-      const blocks = collectBlocks(editRef.current, origHtmlRef.current);
+      const blocks = collectBlocks(editRef.current, origHtmlRef.current, origCellRef.current);
       await saveWordDocument(path, blocks, path);
       setStatus("Saved.");
       setVersion((v) => v + 1); // reload from the saved file
