@@ -212,6 +212,8 @@ pub fn parse_document_xml(
     // page break after the paragraph). ponytail: treats every in-pPr section
     // break as next-page; the rarer "continuous" type also breaks here.
     let mut para_sectpr_break = false;
+    // Set by a leading <w:lastRenderedPageBreak/> — the paragraph starts a new page.
+    let mut para_break_before = false;
     let mut cur_tab_stops: Vec<f32> = Vec::new();
 
     // Paragraph-in-progress state.
@@ -250,11 +252,13 @@ pub fn parse_document_xml(
                         inlines.clear();
                         run_direct = RunPropsPartial::default();
                         para_sectpr_break = false;
+                        para_break_before = false;
                         cur_tab_stops.clear();
                     }
                     b"w:sectPr" if stack.iter().any(|n| n.as_slice() == b"w:pPr") => {
                         para_sectpr_break = true;
                     }
+                    b"w:lastRenderedPageBreak" if in_para => para_break_before = true,
                     b"w:r" => run_direct = RunPropsPartial::default(),
                     b"w:t" => {
                         in_text = true;
@@ -275,6 +279,10 @@ pub fn parse_document_xml(
                 if name.as_slice() == b"w:p" {
                     let pp = styles.para_for(None);
                     emit_block(Block::Paragraph(Paragraph { props: pp, inlines: vec![] }), &mut tables, &mut blocks);
+                } else if name.as_slice() == b"w:lastRenderedPageBreak" {
+                    if in_para {
+                        para_break_before = true;
+                    }
                 } else if !handle_table_leaf(&name, &e, &mut tables)
                     && !handle_image_leaf(&name, &e, media, &mut cur_ext, &mut inlines, in_para)
                     && !try_page_break(&name, &e, &mut inlines, in_para)
@@ -312,7 +320,9 @@ pub fn parse_document_xml(
                             inlines.push(Inline::PageBreak);
                             para_sectpr_break = false;
                         }
-                        let para = build_paragraph(styles, &style_id, &para_direct, &list, &mut inlines, numbering, &mut counters, &cur_tab_stops);
+                        let mut para = build_paragraph(styles, &style_id, &para_direct, &list, &mut inlines, numbering, &mut counters, &cur_tab_stops);
+                        para.props.break_before = para_break_before;
+                        para_break_before = false;
                         emit_block(Block::Paragraph(para), &mut tables, &mut blocks);
                         in_para = false;
                     }
@@ -621,6 +631,19 @@ mod tests {
         // One block per source <w:p>; the break rides inside the middle paragraph.
         assert_eq!(doc.blocks.len(), 3, "page break must not split a paragraph into extra blocks");
         assert!(has_page_break(&doc));
+    }
+
+    #[test]
+    fn last_rendered_page_break_sets_break_before() {
+        let xml = r#"<w:document xmlns:w="x"><w:body>
+          <w:p><w:r><w:t>Title</w:t></w:r></w:p>
+          <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:lastRenderedPageBreak/><w:t>DECLARATION</w:t></w:r></w:p>
+          </w:body></w:document>"#;
+        let doc = parse_document_xml(xml, &Styles::empty(), &MediaMap::new(), &Numbering::empty()).expect("parse");
+        let Block::Paragraph(p1) = &doc.blocks[1] else { panic!("expected paragraph") };
+        assert!(p1.props.break_before, "lastRenderedPageBreak must start a new page");
+        let Block::Paragraph(p0) = &doc.blocks[0] else { panic!("expected paragraph") };
+        assert!(!p0.props.break_before, "the prior paragraph must not break");
     }
 
     #[test]

@@ -29,7 +29,9 @@ pub fn to_html(doc: &Document) -> String {
 /// `data-block`) and `None` for a paragraph nested in a table cell.
 fn paragraph_html(p: &Paragraph, out: &mut String, block_idx: Option<usize>) {
     let key = block_idx.map(|i| format!(" data-block=\"{i}\"")).unwrap_or_default();
-    out.push_str(&format!("<p{}{}>", key, para_style(p)));
+    // Word's recorded page-break-before, so the editor can start a fresh page here.
+    let brk = if p.props.break_before { " data-break-before=\"1\"" } else { "" };
+    out.push_str(&format!("<p{}{}{}>", key, brk, para_style(p)));
     if let Some(marker) = &p.props.list_marker {
         out.push_str(&format!("<span class=\"qyra-marker\">{}\u{00a0}</span>", esc(marker)));
     }

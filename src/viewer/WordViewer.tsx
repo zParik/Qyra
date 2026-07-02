@@ -100,12 +100,15 @@ function paginate(root: HTMLElement, px: PxMetrics) {
   let breakNext = false;
   for (const b of blocks) {
     const bh = heights.get(b) || 0;
-    if (breakNext || (used > 0 && used + bh > px.contentH)) {
+    // break-before (Word's recorded page start) | break-after from a prior block |
+    // height overflow. Only ever break when the current page already has content.
+    const breakBefore = b.getAttribute?.("data-break-before") === "1";
+    if (used > 0 && (breakNext || breakBefore || used + bh > px.contentH)) {
       page = makePage(px);
       root.appendChild(page);
       used = 0;
-      breakNext = false;
     }
+    breakNext = false;
     page.appendChild(b);
     used += bh;
     if (b.matches?.(".qyra-pagebreak") || b.querySelector?.(".qyra-pagebreak")) breakNext = true;

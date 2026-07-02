@@ -73,6 +73,9 @@ pub struct ParaProps {
     /// Tab-stop positions in points (sorted), from `w:tabs`.
     pub tab_stops: Vec<f32>,
     pub style_id: Option<String>,
+    /// This paragraph starts a new page. Set from a leading `<w:lastRenderedPageBreak/>`
+    /// (Word's record of where it last broke) so the editor reproduces Word's pages.
+    pub break_before: bool,
 }
 
 impl Default for ParaProps {
@@ -88,6 +91,7 @@ impl Default for ParaProps {
             list_marker: None,
             tab_stops: Vec::new(),
             style_id: None,
+            break_before: false,
         }
     }
 }
