@@ -108,7 +108,7 @@ function paginate(root: HTMLElement, px: PxMetrics) {
     }
     page.appendChild(b);
     used += bh;
-    if (b.querySelector?.(".qyra-pagebreak")) breakNext = true;
+    if (b.matches?.(".qyra-pagebreak") || b.querySelector?.(".qyra-pagebreak")) breakNext = true;
   }
 
   if (saved && saved.an && root.contains(saved.an) && sel) {
