@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
-  getWordHtml, setWordParagraphRuns, saveWordBody, replaceInWord, type RunEdit,
+  getWordHtml, saveWordDocument, replaceInWord, type RunEdit, type BlockEdit,
 } from "../lib/tauri";
 import { UI } from "../lib/tokens";
 
@@ -23,6 +23,39 @@ function mapAlign(ta: string): string {
   if (ta === "right" || ta === "end") return "right";
   if (ta === "justify") return "justify";
   return "left";
+}
+
+/**
+ * Serialize the editor surface into the ordered block list the save path wants.
+ * Untouched paragraphs (innerHTML matches their snapshot) become `verbatim` so
+ * the backend re-emits their exact source bytes; changed / new paragraphs carry
+ * their runs. Tables re-emit verbatim in this wave (read-only).
+ */
+function collectBlocks(root: HTMLElement, orig: Record<number, string>): BlockEdit[] {
+  const out: BlockEdit[] = [];
+  for (const el of Array.from(root.children) as HTMLElement[]) {
+    const tag = el.tagName.toLowerCase();
+    const dbAttr = el.getAttribute("data-block");
+    const origIdx = dbAttr == null ? null : parseInt(dbAttr, 10);
+
+    if (tag === "table") {
+      if (origIdx != null) out.push({ kind: "verbatim", orig: origIdx });
+      continue;
+    }
+    if (tag === "hr") continue; // stray page-break rule pulled out of a paragraph
+    if (tag !== "p") {
+      // Unknown top-level node (e.g. a div from a paste) → treat as a paragraph.
+      const runs = collectRuns(el);
+      if (runs.length) out.push({ kind: "para", orig: null, runs, align: mapAlign(getComputedStyle(el).textAlign) });
+      continue;
+    }
+    if (origIdx != null && el.innerHTML === orig[origIdx]) {
+      out.push({ kind: "verbatim", orig: origIdx });
+    } else {
+      out.push({ kind: "para", orig: origIdx, runs: collectRuns(el), align: mapAlign(getComputedStyle(el).textAlign) });
+    }
+  }
+  return out;
 }
 
 /** Serialize a paragraph element's text into formatting-grouped runs. */
@@ -99,8 +132,8 @@ export default function WordViewer() {
     if (html == null || !editRef.current) return;
     editRef.current.innerHTML = html;
     const map: Record<number, string> = {};
-    editRef.current.querySelectorAll<HTMLElement>("[data-p]").forEach((n) => {
-      const i = parseInt(n.getAttribute("data-p") || "-1", 10);
+    editRef.current.querySelectorAll<HTMLElement>(":scope > [data-block]").forEach((n) => {
+      const i = parseInt(n.getAttribute("data-block") || "-1", 10);
       if (i >= 0) map[i] = n.innerHTML;
     });
     origHtmlRef.current = map;
@@ -127,23 +160,9 @@ export default function WordViewer() {
     setSaving(true);
     setError(null);
     try {
-      const topParas = Array.from(editRef.current.querySelectorAll<HTMLElement>(":scope > p"));
-      const origCount = Object.keys(origHtmlRef.current).length;
-
-      if (topParas.length !== origCount) {
-        const paras = topParas.map((p) => ({ runs: collectRuns(p), align: mapAlign(getComputedStyle(p).textAlign) }));
-        await saveWordBody(path, paras, path);
-        setStatus(`Saved (${paras.length} paragraphs).`);
-      } else {
-        let changed = 0;
-        for (const n of Array.from(editRef.current.querySelectorAll<HTMLElement>("[data-p]"))) {
-          const idx = parseInt(n.getAttribute("data-p") || "-1", 10);
-          if (idx < 0 || n.innerHTML === origHtmlRef.current[idx]) continue;
-          await setWordParagraphRuns(path, idx, collectRuns(n), mapAlign(getComputedStyle(n).textAlign), path);
-          changed++;
-        }
-        setStatus(changed ? `Saved ${changed} edit${changed === 1 ? "" : "s"}.` : "No changes.");
-      }
+      const blocks = collectBlocks(editRef.current, origHtmlRef.current);
+      await saveWordDocument(path, blocks, path);
+      setStatus("Saved.");
       setVersion((v) => v + 1); // reload from the saved file
     } catch (e) {
       setError(String(e));

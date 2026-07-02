@@ -50,6 +50,36 @@ pub struct ParaEdit {
     pub align: Option<String>,
 }
 
+/// One top-level body block in the editor's save order. This is the frontend's
+/// view of the document after editing: the ordered list of `<p>`/`<table>`
+/// surfaces, each tagged with how to reproduce it. See
+/// [`reconcile_body_in_package`].
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum BlockEdit {
+    /// An untouched block — re-emit its original source bytes verbatim (works for
+    /// paragraphs, tables, or anything else we captured). `orig` indexes the
+    /// original block list.
+    Verbatim { orig: usize },
+    /// A paragraph. `orig = Some(i)` preserves block `i`'s `<w:p>` attributes and
+    /// `pPr` (only the runs change); `None` is a newly inserted paragraph.
+    Para {
+        #[serde(default)]
+        orig: Option<usize>,
+        runs: Vec<RunEdit>,
+        #[serde(default)]
+        align: Option<String>,
+    },
+}
+
+/// A captured original top-level body block: its byte span in `document.xml` and
+/// whether it is a table (so a stray paragraph edit can't corrupt it).
+struct CapturedBlock {
+    start: usize,
+    end: usize,
+    is_table: bool,
+}
+
 /// Replace every occurrence of `find` with `replace` in the document body text,
 /// returning the repackaged `.docx` bytes. Only `w:t` text nodes change.
 ///
@@ -453,6 +483,192 @@ pub fn save_body_in_package(bytes: &[u8], paras: &[ParaEdit]) -> Result<Vec<u8>,
     Ok(pkg.save()?)
 }
 
+/// Structure-preserving save. Rebuilds `<w:body>` from `blocks` (the editor's
+/// ordered view of the document), re-emitting every untouched block **byte-for-
+/// byte** from the original source and re-serializing only the paragraphs that
+/// changed. Handles add / remove / reorder of paragraphs and preserves tables,
+/// paragraph styles, and body geometry (trailing `sectPr`) — the lossless
+/// foundation the editor's save rides on.
+///
+/// Limitations: an edited paragraph's own run-level bookmarks / fields /
+/// hyperlink targets collapse to plain runs (its `pPr` survives); body-level
+/// structured-document-tags / bookmarks (rare — Word keeps those inside
+/// paragraphs) are not preserved across a structural edit.
+pub fn reconcile_body_in_package(bytes: &[u8], blocks: &[BlockEdit]) -> Result<Vec<u8>, EditError> {
+    let mut pkg = Package::load(bytes)?;
+    let idx = pkg
+        .parts
+        .iter()
+        .position(|p| p.name == "word/document.xml")
+        .ok_or(EditError::MissingDocument)?;
+    let xml = std::str::from_utf8(&pkg.parts[idx].data)
+        .map_err(|_| EditError::MissingDocument)?
+        .to_owned();
+
+    let cap = capture_body(&xml)?;
+
+    let mut body = String::with_capacity(xml.len());
+    body.push_str(&xml[..cap.body_open_end]);
+    for be in blocks {
+        match be {
+            BlockEdit::Verbatim { orig } => {
+                let c = cap.blocks.get(*orig).ok_or_else(|| {
+                    EditError::Unsupported(format!("verbatim block {orig} out of range"))
+                })?;
+                body.push_str(&xml[c.start..c.end]);
+            }
+            BlockEdit::Para { orig, runs, align } => {
+                match orig {
+                    Some(i) => {
+                        let c = cap.blocks.get(*i).ok_or_else(|| {
+                            EditError::Unsupported(format!("paragraph block {i} out of range"))
+                        })?;
+                        // A table can't be re-serialized as a paragraph; keep it.
+                        if c.is_table {
+                            body.push_str(&xml[c.start..c.end]);
+                        } else {
+                            let (start_tag, ppr) = split_paragraph(&xml[c.start..c.end]);
+                            emit_paragraph(&mut body, &start_tag, ppr.as_bytes(), runs, align.as_deref());
+                        }
+                    }
+                    None => emit_paragraph(&mut body, "<w:p>", b"", runs, align.as_deref()),
+                }
+            }
+        }
+    }
+    body.push_str(&cap.sectpr);
+    body.push_str(&xml[cap.body_close..]);
+
+    pkg.parts[idx].data = body.into_bytes();
+    Ok(pkg.save()?)
+}
+
+/// Captured original body: byte-slice offsets, the top-level blocks, and the
+/// trailing body-level `sectPr`.
+struct BodyCapture {
+    body_open_end: usize,
+    body_close: usize,
+    blocks: Vec<CapturedBlock>,
+    sectpr: String,
+}
+
+/// Walk `document.xml`, recording each direct child of `<w:body>` (`w:p` / `w:tbl`
+/// as blocks, the trailing `w:sectPr` kept aside) by exact byte span.
+fn capture_body(xml: &str) -> Result<BodyCapture, EditError> {
+    let mut reader = Reader::from_str(xml);
+    let mut buf = Vec::new();
+
+    let mut in_body = false;
+    let mut child_open = 0i32; // nesting depth within the current direct child
+    let mut cur_start = 0usize;
+    let mut cur_name: Vec<u8> = Vec::new();
+
+    let mut body_open_end = 0usize;
+    let mut body_close = xml.len();
+    let mut blocks: Vec<CapturedBlock> = Vec::new();
+    let mut sectpr = String::new();
+
+    let finish = |name: &[u8], start: usize, end: usize, blocks: &mut Vec<CapturedBlock>, sectpr: &mut String| {
+        match name {
+            b"w:p" | b"w:tbl" => blocks.push(CapturedBlock { start, end, is_table: name == b"w:tbl" }),
+            b"w:sectPr" => *sectpr = xml[start..end].to_string(),
+            _ => {} // body-level bookmark / sdt / etc.: dropped (rare)
+        }
+    };
+
+    loop {
+        let pos = reader.buffer_position() as usize;
+        let ev = reader.read_event_into(&mut buf)?;
+        let after = reader.buffer_position() as usize;
+        match ev {
+            Event::Start(e) => {
+                let name = e.name().as_ref().to_vec();
+                if !in_body && name == b"w:body" {
+                    in_body = true;
+                    body_open_end = after;
+                } else if in_body {
+                    if child_open == 0 {
+                        cur_start = pos;
+                        cur_name = name;
+                        child_open = 1;
+                    } else {
+                        child_open += 1;
+                    }
+                }
+            }
+            Event::Empty(e) => {
+                if in_body && child_open == 0 {
+                    let name = e.name().as_ref().to_vec();
+                    finish(&name, pos, after, &mut blocks, &mut sectpr);
+                }
+            }
+            Event::End(e) => {
+                let name = e.name().as_ref().to_vec();
+                if in_body && child_open == 0 && name == b"w:body" {
+                    body_close = pos;
+                    in_body = false;
+                } else if in_body && child_open > 0 {
+                    child_open -= 1;
+                    if child_open == 0 {
+                        let cn = std::mem::take(&mut cur_name);
+                        finish(&cn, cur_start, after, &mut blocks, &mut sectpr);
+                    }
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    if body_open_end == 0 {
+        return Err(EditError::MissingDocument);
+    }
+    Ok(BodyCapture { body_open_end, body_close, blocks, sectpr })
+}
+
+/// Emit a `<w:p>`: the (open) start tag, its `pPr` (with `align` applied), then
+/// the edited runs.
+fn emit_paragraph(body: &mut String, start_tag: &str, ppr: &[u8], runs: &[RunEdit], align: Option<&str>) {
+    body.push_str(start_tag);
+    body.push_str(&String::from_utf8_lossy(&build_ppr(ppr, align)));
+    for r in runs {
+        body.push_str(&run_xml(r));
+    }
+    body.push_str("</w:p>");
+}
+
+/// Split a captured `<w:p …>…</w:p>` (or self-closing `<w:p …/>`) into its
+/// re-openable start tag `<w:p …>` and its `pPr` bytes (`""` if none). A
+/// top-level paragraph never contains a nested `pPr`, so the first match is the
+/// paragraph's own.
+fn split_paragraph(block: &str) -> (String, String) {
+    let open_end = block.find('>').unwrap_or(block.len().saturating_sub(1));
+    let start_tag = if block[..open_end].ends_with('/') {
+        // "<w:p …/>" → "<w:p …>"
+        format!("{}>", block[..open_end].trim_end_matches('/').trim_end())
+    } else {
+        block[..=open_end.min(block.len() - 1)].to_string()
+    };
+    (start_tag, extract_ppr(block))
+}
+
+/// The paragraph's `<w:pPr>…</w:pPr>` (or self-closing `<w:pPr/>`) bytes, or "".
+fn extract_ppr(block: &str) -> String {
+    let start = match block.find("<w:pPr>").or_else(|| block.find("<w:pPr ")).or_else(|| block.find("<w:pPr/>")) {
+        Some(s) => s,
+        None => return String::new(),
+    };
+    let rest = &block[start..];
+    if let Some(e) = rest.find("</w:pPr>") {
+        return rest[..e + "</w:pPr>".len()].to_string();
+    }
+    if let Some(e) = rest.find("/>") {
+        return rest[..e + 2].to_string();
+    }
+    String::new()
+}
+
 fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
@@ -581,6 +797,62 @@ mod tests {
         let runs = vec![RunEdit { text: "x".into(), bold: false, italic: false, underline: false, color: None, size_pt: None }];
         let out = set_paragraph_runs_in_package(&docx_with(xml), 0, &runs, Some("center")).unwrap();
         assert!(document_text(&out).contains("<w:jc w:val=\"center\"/>"), "alignment injected into pPr");
+    }
+
+    fn run(text: &str, bold: bool) -> RunEdit {
+        RunEdit { text: text.into(), bold, italic: false, underline: false, color: None, size_pt: None }
+    }
+
+    #[test]
+    fn reconcile_all_verbatim_is_byte_identical() {
+        let xml = r#"<w:document xmlns:w="x"><w:body><w:p><w:r><w:t>hello</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>"#;
+        let out = reconcile_body_in_package(
+            &docx_with(xml),
+            &[BlockEdit::Verbatim { orig: 0 }, BlockEdit::Verbatim { orig: 1 }],
+        )
+        .unwrap();
+        // The lossless gate: an all-verbatim reconcile reproduces document.xml exactly.
+        assert_eq!(document_text(&out), xml);
+    }
+
+    #[test]
+    fn reconcile_edits_paragraph_keeps_table_verbatim() {
+        let xml = r#"<w:document xmlns:w="x"><w:body><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>old</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:sectPr/></w:body></w:document>"#;
+        let edit = vec![
+            BlockEdit::Para { orig: Some(0), runs: vec![run("New", true)], align: None },
+            BlockEdit::Verbatim { orig: 1 },
+        ];
+        let out = reconcile_body_in_package(&docx_with(xml), &edit).unwrap();
+        let text = document_text(&out);
+        assert!(text.contains("<w:jc w:val=\"center\"/>"), "edited paragraph's pPr preserved");
+        assert!(text.contains("<w:b/>") && text.contains("New"), "new bold run emitted");
+        assert!(!text.contains(">old<"), "old run text replaced");
+        assert!(
+            text.contains("<w:tbl><w:tr><w:tc><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"),
+            "table re-emitted byte-for-byte"
+        );
+    }
+
+    #[test]
+    fn reconcile_reorders_inserts_and_deletes() {
+        let xml = r#"<w:document xmlns:w="x"><w:body><w:p><w:r><w:t>first</w:t></w:r></w:p><w:p><w:r><w:t>second</w:t></w:r></w:p></w:body></w:document>"#;
+        // Keep the second paragraph, drop the first, append a new right-aligned one.
+        let edit = vec![
+            BlockEdit::Verbatim { orig: 1 },
+            BlockEdit::Para { orig: None, runs: vec![run("fresh", false)], align: Some("right".into()) },
+        ];
+        let out = reconcile_body_in_package(&docx_with(xml), &edit).unwrap();
+        let text = document_text(&out);
+        assert!(!text.contains("first"), "deleted paragraph is gone");
+        assert!(text.find("second").unwrap() < text.find("fresh").unwrap(), "order preserved");
+        assert!(text.contains("<w:jc w:val=\"right\"/>"), "inserted paragraph alignment applied");
+    }
+
+    #[test]
+    fn reconcile_preserves_self_closing_paragraph() {
+        let xml = r#"<w:document xmlns:w="x"><w:body><w:p/><w:sectPr/></w:body></w:document>"#;
+        let out = reconcile_body_in_package(&docx_with(xml), &[BlockEdit::Verbatim { orig: 0 }]).unwrap();
+        assert_eq!(document_text(&out), xml, "self-closing paragraph + sectPr reproduced exactly");
     }
 
     #[test]

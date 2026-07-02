@@ -30,8 +30,6 @@ pub struct Document {
 pub enum Block {
     Paragraph(Paragraph),
     Table(Table),
-    /// Explicit page break (`<w:br w:type="page"/>`).
-    PageBreak,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -114,6 +112,10 @@ pub enum Inline {
     Text(TextRun),
     /// In-paragraph line break (`<w:br/>` without `w:type="page"`).
     LineBreak,
+    /// Page break (`<w:br w:type="page"/>`) or an in-`pPr` section break. Kept as
+    /// an inline (not a separate block) so one source `<w:p>` maps to exactly one
+    /// editable block — the invariant the editor's block reconciliation relies on.
+    PageBreak,
     Tab,
     Image(ImageRef),
 }

@@ -236,6 +236,20 @@ export interface ParaEdit { runs: RunEdit[]; align?: string | null }
 export const saveWordBody = (path: string, paras: ParaEdit[], output: string) =>
   invoke<string>("save_word_body", { path, paras, output });
 
+/** One top-level block in the editor's save order.
+ *  - `verbatim`: block unchanged → re-emit its original source bytes.
+ *  - `para`: a paragraph; `orig` = original block index (keeps its pPr) or null
+ *    for a newly inserted paragraph. */
+export type BlockEdit =
+  | { kind: "verbatim"; orig: number }
+  | { kind: "para"; orig: number | null; runs: RunEdit[]; align?: string | null };
+
+/** Structure-preserving save: rebuild the body from the ordered block list,
+ *  re-emitting untouched blocks byte-for-byte and re-serializing only changed
+ *  paragraphs. Preserves tables, styles, and page geometry. */
+export const saveWordDocument = (path: string, blocks: BlockEdit[], output: string) =>
+  invoke<string>("save_word_document", { path, blocks, output });
+
 /** Replace body paragraph `index`'s text and save to `output` (lossless). */
 export const setWordParagraph = (path: string, index: number, text: string, output: string) =>
   invoke<string>("set_word_paragraph", { path, index, text, output });

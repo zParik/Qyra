@@ -378,6 +378,7 @@ pub fn run() {
             word::set_word_paragraph,
             word::set_word_paragraph_runs,
             word::save_word_body,
+            word::save_word_document,
             word::get_word_html,
             links::add_link,
             links::remove_link,

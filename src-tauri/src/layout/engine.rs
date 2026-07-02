@@ -120,7 +120,6 @@ pub fn layout_document(doc: &Document, font: &FontSet) -> LayoutResult {
         match block {
             Block::Paragraph(p) => lay.flow_paragraph(p),
             Block::Table(t) => lay.flow_table(t),
-            Block::PageBreak => lay.page_break(),
         }
     }
     lay.flush_page();
@@ -195,7 +194,30 @@ impl<'a> Layouter<'a> {
 
     fn flow_paragraph(&mut self, p: &Paragraph) {
         self.pen_y += p.props.space_before_pt;
-        for lb in paragraph_lineboxes(p, self.font, self.margin_left, self.content_w) {
+        // A paragraph may carry inline page breaks; split it into segments and
+        // advance a page between them.
+        let mut segment: Vec<Inline> = Vec::new();
+        let mut first = true;
+        for inline in &p.inlines {
+            if matches!(inline, Inline::PageBreak) {
+                self.flow_segment(&segment, &p.props);
+                segment.clear();
+                self.page_break();
+                first = false;
+            } else {
+                segment.push(inline.clone());
+            }
+        }
+        // Skip a trailing empty segment left by a break at the paragraph's end
+        // (e.g. a section break), but always lay out a genuinely empty paragraph.
+        if first || !segment.is_empty() {
+            self.flow_segment(&segment, &p.props);
+        }
+        self.pen_y += p.props.space_after_pt;
+    }
+
+    fn flow_segment(&mut self, inlines: &[Inline], pp: &ParaProps) {
+        for lb in paragraph_lineboxes(inlines, pp, self.font, self.margin_left, self.content_w) {
             let LineBox { runs, ascent, height, images } = lb;
             if self.pen_y + ascent > self.content_bottom && !self.lines.is_empty() {
                 self.flush_page();
@@ -208,7 +230,6 @@ impl<'a> Layouter<'a> {
             self.lines.push(Line { baseline_y: baseline, runs });
             self.pen_y += height;
         }
-        self.pen_y += p.props.space_after_pt;
     }
 
     fn flow_table(&mut self, t: &Table) {
@@ -301,7 +322,9 @@ fn layout_column(blocks: &[Block], font: &FontSet, left: f32, width: f32) -> (Ve
         match block {
             Block::Paragraph(p) => {
                 y += p.props.space_before_pt;
-                for lb in paragraph_lineboxes(p, font, left, width) {
+                // Cells don't paginate, so page breaks inside a cell are ignored
+                // (tokenize skips them); lay the paragraph as one segment.
+                for lb in paragraph_lineboxes(&p.inlines, &p.props, font, left, width) {
                     let LineBox { runs, ascent, height, images: imgs } = lb;
                     let baseline = y + ascent;
                     for img in imgs {
@@ -331,20 +354,19 @@ fn layout_column(blocks: &[Block], font: &FontSet, left: f32, width: f32) -> (Ve
                     y += h;
                 }
             }
-            Block::PageBreak => {}
         }
     }
     (lines, rects, images, y)
 }
 
-fn paragraph_lineboxes(p: &Paragraph, font: &FontSet, col_left: f32, col_width: f32) -> Vec<LineBox> {
-    let is_list = p.props.list.is_some();
-    let items = tokenize(&p.inlines, font);
+fn paragraph_lineboxes(inlines: &[Inline], pp: &ParaProps, font: &FontSet, col_left: f32, col_width: f32) -> Vec<LineBox> {
+    let is_list = pp.list.is_some();
+    let items = tokenize(inlines, font);
     let mut boxes: Vec<LineBox> = Vec::new();
 
     if items.is_empty() {
         let asc = font.ascent(11.0, false, false);
-        let lh = font.line_height(11.0, false, false) * p.props.line_spacing.max(0.1);
+        let lh = font.line_height(11.0, false, false) * pp.line_spacing.max(0.1);
         boxes.push(LineBox { runs: vec![], ascent: asc, height: lh, images: vec![] });
         return boxes;
     }
@@ -357,9 +379,9 @@ fn paragraph_lineboxes(p: &Paragraph, font: &FontSet, col_left: f32, col_width: 
         match item {
             Item::Word { text, props, width, space_before } => {
                 let space = if space_before && !line.is_empty() { space_w(font, &props) } else { 0.0 };
-                let avail = avail_for(&p.props, first_line, is_list, col_width);
+                let avail = avail_for(pp, first_line, is_list, col_width);
                 if !line.is_empty() && line_w + space + width > avail {
-                    boxes.push(commit_linebox(&mut line, &p.props, font, col_left, col_width, first_line, is_list, false));
+                    boxes.push(commit_linebox(&mut line, pp, font, col_left, col_width, first_line, is_list, false));
                     first_line = false;
                     line_w = width;
                     line.push(Slot { text, props, width, space_before: false, is_tab: false });
@@ -369,17 +391,17 @@ fn paragraph_lineboxes(p: &Paragraph, font: &FontSet, col_left: f32, col_width: 
                 }
             }
             Item::Tab => {
-                line_w = next_tab(line_w, &p.props.tab_stops);
+                line_w = next_tab(line_w, &pp.tab_stops);
                 line.push(Slot { text: String::new(), props: RunProps::default(), width: 0.0, space_before: false, is_tab: true });
             }
             Item::Break => {
-                boxes.push(commit_linebox(&mut line, &p.props, font, col_left, col_width, first_line, is_list, false));
+                boxes.push(commit_linebox(&mut line, pp, font, col_left, col_width, first_line, is_list, false));
                 first_line = false;
                 line_w = 0.0;
             }
             Item::Image { width, height, data } => {
                 if !line.is_empty() {
-                    boxes.push(commit_linebox(&mut line, &p.props, font, col_left, col_width, first_line, is_list, false));
+                    boxes.push(commit_linebox(&mut line, pp, font, col_left, col_width, first_line, is_list, false));
                     first_line = false;
                     line_w = 0.0;
                 }
@@ -389,7 +411,7 @@ fn paragraph_lineboxes(p: &Paragraph, font: &FontSet, col_left: f32, col_width: 
                     iw *= s;
                     ih *= s;
                 }
-                let x = col_left + p.props.indent_left_pt;
+                let x = col_left + pp.indent_left_pt;
                 boxes.push(LineBox {
                     runs: vec![],
                     ascent: ih,
@@ -400,20 +422,20 @@ fn paragraph_lineboxes(p: &Paragraph, font: &FontSet, col_left: f32, col_width: 
         }
     }
     if !line.is_empty() {
-        boxes.push(commit_linebox(&mut line, &p.props, font, col_left, col_width, first_line, is_list, true));
+        boxes.push(commit_linebox(&mut line, pp, font, col_left, col_width, first_line, is_list, true));
     }
 
     // Prepend the list marker (bullet or resolved number) to the first line.
     if is_list {
         if let Some(first) = boxes.first_mut() {
-            let marker = p.props.list_marker.clone().unwrap_or_else(|| "\u{2022}".to_string());
+            let marker = pp.list_marker.clone().unwrap_or_else(|| "\u{2022}".to_string());
             let marker_size = first.runs.first().map(|r| r.size_pt).unwrap_or(11.0);
             let marker_w = font.measure_width(&marker, marker_size, false, false);
             let anchor_x = first
                 .runs
                 .first()
                 .map(|r| r.x)
-                .unwrap_or(col_left + p.props.indent_left_pt + LIST_INDENT_PT);
+                .unwrap_or(col_left + pp.indent_left_pt + LIST_INDENT_PT);
             let marker_x = (anchor_x - LIST_GAP_PT - marker_w).max(col_left);
             first.runs.insert(
                 0,
@@ -565,6 +587,9 @@ fn tokenize(inlines: &[Inline], font: &FontSet) -> Vec<Item> {
                 out.push(Item::Break);
                 pending_space = false;
             }
+            // Page breaks are handled a level up (flow_paragraph splits on them);
+            // within a single segment / a table cell they carry no line box.
+            Inline::PageBreak => {}
             Inline::Image(img) => {
                 out.push(Item::Image { width: img.width_pt, height: img.height_pt, data: img.data.clone() });
                 pending_space = false;
@@ -620,10 +645,16 @@ mod tests {
 
     #[test]
     fn explicit_page_break_forces_new_page() {
-        let res = layout_document(
-            &doc(vec![text_para("Top", Align::Left), Block::PageBreak, text_para("Next", Align::Left)]),
-            &FontSet::default_set(),
-        );
+        // A paragraph carrying an inline page break splits across two pages.
+        let para = Block::Paragraph(Paragraph {
+            props: ParaProps::default(),
+            inlines: vec![
+                Inline::Text(TextRun { props: RunProps::default(), text: "Top".into() }),
+                Inline::PageBreak,
+                Inline::Text(TextRun { props: RunProps::default(), text: "Next".into() }),
+            ],
+        });
+        let res = layout_document(&doc(vec![para]), &FontSet::default_set());
         assert_eq!(res.pages.len(), 2);
     }
 

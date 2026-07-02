@@ -264,7 +264,7 @@ pub fn parse_document_xml(
                 }
                 if !handle_table_leaf(&name, &e, &mut tables)
                     && !handle_image_leaf(&name, &e, media, &mut cur_ext, &mut inlines, in_para)
-                    && !try_page_break(&name, &e, styles, &style_id, &para_direct, &list, &mut inlines, &mut tables, &mut blocks, numbering, &mut counters, &cur_tab_stops)
+                    && !try_page_break(&name, &e, &mut inlines, in_para)
                 {
                     apply_leaf(&name, &e, &stack, &mut page, &mut style_id, &mut para_direct, &mut run_direct, &mut list, &mut inlines, &mut cur_tab_stops, in_para);
                 }
@@ -277,7 +277,7 @@ pub fn parse_document_xml(
                     emit_block(Block::Paragraph(Paragraph { props: pp, inlines: vec![] }), &mut tables, &mut blocks);
                 } else if !handle_table_leaf(&name, &e, &mut tables)
                     && !handle_image_leaf(&name, &e, media, &mut cur_ext, &mut inlines, in_para)
-                    && !try_page_break(&name, &e, styles, &style_id, &para_direct, &list, &mut inlines, &mut tables, &mut blocks, numbering, &mut counters, &cur_tab_stops)
+                    && !try_page_break(&name, &e, &mut inlines, in_para)
                 {
                     apply_leaf(&name, &e, &stack, &mut page, &mut style_id, &mut para_direct, &mut run_direct, &mut list, &mut inlines, &mut cur_tab_stops, in_para);
                 }
@@ -305,12 +305,15 @@ pub fn parse_document_xml(
                     }
                     b"w:r" => run_direct = RunPropsPartial::default(),
                     b"w:p" => {
-                        let para = build_paragraph(styles, &style_id, &para_direct, &list, &mut inlines, numbering, &mut counters, &cur_tab_stops);
-                        emit_block(Block::Paragraph(para), &mut tables, &mut blocks);
+                        // A section break in this paragraph's pPr means "break after
+                        // this paragraph": carry it as a trailing inline so the
+                        // paragraph stays one block.
                         if para_sectpr_break {
-                            emit_block(Block::PageBreak, &mut tables, &mut blocks);
+                            inlines.push(Inline::PageBreak);
                             para_sectpr_break = false;
                         }
+                        let para = build_paragraph(styles, &style_id, &para_direct, &list, &mut inlines, numbering, &mut counters, &cur_tab_stops);
+                        emit_block(Block::Paragraph(para), &mut tables, &mut blocks);
                         in_para = false;
                     }
                     b"w:tc" => {
@@ -466,30 +469,18 @@ fn compute_marker(numbering: &Numbering, counters: &mut Counters, num_id: i32, l
     s
 }
 
-#[allow(clippy::too_many_arguments)]
-fn try_page_break(
-    name: &[u8],
-    e: &BytesStart,
-    styles: &Styles,
-    style_id: &Option<String>,
-    para_direct: &ParaPropsPartial,
-    list: &Option<ListMarker>,
-    inlines: &mut Vec<Inline>,
-    tables: &mut Vec<TableB>,
-    blocks: &mut Vec<Block>,
-    numbering: &Numbering,
-    counters: &mut Counters,
-    tab_stops: &[f32],
-) -> bool {
-    // Only a manual page break is a hard break. <w:lastRenderedPageBreak/> is
-    // just a hint of where Word last broke; honoring it double-breaks against our
-    // own height-based pagination (blank pages), so it is deliberately ignored.
+/// Intercept a manual page break (`<w:br w:type="page"/>`), pushing it into the
+/// current paragraph's inlines. `<w:lastRenderedPageBreak/>` is just a hint of
+/// where Word last broke; honoring it double-breaks against our own height-based
+/// pagination (blank pages), so it is deliberately ignored. Returns true if
+/// consumed.
+fn try_page_break(name: &[u8], e: &BytesStart, inlines: &mut Vec<Inline>, in_para: bool) -> bool {
     if name != b"w:br" || attr_str(e, b"w:type").as_deref() != Some("page") {
         return false;
     }
-    let para = build_paragraph(styles, style_id, para_direct, list, inlines, numbering, counters, tab_stops);
-    emit_block(Block::Paragraph(para), tables, blocks);
-    emit_block(Block::PageBreak, tables, blocks);
+    if in_para {
+        inlines.push(Inline::PageBreak);
+    }
     true
 }
 
@@ -612,15 +603,24 @@ mod tests {
         assert_eq!(t.props.size_pt, 24.0);
     }
 
+    fn has_page_break(doc: &Document) -> bool {
+        doc.blocks.iter().any(|b| match b {
+            Block::Paragraph(p) => p.inlines.iter().any(|i| matches!(i, Inline::PageBreak)),
+            _ => false,
+        })
+    }
+
     #[test]
-    fn explicit_page_break_produces_block() {
+    fn explicit_page_break_produces_inline() {
         let xml = r#"<w:document xmlns:w="x"><w:body>
           <w:p><w:r><w:t>Before</w:t></w:r></w:p>
           <w:p><w:r><w:br w:type="page"/></w:r></w:p>
           <w:p><w:r><w:t>After</w:t></w:r></w:p>
           </w:body></w:document>"#;
         let doc = parse_document_xml(xml, &Styles::empty(), &MediaMap::new(), &Numbering::empty()).expect("parse");
-        assert!(doc.blocks.iter().any(|b| matches!(b, Block::PageBreak)));
+        // One block per source <w:p>; the break rides inside the middle paragraph.
+        assert_eq!(doc.blocks.len(), 3, "page break must not split a paragraph into extra blocks");
+        assert!(has_page_break(&doc));
     }
 
     #[test]
@@ -632,10 +632,7 @@ mod tests {
           <w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr>
         </w:body></w:document>"#;
         let doc = parse_document_xml(xml, &Styles::empty(), &MediaMap::new(), &Numbering::empty()).expect("parse");
-        assert!(
-            doc.blocks.iter().any(|b| matches!(b, Block::PageBreak)),
-            "in-paragraph sectPr must produce a page break"
-        );
+        assert!(has_page_break(&doc), "in-paragraph sectPr must produce a page break");
     }
 
     #[test]

@@ -3,73 +3,80 @@
 //! caret and types directly in the document (Word-style), instead of separate
 //! text boxes.
 //!
-//! Top-level body paragraphs carry `data-p="N"` (N = body-paragraph index,
-//! matching `editor::paragraph_texts_in_package`) so the frontend can map edited
-//! text back to the right paragraph for the lossless save path. Tables/images
-//! render for fidelity but are not yet mapped back on save.
+//! Every top-level block (paragraph or table) carries `data-block="N"` (N = its
+//! index in `Document::blocks`, matching the order `editor::reconcile_body_in_package`
+//! walks the source `<w:p>`/`<w:tbl>` children). Table cells carry `data-r`/`data-c`
+//! (row index, cell-ordinal within the row) so cell edits can be mapped back. This
+//! shared key is the spine of the lossless, structure-preserving save.
 
 use base64::Engine;
 
-use super::model::{Align, Block, Document, Inline, Paragraph, RunProps};
+use super::model::{Align, Block, Cell, Document, Inline, Paragraph, RunProps, Table};
 
 /// Render the document body to an HTML fragment for the editor surface.
 pub fn to_html(doc: &Document) -> String {
     let mut out = String::new();
-    let mut body_idx = 0usize;
-    for block in &doc.blocks {
-        block_html(block, &mut out, &mut body_idx, true);
+    for (i, block) in doc.blocks.iter().enumerate() {
+        match block {
+            Block::Paragraph(p) => paragraph_html(p, &mut out, Some(i)),
+            Block::Table(t) => table_html(t, &mut out, Some(i)),
+        }
     }
     out
 }
 
-fn block_html(block: &Block, out: &mut String, body_idx: &mut usize, top_level: bool) {
-    match block {
-        Block::Paragraph(p) => {
-            let idx_attr = if top_level {
-                let a = format!(" data-p=\"{}\"", *body_idx);
-                *body_idx += 1;
-                a
-            } else {
-                String::new()
-            };
-            out.push_str(&format!("<p{}{}>", idx_attr, para_style(p)));
-            if let Some(marker) = &p.props.list_marker {
-                out.push_str(&format!("<span class=\"qyra-marker\">{}\u{00a0}</span>", esc(marker)));
-            }
-            if p.inlines.is_empty() {
-                out.push_str("<br>");
-            }
-            for inline in &p.inlines {
-                inline_html(inline, out);
-            }
-            out.push_str("</p>");
-        }
-        Block::Table(t) => {
-            out.push_str("<table class=\"qyra-table\" style=\"border-collapse:collapse\">");
-            for row in &t.rows {
-                out.push_str("<tr>");
-                for cell in &row.cells {
-                    let span = if cell.grid_span > 1 {
-                        format!(" colspan=\"{}\"", cell.grid_span)
-                    } else {
-                        String::new()
-                    };
-                    out.push_str(&format!(
-                        "<td{} style=\"border:1px solid #aaa;padding:4px;vertical-align:top\">",
-                        span
-                    ));
-                    let mut dummy = 0usize;
-                    for b in &cell.blocks {
-                        block_html(b, out, &mut dummy, false);
-                    }
-                    out.push_str("</td>");
-                }
-                out.push_str("</tr>");
-            }
-            out.push_str("</table>");
-        }
-        Block::PageBreak => out.push_str("<hr class=\"qyra-pagebreak\">"),
+/// Render a paragraph. `block_idx` is `Some` for a top-level body block (emits
+/// `data-block`) and `None` for a paragraph nested in a table cell.
+fn paragraph_html(p: &Paragraph, out: &mut String, block_idx: Option<usize>) {
+    let key = block_idx.map(|i| format!(" data-block=\"{i}\"")).unwrap_or_default();
+    out.push_str(&format!("<p{}{}>", key, para_style(p)));
+    if let Some(marker) = &p.props.list_marker {
+        out.push_str(&format!("<span class=\"qyra-marker\">{}\u{00a0}</span>", esc(marker)));
     }
+    // A block with no visible content still needs a caret target.
+    if p.inlines.iter().all(|i| matches!(i, Inline::PageBreak)) {
+        out.push_str("<br>");
+    }
+    for inline in &p.inlines {
+        inline_html(inline, out);
+    }
+    out.push_str("</p>");
+}
+
+fn table_html(t: &Table, out: &mut String, block_idx: Option<usize>) {
+    let key = block_idx.map(|i| format!(" data-block=\"{i}\"")).unwrap_or_default();
+    // Wave A: tables render read-only (cell editing lands in a later wave), so a
+    // stray keystroke can't silently drop cell content on save.
+    out.push_str(&format!(
+        "<table{} class=\"qyra-table\" contenteditable=\"false\" style=\"border-collapse:collapse\">",
+        key
+    ));
+    for (ri, row) in t.rows.iter().enumerate() {
+        out.push_str("<tr>");
+        for (ci, cell) in row.cells.iter().enumerate() {
+            cell_html(cell, out, ri, ci);
+        }
+        out.push_str("</tr>");
+    }
+    out.push_str("</table>");
+}
+
+fn cell_html(cell: &Cell, out: &mut String, ri: usize, ci: usize) {
+    let span = if cell.grid_span > 1 {
+        format!(" colspan=\"{}\"", cell.grid_span)
+    } else {
+        String::new()
+    };
+    out.push_str(&format!(
+        "<td data-r=\"{ri}\" data-c=\"{ci}\"{span} style=\"border:1px solid #aaa;padding:4px;vertical-align:top\">"
+    ));
+    for b in &cell.blocks {
+        match b {
+            Block::Paragraph(p) => paragraph_html(p, out, None),
+            Block::Table(t) => table_html(t, out, None),
+        }
+    }
+    out.push_str("</td>");
 }
 
 fn inline_html(inline: &Inline, out: &mut String) {
@@ -79,6 +86,7 @@ fn inline_html(inline: &Inline, out: &mut String) {
         }
         Inline::Tab => out.push_str("<span class=\"qyra-tab\">\u{2003}</span>"),
         Inline::LineBreak => out.push_str("<br>"),
+        Inline::PageBreak => out.push_str("<hr class=\"qyra-pagebreak\" contenteditable=\"false\">"),
         Inline::Image(img) => {
             let b64 = base64::engine::general_purpose::STANDARD.encode(&img.data);
             // Format guessed by the browser from the data; png/jpeg both decode.
@@ -165,7 +173,7 @@ mod tests {
             footer: vec![],
         };
         let html = to_html(&doc);
-        assert!(html.contains("data-p=\"0\""));
+        assert!(html.contains("data-block=\"0\""));
         assert!(html.contains("font-weight:bold"));
         assert!(html.contains("Hi &lt;there&gt;"), "text must be escaped");
     }
