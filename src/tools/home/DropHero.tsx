@@ -1,6 +1,7 @@
 import React from "react";
 import { UI, MONO } from "../../lib/tokens";
 import { IcUpload, IcFolder } from "../../components/Icons";
+import { shortcutLabel } from "../../lib/platform";
 
 function CornerMarks() {
   const mark = (pos: React.CSSProperties) => (
@@ -85,7 +86,7 @@ export function DropHero({ drag, onDragOver, onDragLeave, onDrop, onClick, loadi
               <IcUpload size={13} />
               Open document
               {!isMobile && (
-                <span style={{ fontFamily: MONO, fontSize: 10, opacity: 0.7, marginLeft: 4, padding: "1px 4px", border: "1px solid currentColor", borderRadius: 3 }}>Cmd+O</span>
+                <span style={{ fontFamily: MONO, fontSize: 10, opacity: 0.7, marginLeft: 4, padding: "1px 4px", border: "1px solid currentColor", borderRadius: 3 }}>{shortcutLabel("O")}</span>
               )}
             </button>
             {!isMobile && (
