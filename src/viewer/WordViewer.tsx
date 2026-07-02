@@ -156,9 +156,10 @@ function makeCellEdit(
   const origCol = cAttr == null ? null : parseInt(cAttr, 10);
   const shd = cellShd(td);
   const border = cellBorder(td);
+  const edited = td.dataset.edited === "1";
   const key = blockIdx != null && origRow != null && origCol != null ? `${blockIdx}:${origRow}:${origCol}` : null;
 
-  if (origRow != null && origCol != null && colspan === 1 && vMerge == null && !shd && !border && key != null && td.innerHTML === cellOrig[key]) {
+  if (!edited && origRow != null && origCol != null && colspan === 1 && vMerge == null && !shd && !border && key != null && td.innerHTML === cellOrig[key]) {
     return { kind: "verbatim", orig_row: origRow, orig_col: origCol };
   }
   return {
@@ -227,10 +228,12 @@ export default function WordViewer() {
 
   const [find, setFind] = useState("");
   const [replace, setReplace] = useState("");
+  const [inTable, setInTable] = useState(false);
 
   const editRef = useRef<HTMLDivElement>(null);
   const origHtmlRef = useRef<Record<number, string>>({});
   const origCellRef = useRef<Record<string, string>>({}); // "blockIdx:r:c" -> cell innerHTML
+  const undoRef = useRef<string[]>([]);                    // structural-edit snapshots
 
   // Load (and reload after a save) the document as editable HTML.
   useEffect(() => {
@@ -274,6 +277,181 @@ export default function WordViewer() {
   function exec(cmd: string, value?: string) {
     document.execCommand(cmd, false, value);
     editRef.current?.focus();
+  }
+
+  // Track whether the caret sits inside a table so the table tools can enable.
+  useEffect(() => {
+    const onSel = () => setInTable(caretCell() != null);
+    document.addEventListener("selectionchange", onSel);
+    return () => document.removeEventListener("selectionchange", onSel);
+  }, []);
+
+  /** The `<td>` containing the caret, if inside the editor. */
+  function caretCell(): HTMLTableCellElement | null {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return null;
+    let node: Node | null = sel.anchorNode;
+    if (node && node.nodeType === Node.TEXT_NODE) node = node.parentElement;
+    const el = node as HTMLElement | null;
+    if (!el || !editRef.current || !editRef.current.contains(el)) return null;
+    return el.closest("td");
+  }
+
+  function newTd(): HTMLTableCellElement {
+    const td = document.createElement("td");
+    td.setAttribute("style", "border:1px solid #aaa;padding:4px;vertical-align:top");
+    td.innerHTML = "<p><br></p>"; // no data-r/data-c → a fresh cell
+    return td;
+  }
+
+  function pushUndo() {
+    if (editRef.current) undoRef.current.push(editRef.current.innerHTML);
+  }
+  function undoTable() {
+    const snap = undoRef.current.pop();
+    if (snap != null && editRef.current) {
+      editRef.current.innerHTML = snap;
+      editRef.current.focus();
+    }
+  }
+
+  // ---- Wave C: rows & columns ----
+  function insertRow(below: boolean) {
+    const td = caretCell();
+    const tr = td?.closest("tr");
+    if (!td || !tr) return;
+    pushUndo();
+    const count = Array.from(tr.children).filter((c) => c.tagName.toLowerCase() === "td").length;
+    const newTr = document.createElement("tr");
+    for (let i = 0; i < count; i++) newTr.appendChild(newTd());
+    tr.parentNode!.insertBefore(newTr, below ? tr.nextSibling : tr);
+    editRef.current?.focus();
+  }
+  function deleteRow() {
+    const td = caretCell();
+    const tr = td?.closest("tr");
+    const table = td?.closest("table");
+    if (!td || !tr || !table) return;
+    pushUndo();
+    if (tableRows(table as HTMLTableElement).length <= 1) table.remove();
+    else tr.remove();
+    editRef.current?.focus();
+  }
+  function insertCol(right: boolean) {
+    const td = caretCell();
+    const tr = td?.closest("tr");
+    const table = td?.closest("table");
+    if (!td || !tr || !table) return;
+    const idx = Array.from(tr.children).indexOf(td);
+    pushUndo();
+    for (const row of tableRows(table as HTMLTableElement)) {
+      const ref = row.children[idx] as HTMLElement | undefined;
+      const cell = newTd();
+      row.insertBefore(cell, right ? (ref ? ref.nextSibling : null) : ref ?? null);
+    }
+    editRef.current?.focus();
+  }
+  function deleteCol() {
+    const td = caretCell();
+    const tr = td?.closest("tr");
+    const table = td?.closest("table");
+    if (!td || !tr || !table) return;
+    const idx = Array.from(tr.children).indexOf(td);
+    pushUndo();
+    for (const row of tableRows(table as HTMLTableElement)) (row.children[idx] as HTMLElement | undefined)?.remove();
+    if (tableRows(table as HTMLTableElement).every((r) => r.children.length === 0)) table.remove();
+    editRef.current?.focus();
+  }
+
+  // ---- Wave D: merge & split ----
+  function mergeRight() {
+    const td = caretCell();
+    const next = td?.nextElementSibling as HTMLTableCellElement | null;
+    if (!td || !next || next.tagName.toLowerCase() !== "td") return;
+    pushUndo();
+    td.colSpan = (td.colSpan || 1) + (next.colSpan || 1);
+    td.dataset.edited = "1";
+    while (next.firstChild) td.appendChild(next.firstChild);
+    next.remove();
+    editRef.current?.focus();
+  }
+  function mergeDown() {
+    const td = caretCell();
+    const tr = td?.closest("tr");
+    const table = td?.closest("table");
+    if (!td || !tr || !table) return;
+    const rows = tableRows(table as HTMLTableElement);
+    const ri = rows.indexOf(tr as HTMLTableRowElement);
+    const idx = Array.from(tr.children).indexOf(td);
+    const below = rows[ri + 1];
+    const belowTd = below?.children[idx] as HTMLTableCellElement | undefined;
+    if (!belowTd) return;
+    pushUndo();
+    td.rowSpan = (td.rowSpan || 1) + (belowTd.rowSpan || 1);
+    td.dataset.edited = "1";
+    while (belowTd.firstChild) td.appendChild(belowTd.firstChild);
+    belowTd.remove();
+    editRef.current?.focus();
+  }
+  function splitCell() {
+    const td = caretCell();
+    if (!td) return;
+    pushUndo();
+    td.colSpan = 1;
+    td.rowSpan = 1;
+    td.dataset.edited = "1";
+    editRef.current?.focus();
+  }
+
+  // ---- Wave E: shading & borders ----
+  function shadeCell(color: string | null) {
+    const td = caretCell();
+    if (!td) return;
+    pushUndo();
+    td.dataset.edited = "1";
+    if (color) {
+      td.style.backgroundColor = "#" + color;
+      td.dataset.shd = color;
+    } else {
+      td.style.backgroundColor = "";
+      delete td.dataset.shd;
+    }
+    editRef.current?.focus();
+  }
+  function borderCell(on: boolean) {
+    const td = caretCell();
+    if (!td) return;
+    pushUndo();
+    td.dataset.edited = "1";
+    if (on) {
+      td.style.border = "1px solid #000";
+      td.dataset.border = "single:000000:8";
+    } else {
+      td.style.border = "none";
+      td.dataset.border = "nil";
+    }
+    editRef.current?.focus();
+  }
+
+  /** Insert a fresh 2×2 table after the caret's top-level block (or at the end). */
+  function insertTable() {
+    if (!editRef.current) return;
+    pushUndo();
+    const tbl = document.createElement("table");
+    tbl.className = "qyra-table";
+    tbl.setAttribute("style", "border-collapse:collapse");
+    for (let r = 0; r < 2; r++) {
+      const tr = document.createElement("tr");
+      for (let c = 0; c < 2; c++) tr.appendChild(newTd());
+      tbl.appendChild(tr);
+    }
+    // Find the caret's top-level block to insert after; else append.
+    let node = window.getSelection()?.anchorNode as Node | null;
+    while (node && node.parentElement !== editRef.current) node = node.parentElement;
+    const top = node as HTMLElement | null;
+    if (top && top.parentElement === editRef.current) top.after(tbl);
+    else editRef.current.appendChild(tbl);
+    editRef.current.focus();
   }
 
   async function browse() {
@@ -325,6 +503,12 @@ export default function WordViewer() {
     background: "var(--bg0)", border: "1px solid var(--line)", borderRadius: 5,
     color: "var(--fg0)", fontSize: 12.5, padding: "4px 8px", width: 120, fontFamily: UI,
   };
+  // Auto-width toolbar button (table tools).
+  const wbtn: React.CSSProperties = {
+    height: 26, padding: "3px 8px", background: "var(--bg1)", border: "1px solid var(--line)",
+    borderRadius: 5, color: "var(--fg0)", cursor: "pointer", fontSize: 12,
+  };
+  const sepStyle: React.CSSProperties = { width: 1, height: 18, background: "var(--line)", margin: "0 4px" };
 
   return (
     <div className="flex flex-col" style={{ height: "100dvh", background: "var(--bg0)", fontFamily: UI }}>
@@ -371,6 +555,37 @@ export default function WordViewer() {
           <input style={inputStyle} placeholder="Find" value={find} onChange={(e) => setFind(e.target.value)} />
           <input style={inputStyle} placeholder="Replace" value={replace} onChange={(e) => setReplace(e.target.value)} />
           <button onClick={doReplace} disabled={!find || saving} style={{ ...tbtn, width: "auto", padding: "5px 10px" }}>Replace all</button>
+        </div>
+      )}
+
+      {path && (
+        <div className="flex items-center gap-1 shrink-0 flex-wrap" style={{ padding: "6px 14px", borderBottom: "1px solid var(--line2)", fontSize: 12 }}>
+          <button onMouseDown={(e) => { e.preventDefault(); insertTable(); }} title="Insert a 2×2 table" style={wbtn}>+ Table</button>
+          <span style={sepStyle} />
+          <span style={{ color: "var(--fg2)", marginRight: 4 }}>Table:</span>
+          {([
+            ["Row ↑", () => insertRow(false), "Insert row above"],
+            ["Row ↓", () => insertRow(true), "Insert row below"],
+            ["Row ✕", deleteRow, "Delete row"],
+            ["Col ←", () => insertCol(false), "Insert column left"],
+            ["Col →", () => insertCol(true), "Insert column right"],
+            ["Col ✕", deleteCol, "Delete column"],
+            ["Merge →", mergeRight, "Merge with cell to the right"],
+            ["Merge ↓", mergeDown, "Merge with cell below"],
+            ["Split", splitCell, "Split merged cell"],
+          ] as const).map(([label, fn, title]) => (
+            <button key={label} disabled={!inTable} onMouseDown={(e) => { e.preventDefault(); fn(); }} title={title} style={wbtn}>{label}</button>
+          ))}
+          <span style={sepStyle} />
+          {["FFFF00", "D9D9D9", "DEEAF6"].map((c) => (
+            <button key={c} disabled={!inTable} onMouseDown={(e) => { e.preventDefault(); shadeCell(c); }} title={"Shade #" + c}
+              style={{ width: 20, height: 20, background: "#" + c, border: "1px solid var(--line)", borderRadius: 4, cursor: inTable ? "pointer" : "default", opacity: inTable ? 1 : 0.4 }} />
+          ))}
+          <button disabled={!inTable} onMouseDown={(e) => { e.preventDefault(); shadeCell(null); }} title="Clear shading" style={wbtn}>Shade ✕</button>
+          <button disabled={!inTable} onMouseDown={(e) => { e.preventDefault(); borderCell(true); }} title="Cell border on" style={wbtn}>▦</button>
+          <button disabled={!inTable} onMouseDown={(e) => { e.preventDefault(); borderCell(false); }} title="Cell border off" style={wbtn}>▢</button>
+          <span style={sepStyle} />
+          <button onMouseDown={(e) => { e.preventDefault(); undoTable(); }} title="Undo last table change" style={wbtn}>↶ Undo</button>
         </div>
       )}
 
