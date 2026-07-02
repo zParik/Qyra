@@ -222,6 +222,11 @@ export interface WordPageMetrics {
 export const getWordMetrics = (path: string) =>
   invoke<WordPageMetrics>("get_word_metrics", { path });
 
+/** The document's default header + footer as HTML, stamped on each page's margins. */
+export interface WordChrome { header: string; footer: string }
+export const getWordChrome = (path: string) =>
+  invoke<WordChrome>("get_word_chrome", { path });
+
 export interface RunEdit {
   text: string;
   bold?: boolean;

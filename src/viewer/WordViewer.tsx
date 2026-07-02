@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
-  getWordHtml, getWordMetrics, saveWordDocument, replaceInWord,
-  type RunEdit, type BlockEdit, type ParaEdit, type RowEdit, type CellEdit, type CellBorder, type WordPageMetrics,
+  getWordHtml, getWordMetrics, getWordChrome, saveWordDocument, replaceInWord,
+  type RunEdit, type BlockEdit, type ParaEdit, type RowEdit, type CellEdit, type CellBorder,
+  type WordPageMetrics, type WordChrome,
 } from "../lib/tauri";
 import { UI } from "../lib/tokens";
 
@@ -44,22 +45,40 @@ function metricsPx(m: WordPageMetrics): PxMetrics {
   };
 }
 
-/** Top-level content blocks in document order, whether or not they're wrapped in
- *  `.qyra-page` sheets yet. */
+const isChrome = (el: Element) => el.classList.contains("qyra-header") || el.classList.contains("qyra-footer");
+
+/** Top-level body blocks in document order, whether or not they're wrapped in
+ *  `.qyra-page` sheets yet. Page chrome (header/footer) is skipped. */
 function topBlocks(root: HTMLElement): HTMLElement[] {
   const out: HTMLElement[] = [];
   for (const ch of Array.from(root.children) as HTMLElement[]) {
-    if (ch.classList.contains("qyra-page")) out.push(...(Array.from(ch.children) as HTMLElement[]));
-    else out.push(ch);
+    if (ch.classList.contains("qyra-page")) {
+      for (const c of Array.from(ch.children) as HTMLElement[]) if (!isChrome(c)) out.push(c);
+    } else if (!isChrome(ch)) {
+      out.push(ch);
+    }
   }
   return out;
 }
 
-function makePage(px: PxMetrics): HTMLDivElement {
+function makePage(px: PxMetrics, chrome?: WordChrome): HTMLDivElement {
   const d = document.createElement("div");
   d.className = "qyra-page";
-  d.style.cssText = `width:${px.pageW}px;min-height:${px.pageH}px;padding:${px.padTop}px ${px.padRight}px ${px.padBottom}px ${px.padLeft}px`;
+  d.style.cssText = `position:relative;width:${px.pageW}px;min-height:${px.pageH}px;padding:${px.padTop}px ${px.padRight}px ${px.padBottom}px ${px.padLeft}px`;
+  if (chrome?.header) d.appendChild(chromeBox("qyra-header", chrome.header, px, true));
+  if (chrome?.footer) d.appendChild(chromeBox("qyra-footer", chrome.footer, px, false));
   return d;
+}
+
+/** A non-editable header/footer positioned in the page's top/bottom margin. */
+function chromeBox(cls: string, html: string, px: PxMetrics, top: boolean): HTMLDivElement {
+  const c = document.createElement("div");
+  c.className = cls;
+  c.setAttribute("contenteditable", "false");
+  const edge = top ? `top:${Math.max(6, px.padTop * 0.35)}px` : `bottom:${Math.max(6, px.padBottom * 0.35)}px`;
+  c.style.cssText = `position:absolute;${edge};left:${px.padLeft}px;right:${px.padRight}px;color:#111`;
+  c.innerHTML = html;
+  return c;
 }
 
 /**
@@ -69,7 +88,7 @@ function makePage(px: PxMetrics): HTMLDivElement {
  * *moved* (never recreated), so the caret survives — it is saved and restored
  * around the reflow.
  */
-function paginate(root: HTMLElement, px: PxMetrics) {
+function paginate(root: HTMLElement, px: PxMetrics, chrome?: WordChrome) {
   const blocks = topBlocks(root);
   if (blocks.length === 0) return;
 
@@ -80,7 +99,7 @@ function paginate(root: HTMLElement, px: PxMetrics) {
 
   // Stage 1: put every block in one page at the real content width, then measure
   // (height depends on width, so blocks must be measured at page width — not the
-  // wider editor surface).
+  // wider editor surface). No chrome while measuring.
   root.textContent = "";
   const stage = makePage(px);
   root.appendChild(stage);
@@ -92,9 +111,9 @@ function paginate(root: HTMLElement, px: PxMetrics) {
   }
 
   // Stage 2: fill pages until the next block would overflow; a page break forces
-  // a fresh page.
+  // a fresh page. Each page carries the header/footer chrome.
   stage.remove(); // detaches stage + blocks (blocks stay referenced in `blocks`)
-  let page = makePage(px);
+  let page = makePage(px, chrome);
   root.appendChild(page);
   let used = 0;
   let breakNext = false;
@@ -104,7 +123,7 @@ function paginate(root: HTMLElement, px: PxMetrics) {
     // height overflow. Only ever break when the current page already has content.
     const breakBefore = b.getAttribute?.("data-break-before") === "1";
     if (used > 0 && (breakNext || breakBefore || used + bh > px.contentH)) {
-      page = makePage(px);
+      page = makePage(px, chrome);
       root.appendChild(page);
       used = 0;
     }
@@ -328,10 +347,11 @@ export default function WordViewer() {
   const origCellRef = useRef<Record<string, string>>({}); // "blockIdx:r:c" -> cell innerHTML
   const undoRef = useRef<string[]>([]);                    // structural-edit snapshots
   const metricsRef = useRef<WordPageMetrics>(DEFAULT_METRICS);
+  const chromeRef = useRef<WordChrome>({ header: "", footer: "" });
   const repaginateTimer = useRef<number | null>(null);
 
   function reflow() {
-    if (editRef.current) paginate(editRef.current, metricsPx(metricsRef.current));
+    if (editRef.current) paginate(editRef.current, metricsPx(metricsRef.current), chromeRef.current);
   }
   // Debounced reflow after typing (moving nodes on every keystroke would thrash).
   function scheduleReflow() {
@@ -348,12 +368,14 @@ export default function WordViewer() {
     setHtml(null);
     (async () => {
       try {
-        const [h, m] = await Promise.all([
+        const [h, m, c] = await Promise.all([
           getWordHtml(path),
           getWordMetrics(path).catch(() => DEFAULT_METRICS),
+          getWordChrome(path).catch(() => ({ header: "", footer: "" })),
         ]);
         if (cancelled) return;
         metricsRef.current = m;
+        chromeRef.current = c;
         setHtml(h);
       } catch (e) {
         if (!cancelled) setError(String(e));
@@ -715,6 +737,8 @@ export default function WordViewer() {
         .qyra-page { background:#fff; color:#111; box-shadow:0 2px 10px rgba(0,0,0,0.35); border-radius:2px; margin:0 auto 22px; box-sizing:border-box; }
         .qyra-page:last-child { margin-bottom:0; }
         .qyra-pagebreak { border:none; border-top:1px dashed #c8c8c8; height:0; margin:6px 0; }
+        .qyra-header, .qyra-footer { pointer-events:none; user-select:none; }
+        .qyra-header p, .qyra-footer p { margin:2px 0; }
       `}</style>
 
       <div className="flex-1 overflow-auto" style={{ padding: 24, background: "var(--bg1)" }}>

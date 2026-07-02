@@ -25,6 +25,19 @@ pub fn to_html(doc: &Document) -> String {
     out
 }
 
+/// Render header/footer blocks to an HTML fragment (no `data-block` keys — this is
+/// page chrome, not editable body content).
+pub fn chrome_html(blocks: &[Block]) -> String {
+    let mut out = String::new();
+    for block in blocks {
+        match block {
+            Block::Paragraph(p) => paragraph_html(p, &mut out, None),
+            Block::Table(t) => table_html(t, &mut out, None),
+        }
+    }
+    out
+}
+
 /// Render a paragraph. `block_idx` is `Some` for a top-level body block (emits
 /// `data-block`) and `None` for a paragraph nested in a table cell.
 fn paragraph_html(p: &Paragraph, out: &mut String, block_idx: Option<usize>) {

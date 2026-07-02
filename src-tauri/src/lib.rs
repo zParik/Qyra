@@ -380,6 +380,7 @@ pub fn run() {
             word::save_word_body,
             word::save_word_document,
             word::get_word_metrics,
+            word::get_word_chrome,
             word::get_word_html,
             links::add_link,
             links::remove_link,

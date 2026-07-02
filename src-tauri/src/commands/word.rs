@@ -269,6 +269,29 @@ pub async fn get_word_metrics(path: String) -> AppResult<WordPageMetrics> {
     .map_err(|e| AppError::Other(e.to_string()))?
 }
 
+/// The document's default header + footer as HTML chrome (rendered on each page).
+#[derive(Serialize)]
+pub struct WordChrome {
+    pub header: String,
+    pub footer: String,
+}
+
+/// Render the default header/footer to HTML so the editor can stamp them on every
+/// page's margins.
+#[tauri::command]
+pub async fn get_word_chrome(path: String) -> AppResult<WordChrome> {
+    tokio::task::spawn_blocking(move || -> AppResult<WordChrome> {
+        let bytes = std::fs::read(&path)?;
+        let doc = crate::oxml::docx::open(&bytes).map_err(|e| AppError::Invalid(e.to_string()))?;
+        Ok(WordChrome {
+            header: crate::oxml::html::chrome_html(&doc.header),
+            footer: crate::oxml::html::chrome_html(&doc.footer),
+        })
+    })
+    .await
+    .map_err(|e| AppError::Other(e.to_string()))?
+}
+
 /// Render the document body to styled HTML for the in-place editor surface.
 #[tauri::command]
 pub async fn get_word_html(path: String) -> AppResult<String> {
