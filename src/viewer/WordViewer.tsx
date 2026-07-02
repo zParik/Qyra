@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
-  getWordHtml, saveWordDocument, replaceInWord,
-  type RunEdit, type BlockEdit, type ParaEdit, type RowEdit, type CellEdit, type CellBorder,
+  getWordHtml, getWordMetrics, saveWordDocument, replaceInWord,
+  type RunEdit, type BlockEdit, type ParaEdit, type RowEdit, type CellEdit, type CellBorder, type WordPageMetrics,
 } from "../lib/tauri";
 import { UI } from "../lib/tokens";
 
@@ -26,6 +26,96 @@ function mapAlign(ta: string): string {
   return "left";
 }
 
+const PT2PX = 96 / 72; // 1pt = 1/72in, 1px = 1/96in on screen
+const DEFAULT_METRICS: WordPageMetrics = {
+  widthPt: 612, heightPt: 792, marginTopPt: 72, marginRightPt: 72, marginBottomPt: 72, marginLeftPt: 72,
+};
+
+interface PxMetrics { pageW: number; pageH: number; padTop: number; padRight: number; padBottom: number; padLeft: number; contentH: number }
+function metricsPx(m: WordPageMetrics): PxMetrics {
+  return {
+    pageW: m.widthPt * PT2PX,
+    pageH: m.heightPt * PT2PX,
+    padTop: m.marginTopPt * PT2PX,
+    padRight: m.marginRightPt * PT2PX,
+    padBottom: m.marginBottomPt * PT2PX,
+    padLeft: m.marginLeftPt * PT2PX,
+    contentH: Math.max(120, (m.heightPt - m.marginTopPt - m.marginBottomPt) * PT2PX),
+  };
+}
+
+/** Top-level content blocks in document order, whether or not they're wrapped in
+ *  `.qyra-page` sheets yet. */
+function topBlocks(root: HTMLElement): HTMLElement[] {
+  const out: HTMLElement[] = [];
+  for (const ch of Array.from(root.children) as HTMLElement[]) {
+    if (ch.classList.contains("qyra-page")) out.push(...(Array.from(ch.children) as HTMLElement[]));
+    else out.push(ch);
+  }
+  return out;
+}
+
+function makePage(px: PxMetrics): HTMLDivElement {
+  const d = document.createElement("div");
+  d.className = "qyra-page";
+  d.style.cssText = `width:${px.pageW}px;min-height:${px.pageH}px;padding:${px.padTop}px ${px.padRight}px ${px.padBottom}px ${px.padLeft}px`;
+  return d;
+}
+
+/**
+ * Distribute the surface's blocks onto fixed-height page sheets: fill a page
+ * until the next block would overflow the content height, then start a new one;
+ * an explicit page break forces the next block onto a fresh page. Blocks are
+ * *moved* (never recreated), so the caret survives — it is saved and restored
+ * around the reflow.
+ */
+function paginate(root: HTMLElement, px: PxMetrics) {
+  const blocks = topBlocks(root);
+  if (blocks.length === 0) return;
+
+  const sel = window.getSelection();
+  const saved = sel && sel.rangeCount > 0
+    ? { an: sel.anchorNode, ao: sel.anchorOffset, fn: sel.focusNode, fo: sel.focusOffset }
+    : null;
+
+  // Stage 1: put every block in one page at the real content width, then measure
+  // (height depends on width, so blocks must be measured at page width — not the
+  // wider editor surface).
+  root.textContent = "";
+  const stage = makePage(px);
+  root.appendChild(stage);
+  for (const b of blocks) stage.appendChild(b);
+  const heights = new Map<HTMLElement, number>();
+  for (const b of blocks) {
+    const cs = getComputedStyle(b);
+    heights.set(b, b.offsetHeight + (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0));
+  }
+
+  // Stage 2: fill pages until the next block would overflow; a page break forces
+  // a fresh page.
+  stage.remove(); // detaches stage + blocks (blocks stay referenced in `blocks`)
+  let page = makePage(px);
+  root.appendChild(page);
+  let used = 0;
+  let breakNext = false;
+  for (const b of blocks) {
+    const bh = heights.get(b) || 0;
+    if (breakNext || (used > 0 && used + bh > px.contentH)) {
+      page = makePage(px);
+      root.appendChild(page);
+      used = 0;
+      breakNext = false;
+    }
+    page.appendChild(b);
+    used += bh;
+    if (b.querySelector?.(".qyra-pagebreak")) breakNext = true;
+  }
+
+  if (saved && saved.an && root.contains(saved.an) && sel) {
+    try { sel.setBaseAndExtent(saved.an, saved.ao, saved.fn || saved.an, saved.fo); } catch { /* caret lost, ignore */ }
+  }
+}
+
 /**
  * Serialize the editor surface into the ordered block list the save path wants.
  * Untouched blocks (innerHTML matches their snapshot) become `verbatim` so the
@@ -34,7 +124,7 @@ function mapAlign(ta: string): string {
  */
 function collectBlocks(root: HTMLElement, orig: Record<number, string>, cellOrig: Record<string, string>): BlockEdit[] {
   const out: BlockEdit[] = [];
-  for (const el of Array.from(root.children) as HTMLElement[]) {
+  for (const el of topBlocks(root)) {
     const tag = el.tagName.toLowerCase();
     const dbAttr = el.getAttribute("data-block");
     const origIdx = dbAttr == null ? null : parseInt(dbAttr, 10);
@@ -234,8 +324,19 @@ export default function WordViewer() {
   const origHtmlRef = useRef<Record<number, string>>({});
   const origCellRef = useRef<Record<string, string>>({}); // "blockIdx:r:c" -> cell innerHTML
   const undoRef = useRef<string[]>([]);                    // structural-edit snapshots
+  const metricsRef = useRef<WordPageMetrics>(DEFAULT_METRICS);
+  const repaginateTimer = useRef<number | null>(null);
 
-  // Load (and reload after a save) the document as editable HTML.
+  function reflow() {
+    if (editRef.current) paginate(editRef.current, metricsPx(metricsRef.current));
+  }
+  // Debounced reflow after typing (moving nodes on every keystroke would thrash).
+  function scheduleReflow() {
+    if (repaginateTimer.current != null) window.clearTimeout(repaginateTimer.current);
+    repaginateTimer.current = window.setTimeout(() => { repaginateTimer.current = null; reflow(); }, 180);
+  }
+
+  // Load (and reload after a save) the document as editable HTML + page geometry.
   useEffect(() => {
     if (!path) return;
     let cancelled = false;
@@ -244,8 +345,13 @@ export default function WordViewer() {
     setHtml(null);
     (async () => {
       try {
-        const h = await getWordHtml(path);
-        if (!cancelled) setHtml(h);
+        const [h, m] = await Promise.all([
+          getWordHtml(path),
+          getWordMetrics(path).catch(() => DEFAULT_METRICS),
+        ]);
+        if (cancelled) return;
+        metricsRef.current = m;
+        setHtml(h);
       } catch (e) {
         if (!cancelled) setError(String(e));
       }
@@ -253,7 +359,7 @@ export default function WordViewer() {
     return () => { cancelled = true; };
   }, [path, version]);
 
-  // Inject into the editable surface + snapshot originals for change detection.
+  // Inject into the editable surface, snapshot originals, then lay onto pages.
   useEffect(() => {
     if (html == null || !editRef.current) return;
     editRef.current.innerHTML = html;
@@ -272,11 +378,14 @@ export default function WordViewer() {
     origHtmlRef.current = map;
     origCellRef.current = cellMap;
     try { document.execCommand("defaultParagraphSeparator", false, "p"); } catch { /* ignore */ }
+    reflow(); // lay the freshly-injected blocks onto page sheets
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [html]);
 
   function exec(cmd: string, value?: string) {
     document.execCommand(cmd, false, value);
     editRef.current?.focus();
+    reflow();
   }
 
   // Track whether the caret sits inside a table so the table tools can enable.
@@ -312,6 +421,7 @@ export default function WordViewer() {
     if (snap != null && editRef.current) {
       editRef.current.innerHTML = snap;
       editRef.current.focus();
+      reflow();
     }
   }
 
@@ -326,6 +436,7 @@ export default function WordViewer() {
     for (let i = 0; i < count; i++) newTr.appendChild(newTd());
     tr.parentNode!.insertBefore(newTr, below ? tr.nextSibling : tr);
     editRef.current?.focus();
+    reflow();
   }
   function deleteRow() {
     const td = caretCell();
@@ -336,6 +447,7 @@ export default function WordViewer() {
     if (tableRows(table as HTMLTableElement).length <= 1) table.remove();
     else tr.remove();
     editRef.current?.focus();
+    reflow();
   }
   function insertCol(right: boolean) {
     const td = caretCell();
@@ -350,6 +462,7 @@ export default function WordViewer() {
       row.insertBefore(cell, right ? (ref ? ref.nextSibling : null) : ref ?? null);
     }
     editRef.current?.focus();
+    reflow();
   }
   function deleteCol() {
     const td = caretCell();
@@ -361,6 +474,7 @@ export default function WordViewer() {
     for (const row of tableRows(table as HTMLTableElement)) (row.children[idx] as HTMLElement | undefined)?.remove();
     if (tableRows(table as HTMLTableElement).every((r) => r.children.length === 0)) table.remove();
     editRef.current?.focus();
+    reflow();
   }
 
   // ---- Wave D: merge & split ----
@@ -374,6 +488,7 @@ export default function WordViewer() {
     while (next.firstChild) td.appendChild(next.firstChild);
     next.remove();
     editRef.current?.focus();
+    reflow();
   }
   function mergeDown() {
     const td = caretCell();
@@ -392,6 +507,7 @@ export default function WordViewer() {
     while (belowTd.firstChild) td.appendChild(belowTd.firstChild);
     belowTd.remove();
     editRef.current?.focus();
+    reflow();
   }
   function splitCell() {
     const td = caretCell();
@@ -401,6 +517,7 @@ export default function WordViewer() {
     td.rowSpan = 1;
     td.dataset.edited = "1";
     editRef.current?.focus();
+    reflow();
   }
 
   // ---- Wave E: shading & borders ----
@@ -417,6 +534,7 @@ export default function WordViewer() {
       delete td.dataset.shd;
     }
     editRef.current?.focus();
+    reflow();
   }
   function borderCell(on: boolean) {
     const td = caretCell();
@@ -431,6 +549,7 @@ export default function WordViewer() {
       td.dataset.border = "nil";
     }
     editRef.current?.focus();
+    reflow();
   }
 
   /** Insert a fresh 2×2 table after the caret's top-level block (or at the end). */
@@ -589,7 +708,13 @@ export default function WordViewer() {
         </div>
       )}
 
-      <div className="flex-1 overflow-auto" style={{ padding: 24, background: "var(--bg0)" }}>
+      <style>{`
+        .qyra-page { background:#fff; color:#111; box-shadow:0 2px 10px rgba(0,0,0,0.35); border-radius:2px; margin:0 auto 22px; box-sizing:border-box; }
+        .qyra-page:last-child { margin-bottom:0; }
+        .qyra-pagebreak { border:none; border-top:1px dashed #c8c8c8; height:0; margin:6px 0; }
+      `}</style>
+
+      <div className="flex-1 overflow-auto" style={{ padding: 24, background: "var(--bg1)" }}>
         {error && <div role="alert" style={{ color: "#e07070", fontSize: 13, marginBottom: 16 }}>{error}</div>}
 
         {!path && !error && (
@@ -599,7 +724,7 @@ export default function WordViewer() {
         )}
 
         {path && (
-          <div style={{ maxWidth: 860, margin: "0 auto" }}>
+          <div style={{ width: "fit-content", minWidth: "100%", margin: "0 auto" }}>
             {html == null && !error && (
               <div style={{ color: "var(--fg2)", fontSize: 13, textAlign: "center", padding: 40 }}>Loading…</div>
             )}
@@ -608,13 +733,8 @@ export default function WordViewer() {
               contentEditable={html != null}
               suppressContentEditableWarning
               spellCheck={false}
+              onInput={scheduleReflow}
               style={{
-                background: "#fff",
-                color: "#111",
-                padding: "56px 64px",
-                minHeight: 500,
-                boxShadow: "0 1px 6px rgba(0,0,0,0.25)",
-                borderRadius: 2,
                 outline: "none",
                 fontFamily: "Arial, Helvetica, sans-serif",
                 lineHeight: 1.3,

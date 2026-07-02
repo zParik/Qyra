@@ -236,6 +236,39 @@ pub async fn save_word_document(
     Ok(output)
 }
 
+/// Page geometry (points) for the editor's pagination: sheet size + margins.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WordPageMetrics {
+    pub width_pt: f32,
+    pub height_pt: f32,
+    pub margin_top_pt: f32,
+    pub margin_right_pt: f32,
+    pub margin_bottom_pt: f32,
+    pub margin_left_pt: f32,
+}
+
+/// Report the document's page size + margins (in points) so the editor can lay
+/// content onto real page sheets. Parse-only (no layout), so it is cheap.
+#[tauri::command]
+pub async fn get_word_metrics(path: String) -> AppResult<WordPageMetrics> {
+    tokio::task::spawn_blocking(move || -> AppResult<WordPageMetrics> {
+        let bytes = std::fs::read(&path)?;
+        let doc = crate::oxml::docx::open(&bytes).map_err(|e| AppError::Invalid(e.to_string()))?;
+        let p = doc.page;
+        Ok(WordPageMetrics {
+            width_pt: p.width,
+            height_pt: p.height,
+            margin_top_pt: p.margin_top,
+            margin_right_pt: p.margin_right,
+            margin_bottom_pt: p.margin_bottom,
+            margin_left_pt: p.margin_left,
+        })
+    })
+    .await
+    .map_err(|e| AppError::Other(e.to_string()))?
+}
+
 /// Render the document body to styled HTML for the in-place editor surface.
 #[tauri::command]
 pub async fn get_word_html(path: String) -> AppResult<String> {

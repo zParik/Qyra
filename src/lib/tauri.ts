@@ -214,6 +214,14 @@ export const getWordParagraphs = (path: string) =>
 export const getWordHtml = (path: string) =>
   invoke<string>("get_word_html", { path });
 
+/** Page geometry (points) for laying the editor content onto real page sheets. */
+export interface WordPageMetrics {
+  widthPt: number; heightPt: number;
+  marginTopPt: number; marginRightPt: number; marginBottomPt: number; marginLeftPt: number;
+}
+export const getWordMetrics = (path: string) =>
+  invoke<WordPageMetrics>("get_word_metrics", { path });
+
 export interface RunEdit {
   text: string;
   bold?: boolean;
