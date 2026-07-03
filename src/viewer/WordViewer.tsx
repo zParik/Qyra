@@ -416,6 +416,10 @@ export default function WordViewer() {
   const [curFont, setCurFont] = useState("");
   const [curSize, setCurSize] = useState<number | "">("");
   const [curStyle, setCurStyle] = useState("Normal");
+  const [pageCount, setPageCount] = useState(1);
+  const [wordCount, setWordCount] = useState(0);
+  const [curPage, setCurPage] = useState(1);
+  const [zoom, setZoom] = useState(1);
 
   const editRef = useRef<HTMLDivElement>(null);
   const origHtmlRef = useRef<Record<number, string>>({});
@@ -426,8 +430,31 @@ export default function WordViewer() {
   const repaginateTimer = useRef<number | null>(null);
 
   function reflow() {
-    if (editRef.current) paginate(editRef.current, metricsPx(metricsRef.current), chromeRef.current);
+    if (!editRef.current) return;
+    paginate(editRef.current, metricsPx(metricsRef.current), chromeRef.current);
+    updateStats();
   }
+  function updateStats() {
+    const root = editRef.current;
+    if (!root) return;
+    setPageCount(Math.max(1, root.querySelectorAll(".qyra-page").length));
+    const txt = root.innerText || "";
+    setWordCount((txt.match(/\S+/g) || []).length);
+  }
+  function onScrollPages(e: React.UIEvent<HTMLDivElement>) {
+    const sc = e.currentTarget;
+    const pages = editRef.current?.querySelectorAll<HTMLElement>(".qyra-page");
+    if (!pages || pages.length === 0) return;
+    const scTop = sc.getBoundingClientRect().top;
+    let cur = 1;
+    pages.forEach((pg, i) => { if (pg.getBoundingClientRect().top - scTop < 120) cur = i + 1; });
+    setCurPage(Math.min(cur, pages.length));
+  }
+
+  // Apply the zoom level to the page surface (Chromium `zoom` scales cleanly).
+  useEffect(() => {
+    if (editRef.current) editRef.current.style.zoom = String(zoom);
+  }, [zoom, html]);
   // Debounced reflow after typing (moving nodes on every keystroke would thrash).
   function scheduleReflow() {
     if (repaginateTimer.current != null) window.clearTimeout(repaginateTimer.current);
@@ -842,6 +869,10 @@ export default function WordViewer() {
     borderRadius: 5, color: "var(--fg0)", cursor: "pointer", fontSize: 12,
   };
   const sepStyle: React.CSSProperties = { width: 1, height: 18, background: "var(--line)", margin: "0 4px" };
+  const zbtn: React.CSSProperties = {
+    width: 22, height: 20, background: "var(--bg0)", border: "1px solid var(--line)",
+    borderRadius: 4, color: "var(--fg0)", cursor: "pointer", fontSize: 13, lineHeight: 1,
+  };
   const selStyle: React.CSSProperties = {
     height: 28, background: "var(--bg0)", color: "var(--fg0)", border: "1px solid var(--line)",
     borderRadius: 5, fontSize: 12, padding: "0 4px", fontFamily: UI,
@@ -1027,7 +1058,7 @@ export default function WordViewer() {
         .qs-Heading3, .qs-Heading3 * { font-size:12pt !important; font-weight:700 !important; color:#1f3864 !important; }
       `}</style>
 
-      <div className="flex-1 overflow-auto" style={{ padding: 24, background: "var(--bg1)" }}>
+      <div className="flex-1 overflow-auto" onScroll={onScrollPages} style={{ padding: 24, background: "var(--bg1)" }}>
         {error && <div role="alert" style={{ color: "#e07070", fontSize: 13, marginBottom: 16 }}>{error}</div>}
 
         {!path && !error && (
@@ -1057,6 +1088,18 @@ export default function WordViewer() {
           </div>
         )}
       </div>
+
+      {path && (
+        <div className="flex items-center shrink-0" style={{ height: 26, padding: "0 14px", gap: 16, borderTop: "1px solid var(--line2)", background: "var(--bg1)", color: "var(--fg1)", fontSize: 11.5 }}>
+          <span>Page {curPage} of {pageCount}</span>
+          <span>{wordCount} {wordCount === 1 ? "word" : "words"}</span>
+          <span style={{ flex: 1 }} />
+          <button onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)))} title="Zoom out" style={zbtn}>−</button>
+          <input type="range" min={50} max={200} step={10} value={Math.round(zoom * 100)} onChange={(e) => setZoom(parseInt(e.target.value, 10) / 100)} style={{ width: 110 }} />
+          <button onClick={() => setZoom((z) => Math.min(2, +(z + 0.1).toFixed(2)))} title="Zoom in" style={zbtn}>+</button>
+          <span style={{ width: 38, textAlign: "right" }}>{Math.round(zoom * 100)}%</span>
+        </div>
+      )}
     </div>
   );
 }
