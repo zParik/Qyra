@@ -350,6 +350,10 @@ function collectRuns(p: HTMLElement): RunEdit[] {
 const RIBBON_TABS = ["home", "insert", "table"] as const;
 type RibbonTab = (typeof RIBBON_TABS)[number];
 
+const FONTS = ["Calibri", "Arial", "Times New Roman", "Cambria", "Georgia", "Verdana", "Tahoma", "Courier New", "Segoe UI", "Comic Sans MS"];
+const SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 36, 48, 72];
+const HIGHLIGHTS = ["FFFF00", "00FF00", "00FFFF", "FF00FF", "FF9900"];
+
 /** One labelled cluster of ribbon controls (Word's grouped-command layout). */
 function Group({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -382,6 +386,8 @@ export default function WordViewer() {
   const [replace, setReplace] = useState("");
   const [inTable, setInTable] = useState(false);
   const [tab, setTab] = useState<RibbonTab>("home");
+  const [curFont, setCurFont] = useState("");
+  const [curSize, setCurSize] = useState<number | "">("");
 
   const editRef = useRef<HTMLDivElement>(null);
   const origHtmlRef = useRef<Record<number, string>>({});
@@ -454,22 +460,72 @@ export default function WordViewer() {
     reflow();
   }
 
-  // Track whether the caret sits inside a table so the table tools can enable.
+  // Track table context + the caret's font/size so the ribbon reflects them.
   useEffect(() => {
-    const onSel = () => setInTable(caretCell() != null);
+    const onSel = () => {
+      setInTable(caretCell() != null);
+      const el = caretElement();
+      if (el) {
+        const cs = getComputedStyle(el);
+        setCurFont(primaryFont(cs.fontFamily) ?? "");
+        setCurSize(pxToPt(cs.fontSize) ?? "");
+      }
+    };
     document.addEventListener("selectionchange", onSel);
     return () => document.removeEventListener("selectionchange", onSel);
   }, []);
 
-  /** The `<td>` containing the caret, if inside the editor. */
-  function caretCell(): HTMLTableCellElement | null {
+  /** The element at the caret, if inside the editor. */
+  function caretElement(): HTMLElement | null {
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) return null;
     let node: Node | null = sel.anchorNode;
     if (node && node.nodeType === Node.TEXT_NODE) node = node.parentElement;
     const el = node as HTMLElement | null;
     if (!el || !editRef.current || !editRef.current.contains(el)) return null;
-    return el.closest("td");
+    return el;
+  }
+
+  /** The `<td>` containing the caret, if inside the editor. */
+  function caretCell(): HTMLTableCellElement | null {
+    return caretElement()?.closest("td") ?? null;
+  }
+
+  // ---- character formatting that must produce CSS spans (readable by collectRuns) ----
+  function execCss(cmd: string, value?: string) {
+    document.execCommand("styleWithCSS", false, "true");
+    document.execCommand(cmd, false, value);
+    editRef.current?.focus();
+    reflow();
+  }
+  function applyFont(family: string) {
+    if (family) execCss("fontName", family);
+  }
+  function applySize(pt: number) {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) { editRef.current?.focus(); return; }
+    const range = sel.getRangeAt(0);
+    const span = document.createElement("span");
+    span.style.fontSize = pt + "pt";
+    try {
+      range.surroundContents(span);
+    } catch {
+      span.appendChild(range.extractContents());
+      range.insertNode(span);
+    }
+    sel.removeAllRanges();
+    const r = document.createRange();
+    r.selectNodeContents(span);
+    sel.addRange(r);
+    editRef.current?.focus();
+    reflow();
+  }
+  function applyHighlight(color: string | null) {
+    document.execCommand("styleWithCSS", false, "true");
+    const c = color ? "#" + color : "transparent";
+    if (!document.execCommand("hiliteColor", false, c)) document.execCommand("backColor", false, c);
+    editRef.current?.focus();
+    reflow();
   }
 
   function newTd(): HTMLTableCellElement {
@@ -694,6 +750,10 @@ export default function WordViewer() {
     borderRadius: 5, color: "var(--fg0)", cursor: "pointer", fontSize: 12,
   };
   const sepStyle: React.CSSProperties = { width: 1, height: 18, background: "var(--line)", margin: "0 4px" };
+  const selStyle: React.CSSProperties = {
+    height: 28, background: "var(--bg0)", color: "var(--fg0)", border: "1px solid var(--line)",
+    borderRadius: 5, fontSize: 12, padding: "0 4px", fontFamily: UI,
+  };
 
   return (
     <div className="flex flex-col" style={{ height: "100dvh", background: "var(--bg0)", fontFamily: UI }}>
@@ -746,17 +806,39 @@ export default function WordViewer() {
             {tab === "home" && (
               <>
                 <Group label="Font">
+                  <select value={curFont} onMouseDown={(e) => e.stopPropagation()} onChange={(e) => applyFont(e.target.value)} title="Font" style={{ ...selStyle, width: 124 }}>
+                    <option value="" disabled>Font</option>
+                    {[...new Set([curFont, ...FONTS].filter(Boolean))].map((f) => (
+                      <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>
+                    ))}
+                  </select>
+                  <select value={curSize === "" ? "" : String(curSize)} onChange={(e) => applySize(parseFloat(e.target.value))} title="Font size" style={{ ...selStyle, width: 56 }}>
+                    <option value="" disabled>Size</option>
+                    {[...new Set([...(curSize ? [curSize] : []), ...SIZES])].sort((a, b) => a - b).map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                  <span style={sepStyle} />
                   {([["bold", "B", "Bold"], ["italic", "I", "Italic"], ["underline", "U", "Underline"]] as const).map(([cmd, label, title]) => (
                     <button key={cmd} onMouseDown={(e) => { e.preventDefault(); exec(cmd); }} title={title}
                       style={{ ...tbtn, fontWeight: cmd === "bold" ? 700 : 400, fontStyle: cmd === "italic" ? "italic" : "normal", textDecoration: cmd === "underline" ? "underline" : "none" }}>
                       {label}
                     </button>
                   ))}
+                  <button onMouseDown={(e) => { e.preventDefault(); execCss("strikeThrough"); }} title="Strikethrough" style={{ ...tbtn, textDecoration: "line-through" }}>S</button>
+                  <button onMouseDown={(e) => { e.preventDefault(); execCss("superscript"); }} title="Superscript" style={tbtn}>x²</button>
+                  <button onMouseDown={(e) => { e.preventDefault(); execCss("subscript"); }} title="Subscript" style={tbtn}>x₂</button>
                   <span style={sepStyle} />
-                  {["000000", "C00000", "2E5BBA", "2E7D32"].map((c) => (
-                    <button key={c} onMouseDown={(e) => { e.preventDefault(); exec("foreColor", "#" + c); }} title={"Text colour #" + c}
-                      style={{ width: 22, height: 22, background: "#" + c, border: "1px solid var(--line)", borderRadius: 4, cursor: "pointer" }} />
+                  <label title="Text colour" style={{ ...tbtn, display: "inline-flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
+                    <span style={{ fontWeight: 700 }}>A</span>
+                    <input type="color" onChange={(e) => execCss("foreColor", e.target.value)}
+                      style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }} />
+                  </label>
+                  {HIGHLIGHTS.map((c) => (
+                    <button key={c} onMouseDown={(e) => { e.preventDefault(); applyHighlight(c); }} title={"Highlight #" + c}
+                      style={{ width: 20, height: 20, background: "#" + c, border: "1px solid var(--line)", borderRadius: 4, cursor: "pointer" }} />
                   ))}
+                  <button onMouseDown={(e) => { e.preventDefault(); applyHighlight(null); }} title="No highlight" style={tbtn}>▨✕</button>
                 </Group>
                 <Group label="Paragraph">
                   {([["justifyLeft", "L", "Align left"], ["justifyCenter", "C", "Center"], ["justifyRight", "R", "Align right"], ["justifyFull", "J", "Justify"]] as const).map(([cmd, label, title]) => (
