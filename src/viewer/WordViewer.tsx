@@ -555,6 +555,17 @@ export default function WordViewer() {
     editRef.current?.focus();
     reflow();
   }
+  function clearFormat() {
+    document.execCommand("removeFormat");
+    const p = caretParagraph();
+    if (p) { p.removeAttribute("data-style"); p.className = ""; setCurStyle("Normal"); }
+    editRef.current?.focus();
+    reflow();
+  }
+  // Native contenteditable undo/redo (covers typing + execCommand formatting);
+  // the historyUndo input event re-triggers pagination.
+  function undo() { document.execCommand("undo"); editRef.current?.focus(); }
+  function redo() { document.execCommand("redo"); editRef.current?.focus(); }
 
   function newTd(): HTMLTableCellElement {
     const td = document.createElement("td");
@@ -833,6 +844,10 @@ export default function WordViewer() {
           <div className="flex items-stretch shrink-0 flex-wrap" style={{ minHeight: 58, padding: "5px 6px", background: "var(--bg1)", borderBottom: "1px solid var(--line2)" }}>
             {tab === "home" && (
               <>
+                <Group label="Undo">
+                  <button onMouseDown={(e) => { e.preventDefault(); undo(); }} title="Undo (Ctrl+Z)" style={tbtn}>↶</button>
+                  <button onMouseDown={(e) => { e.preventDefault(); redo(); }} title="Redo (Ctrl+Y)" style={tbtn}>↷</button>
+                </Group>
                 <Group label="Font">
                   <select value={curFont} onMouseDown={(e) => e.stopPropagation()} onChange={(e) => applyFont(e.target.value)} title="Font" style={{ ...selStyle, width: 124 }}>
                     <option value="" disabled>Font</option>
@@ -867,6 +882,7 @@ export default function WordViewer() {
                       style={{ width: 20, height: 20, background: "#" + c, border: "1px solid var(--line)", borderRadius: 4, cursor: "pointer" }} />
                   ))}
                   <button onMouseDown={(e) => { e.preventDefault(); applyHighlight(null); }} title="No highlight" style={tbtn}>▨✕</button>
+                  <button onMouseDown={(e) => { e.preventDefault(); clearFormat(); }} title="Clear formatting" style={tbtn}>⌫</button>
                 </Group>
                 <Group label="Paragraph">
                   {([["justifyLeft", "L", "Align left"], ["justifyCenter", "C", "Center"], ["justifyRight", "R", "Align right"], ["justifyFull", "J", "Justify"]] as const).map(([cmd, label, title]) => (
