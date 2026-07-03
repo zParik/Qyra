@@ -320,6 +320,19 @@ function collectRuns(p: HTMLElement): RunEdit[] {
   return runs;
 }
 
+const RIBBON_TABS = ["home", "insert", "table"] as const;
+type RibbonTab = (typeof RIBBON_TABS)[number];
+
+/** One labelled cluster of ribbon controls (Word's grouped-command layout). */
+function Group({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "2px 10px", borderRight: "1px solid var(--line)" }}>
+      <div className="flex items-center gap-1" style={{ minHeight: 30 }}>{children}</div>
+      <div style={{ fontSize: 10, color: "var(--fg2)", letterSpacing: 0.2 }}>{label}</div>
+    </div>
+  );
+}
+
 /**
  * Single-surface .docx editor: opening a document drops you straight into an
  * editable, formatted page (no separate view/edit modes). Type like a word
@@ -341,6 +354,7 @@ export default function WordViewer() {
   const [find, setFind] = useState("");
   const [replace, setReplace] = useState("");
   const [inTable, setInTable] = useState(false);
+  const [tab, setTab] = useState<RibbonTab>("home");
 
   const editRef = useRef<HTMLDivElement>(null);
   const origHtmlRef = useRef<Record<number, string>>({});
@@ -679,58 +693,102 @@ export default function WordViewer() {
       </header>
 
       {path && (
-        <div className="flex items-center gap-1 shrink-0 flex-wrap" style={{ padding: "8px 14px", borderBottom: "1px solid var(--line2)" }}>
-          {([["bold", "B"], ["italic", "I"], ["underline", "U"]] as const).map(([cmd, label]) => (
-            <button key={cmd} onMouseDown={(e) => { e.preventDefault(); exec(cmd); }} title={cmd}
-              style={{ ...tbtn, fontWeight: cmd === "bold" ? 700 : 400, fontStyle: cmd === "italic" ? "italic" : "normal", textDecoration: cmd === "underline" ? "underline" : "none" }}>
-              {label}
-            </button>
-          ))}
-          <span style={{ width: 1, height: 20, background: "var(--line)", margin: "0 4px" }} />
-          {([["justifyLeft", "L", "Align left"], ["justifyCenter", "C", "Align center"], ["justifyRight", "R", "Align right"], ["justifyFull", "J", "Justify"]] as const).map(([cmd, label, title]) => (
-            <button key={cmd} onMouseDown={(e) => { e.preventDefault(); exec(cmd); }} title={title} style={tbtn}>{label}</button>
-          ))}
-          <span style={{ width: 1, height: 20, background: "var(--line)", margin: "0 4px" }} />
-          {["000000", "C00000", "2E5BBA", "2E7D32"].map((c) => (
-            <button key={c} onMouseDown={(e) => { e.preventDefault(); exec("foreColor", "#" + c); }} title={"Color #" + c}
-              style={{ width: 22, height: 22, background: "#" + c, border: "1px solid var(--line)", borderRadius: 4, cursor: "pointer" }} />
-          ))}
-          <span style={{ flex: 1 }} />
-          <input style={inputStyle} placeholder="Find" value={find} onChange={(e) => setFind(e.target.value)} />
-          <input style={inputStyle} placeholder="Replace" value={replace} onChange={(e) => setReplace(e.target.value)} />
-          <button onClick={doReplace} disabled={!find || saving} style={{ ...tbtn, width: "auto", padding: "5px 10px" }}>Replace all</button>
-        </div>
-      )}
+        <>
+          {/* Ribbon tab strip */}
+          <div className="flex items-center shrink-0" style={{ height: 34, padding: "0 10px", gap: 2, background: "var(--bg1)", borderBottom: "1px solid var(--line)" }}>
+            {RIBBON_TABS.map((t) => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                style={{
+                  background: tab === t ? "var(--bg0)" : "transparent",
+                  color: tab === t ? "var(--fg0)" : "var(--fg1)",
+                  border: "none",
+                  borderBottom: tab === t ? "2px solid var(--accent, #3b6ea5)" : "2px solid transparent",
+                  padding: "0 14px", height: "100%", cursor: "pointer", fontSize: 12.5,
+                  fontWeight: tab === t ? 600 : 500, textTransform: "capitalize",
+                }}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
 
-      {path && (
-        <div className="flex items-center gap-1 shrink-0 flex-wrap" style={{ padding: "6px 14px", borderBottom: "1px solid var(--line2)", fontSize: 12 }}>
-          <button onMouseDown={(e) => { e.preventDefault(); insertTable(); }} title="Insert a 2×2 table" style={wbtn}>+ Table</button>
-          <span style={sepStyle} />
-          <span style={{ color: "var(--fg2)", marginRight: 4 }}>Table:</span>
-          {([
-            ["Row ↑", () => insertRow(false), "Insert row above"],
-            ["Row ↓", () => insertRow(true), "Insert row below"],
-            ["Row ✕", deleteRow, "Delete row"],
-            ["Col ←", () => insertCol(false), "Insert column left"],
-            ["Col →", () => insertCol(true), "Insert column right"],
-            ["Col ✕", deleteCol, "Delete column"],
-            ["Merge →", mergeRight, "Merge with cell to the right"],
-            ["Merge ↓", mergeDown, "Merge with cell below"],
-            ["Split", splitCell, "Split merged cell"],
-          ] as const).map(([label, fn, title]) => (
-            <button key={label} disabled={!inTable} onMouseDown={(e) => { e.preventDefault(); fn(); }} title={title} style={wbtn}>{label}</button>
-          ))}
-          <span style={sepStyle} />
-          {["FFFF00", "D9D9D9", "DEEAF6"].map((c) => (
-            <button key={c} disabled={!inTable} onMouseDown={(e) => { e.preventDefault(); shadeCell(c); }} title={"Shade #" + c}
-              style={{ width: 20, height: 20, background: "#" + c, border: "1px solid var(--line)", borderRadius: 4, cursor: inTable ? "pointer" : "default", opacity: inTable ? 1 : 0.4 }} />
-          ))}
-          <button disabled={!inTable} onMouseDown={(e) => { e.preventDefault(); shadeCell(null); }} title="Clear shading" style={wbtn}>Shade ✕</button>
-          <button disabled={!inTable} onMouseDown={(e) => { e.preventDefault(); borderCell(true); }} title="Cell border on" style={wbtn}>▦</button>
-          <button disabled={!inTable} onMouseDown={(e) => { e.preventDefault(); borderCell(false); }} title="Cell border off" style={wbtn}>▢</button>
-          <span style={sepStyle} />
-          <button onMouseDown={(e) => { e.preventDefault(); undoTable(); }} title="Undo last table change" style={wbtn}>↶ Undo</button>
-        </div>
+          {/* Ribbon body */}
+          <div className="flex items-stretch shrink-0 flex-wrap" style={{ minHeight: 58, padding: "5px 6px", background: "var(--bg1)", borderBottom: "1px solid var(--line2)" }}>
+            {tab === "home" && (
+              <>
+                <Group label="Font">
+                  {([["bold", "B", "Bold"], ["italic", "I", "Italic"], ["underline", "U", "Underline"]] as const).map(([cmd, label, title]) => (
+                    <button key={cmd} onMouseDown={(e) => { e.preventDefault(); exec(cmd); }} title={title}
+                      style={{ ...tbtn, fontWeight: cmd === "bold" ? 700 : 400, fontStyle: cmd === "italic" ? "italic" : "normal", textDecoration: cmd === "underline" ? "underline" : "none" }}>
+                      {label}
+                    </button>
+                  ))}
+                  <span style={sepStyle} />
+                  {["000000", "C00000", "2E5BBA", "2E7D32"].map((c) => (
+                    <button key={c} onMouseDown={(e) => { e.preventDefault(); exec("foreColor", "#" + c); }} title={"Text colour #" + c}
+                      style={{ width: 22, height: 22, background: "#" + c, border: "1px solid var(--line)", borderRadius: 4, cursor: "pointer" }} />
+                  ))}
+                </Group>
+                <Group label="Paragraph">
+                  {([["justifyLeft", "L", "Align left"], ["justifyCenter", "C", "Center"], ["justifyRight", "R", "Align right"], ["justifyFull", "J", "Justify"]] as const).map(([cmd, label, title]) => (
+                    <button key={cmd} onMouseDown={(e) => { e.preventDefault(); exec(cmd); }} title={title} style={tbtn}>{label}</button>
+                  ))}
+                </Group>
+                <Group label="Editing">
+                  <input style={inputStyle} placeholder="Find" value={find} onChange={(e) => setFind(e.target.value)} />
+                  <input style={inputStyle} placeholder="Replace" value={replace} onChange={(e) => setReplace(e.target.value)} />
+                  <button onClick={doReplace} disabled={!find || saving} style={{ ...tbtn, width: "auto", padding: "5px 10px" }}>Replace all</button>
+                </Group>
+              </>
+            )}
+
+            {tab === "insert" && (
+              <Group label="Tables">
+                <button onMouseDown={(e) => { e.preventDefault(); insertTable(); }} title="Insert a 2×2 table" style={wbtn}>▦ Table</button>
+              </Group>
+            )}
+
+            {tab === "table" && (
+              <>
+                <Group label="Rows & Columns">
+                  {([
+                    ["Row ↑", () => insertRow(false), "Insert row above"],
+                    ["Row ↓", () => insertRow(true), "Insert row below"],
+                    ["Row ✕", deleteRow, "Delete row"],
+                    ["Col ←", () => insertCol(false), "Insert column left"],
+                    ["Col →", () => insertCol(true), "Insert column right"],
+                    ["Col ✕", deleteCol, "Delete column"],
+                  ] as const).map(([label, fn, title]) => (
+                    <button key={label} disabled={!inTable} onMouseDown={(e) => { e.preventDefault(); fn(); }} title={title} style={wbtn}>{label}</button>
+                  ))}
+                </Group>
+                <Group label="Merge">
+                  {([
+                    ["Merge →", mergeRight, "Merge with cell to the right"],
+                    ["Merge ↓", mergeDown, "Merge with cell below"],
+                    ["Split", splitCell, "Split merged cell"],
+                  ] as const).map(([label, fn, title]) => (
+                    <button key={label} disabled={!inTable} onMouseDown={(e) => { e.preventDefault(); fn(); }} title={title} style={wbtn}>{label}</button>
+                  ))}
+                </Group>
+                <Group label="Shading & Borders">
+                  {["FFFF00", "D9D9D9", "DEEAF6"].map((c) => (
+                    <button key={c} disabled={!inTable} onMouseDown={(e) => { e.preventDefault(); shadeCell(c); }} title={"Shade #" + c}
+                      style={{ width: 20, height: 20, background: "#" + c, border: "1px solid var(--line)", borderRadius: 4, cursor: inTable ? "pointer" : "default", opacity: inTable ? 1 : 0.4 }} />
+                  ))}
+                  <button disabled={!inTable} onMouseDown={(e) => { e.preventDefault(); shadeCell(null); }} title="Clear shading" style={wbtn}>Shade ✕</button>
+                  <button disabled={!inTable} onMouseDown={(e) => { e.preventDefault(); borderCell(true); }} title="Cell border on" style={wbtn}>▦</button>
+                  <button disabled={!inTable} onMouseDown={(e) => { e.preventDefault(); borderCell(false); }} title="Cell border off" style={wbtn}>▢</button>
+                </Group>
+                <Group label="Undo">
+                  <button onMouseDown={(e) => { e.preventDefault(); undoTable(); }} title="Undo last table change" style={wbtn}>↶ Undo</button>
+                </Group>
+              </>
+            )}
+          </div>
+        </>
       )}
 
       <style>{`
