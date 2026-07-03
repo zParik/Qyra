@@ -365,6 +365,11 @@ function collectRuns(p: HTMLElement): RunEdit[] {
     if (node.nodeType !== Node.ELEMENT_NODE) return;
     const el = node as HTMLElement;
     if (el.classList.contains("qyra-pagebreak")) { runs.push({ text: "", br: "page" }); return; }
+    if (el.tagName.toLowerCase() === "img") {
+      const embed = el.getAttribute("data-embed");
+      if (embed) runs.push({ text: "", img_embed: embed, img_w: parseFloat(el.getAttribute("data-w") || "96"), img_h: parseFloat(el.getAttribute("data-h") || "96") });
+      return;
+    }
     if (el.classList.contains("qyra-marker") || el.classList.contains("qyra-tab")) return;
     for (const c of Array.from(el.childNodes)) visit(c);
   };

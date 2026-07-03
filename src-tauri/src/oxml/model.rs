@@ -132,6 +132,9 @@ pub struct ImageRef {
     pub height_pt: f32,
     /// Encoded image bytes (PNG/JPEG/…), embedded from the package media part.
     pub data: Vec<u8>,
+    /// The `r:embed` relationship id, so an edited paragraph can re-reference the
+    /// existing media part instead of dropping the image.
+    pub rid: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -45,6 +45,14 @@ pub struct RunEdit {
     /// Hyperlink target URL; consecutive same-URL runs are wrapped in `<w:hyperlink>`.
     #[serde(default)]
     pub link: Option<String>,
+    /// An inline image run instead of text: the `r:embed` id of an existing media
+    /// part, plus its size in points. Preserves images across a paragraph edit.
+    #[serde(default)]
+    pub img_embed: Option<String>,
+    #[serde(default)]
+    pub img_w: Option<f32>,
+    #[serde(default)]
+    pub img_h: Option<f32>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -526,6 +534,9 @@ fn write_run(main: &mut Writer<Cursor<Vec<u8>>>, r: &RunEdit) -> Result<(), Edit
 /// Serialize one run to `<w:r>…</w:r>` with its run properties (emitted in WML
 /// `rPr` schema order: rFonts, b, i, strike, u, color, sz, shd, vertAlign).
 fn run_xml(r: &RunEdit) -> String {
+    if let Some(embed) = &r.img_embed {
+        return image_run_xml(embed, r.img_w.unwrap_or(96.0), r.img_h.unwrap_or(96.0));
+    }
     if let Some(kind) = &r.br {
         let br = if kind == "page" { "<w:br w:type=\"page\"/>" } else { "<w:br/>" };
         return format!("<w:r>{br}</w:r>");
@@ -571,6 +582,31 @@ fn run_xml(r: &RunEdit) -> String {
     s.push_str(&xml_escape(&r.text));
     s.push_str("</w:t></w:r>");
     s
+}
+
+/// docPr ids must be distinct within a document; a monotonic counter suffices.
+static IMG_DOCPR_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1000);
+
+/// A `<w:r>` wrapping an inline `<w:drawing>` that references media `embed`, sized
+/// `w_pt` × `h_pt`. Namespaces wp/a/pic are declared inline; `r:` comes from the
+/// document root (present whenever the doc already has drawings).
+fn image_run_xml(embed: &str, w_pt: f32, h_pt: f32) -> String {
+    let cx = (w_pt * 12700.0).round() as i64;
+    let cy = (h_pt * 12700.0).round() as i64;
+    let id = IMG_DOCPR_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!(
+        "<w:r><w:drawing>\
+<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\">\
+<wp:extent cx=\"{cx}\" cy=\"{cy}\"/><wp:docPr id=\"{id}\" name=\"Picture {id}\"/>\
+<a:graphic xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">\
+<a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+<pic:pic xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+<pic:nvPicPr><pic:cNvPr id=\"0\" name=\"\"/><pic:cNvPicPr/></pic:nvPicPr>\
+<pic:blipFill><a:blip r:embed=\"{embed}\"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>\
+<pic:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{cx}\" cy=\"{cy}\"/></a:xfrm>\
+<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr>\
+</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"
+    )
 }
 
 fn jc_val(align: &str) -> &'static str {
@@ -1431,6 +1467,15 @@ mod tests {
         assert!(out.contains("<w:strike/>"), "strike emitted");
         assert!(out.contains("w:fill=\"FFFF00\""), "highlight emitted");
         assert!(out.contains("<w:vertAlign w:val=\"superscript\"/>"), "superscript emitted");
+    }
+
+    #[test]
+    fn image_run_emits_drawing() {
+        let r = RunEdit { img_embed: Some("rId7".into()), img_w: Some(72.0), img_h: Some(48.0), ..Default::default() };
+        let out = run_xml(&r);
+        assert!(out.contains("<w:drawing>") && out.contains("<pic:pic"), "drawing emitted");
+        assert!(out.contains("r:embed=\"rId7\""), "references the media");
+        assert!(out.contains("cx=\"914400\""), "72pt → 914400 EMU width");
     }
 
     #[test]

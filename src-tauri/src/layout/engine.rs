@@ -684,7 +684,7 @@ mod tests {
     fn image_inline_is_placed() {
         let para = Block::Paragraph(Paragraph {
             props: ParaProps::default(),
-            inlines: vec![Inline::Image(ImageRef { width_pt: 72.0, height_pt: 48.0, data: vec![1, 2, 3] })],
+            inlines: vec![Inline::Image(ImageRef { width_pt: 72.0, height_pt: 48.0, data: vec![1, 2, 3], rid: None })],
         });
         let res = layout_document(&doc(vec![para]), &FontSet::default_set());
         assert_eq!(res.pages[0].images.len(), 1);

@@ -121,9 +121,14 @@ fn inline_html(inline: &Inline, out: &mut String) {
         Inline::PageBreak => out.push_str("<hr class=\"qyra-pagebreak\" contenteditable=\"false\">"),
         Inline::Image(img) => {
             let b64 = base64::engine::general_purpose::STANDARD.encode(&img.data);
+            let embed = img.rid.as_deref().map(|r| format!(" data-embed=\"{r}\"")).unwrap_or_default();
             // Format guessed by the browser from the data; png/jpeg both decode.
+            // data-w/data-h (points) let an edited paragraph rebuild the drawing.
             out.push_str(&format!(
-                "<img src=\"data:image;base64,{}\" style=\"width:{:.0}px;height:{:.0}px\" contenteditable=\"false\">",
+                "<img{} data-w=\"{:.1}\" data-h=\"{:.1}\" src=\"data:image;base64,{}\" style=\"width:{:.0}px;height:{:.0}px\" contenteditable=\"false\">",
+                embed,
+                img.width_pt,
+                img.height_pt,
                 b64,
                 img.width_pt * 1.333,
                 img.height_pt * 1.333,

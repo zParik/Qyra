@@ -459,7 +459,7 @@ fn handle_image_leaf(
                 if let Some(bytes) = media.get(&rid) {
                     let (w, h) = cur_ext.take().unwrap_or((96.0, 96.0));
                     if in_para {
-                        inlines.push(Inline::Image(ImageRef { width_pt: w, height_pt: h, data: bytes.clone() }));
+                        inlines.push(Inline::Image(ImageRef { width_pt: w, height_pt: h, data: bytes.clone(), rid: Some(rid) }));
                     }
                 }
             }

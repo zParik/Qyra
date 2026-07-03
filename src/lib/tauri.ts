@@ -240,6 +240,9 @@ export interface RunEdit {
   vert?: "super" | "sub";
   br?: "page" | "line"; // a break run instead of text
   link?: string;    // hyperlink target URL
+  img_embed?: string; // inline image: r:embed id of an existing media part
+  img_w?: number;   // image width in points
+  img_h?: number;   // image height in points
 }
 
 /** Rich edit: replace body paragraph `index`'s runs (keeps formatting) + set
