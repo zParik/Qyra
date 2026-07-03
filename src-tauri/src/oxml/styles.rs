@@ -26,6 +26,10 @@ pub struct RunPropsPartial {
     pub strike: Option<bool>,
     pub size_pt: Option<f32>,
     pub color: Option<[u8; 3]>,
+    pub font: Option<String>,
+    pub highlight: Option<[u8; 3]>,
+    pub superscript: Option<bool>,
+    pub subscript: Option<bool>,
 }
 
 #[derive(Default, Clone)]
@@ -235,7 +239,65 @@ pub fn run_prop(part: &mut RunPropsPartial, name: &[u8], e: &BytesStart) {
                 part.color = Some(parse_color(&v));
             }
         }
+        b"w:rFonts" => {
+            // Prefer the ASCII face, fall back to hAnsi / cs.
+            if let Some(f) = attr_str(e, b"w:ascii")
+                .or_else(|| attr_str(e, b"w:hAnsi"))
+                .or_else(|| attr_str(e, b"w:cs"))
+            {
+                part.font = Some(f);
+            }
+        }
+        b"w:highlight" => {
+            if let Some(v) = attr_str(e, b"w:val") {
+                part.highlight = Some(highlight_rgb(&v));
+            }
+        }
+        // Run-level shading also reads as a highlight fill.
+        b"w:shd" => {
+            if let Some(v) = attr_str(e, b"w:fill") {
+                if !v.eq_ignore_ascii_case("auto") && v.len() >= 6 {
+                    part.highlight = Some(parse_color(&v));
+                }
+            }
+        }
+        b"w:vertAlign" => match attr_str(e, b"w:val").as_deref() {
+            Some("superscript") => {
+                part.superscript = Some(true);
+                part.subscript = Some(false);
+            }
+            Some("subscript") => {
+                part.subscript = Some(true);
+                part.superscript = Some(false);
+            }
+            _ => {
+                part.superscript = Some(false);
+                part.subscript = Some(false);
+            }
+        },
         _ => {}
+    }
+}
+
+/// Map a named `w:highlight` value to an RGB colour.
+fn highlight_rgb(name: &str) -> [u8; 3] {
+    match name {
+        "yellow" => [255, 255, 0],
+        "green" => [0, 255, 0],
+        "cyan" => [0, 255, 255],
+        "magenta" => [255, 0, 255],
+        "blue" => [0, 0, 255],
+        "red" => [255, 0, 0],
+        "darkBlue" => [0, 0, 139],
+        "darkCyan" => [0, 139, 139],
+        "darkGreen" => [0, 100, 0],
+        "darkMagenta" => [139, 0, 139],
+        "darkRed" => [139, 0, 0],
+        "darkYellow" => [128, 128, 0],
+        "darkGray" => [169, 169, 169],
+        "lightGray" => [211, 211, 211],
+        "black" => [0, 0, 0],
+        _ => [255, 255, 0], // "white"/"none"/unknown → sane default
     }
 }
 
@@ -297,6 +359,18 @@ pub fn apply_run_partial(rp: &mut RunProps, p: &RunPropsPartial) {
     }
     if let Some(v) = p.color {
         rp.color = v;
+    }
+    if let Some(v) = &p.font {
+        rp.font = Some(v.clone());
+    }
+    if let Some(v) = p.highlight {
+        rp.highlight = Some(v);
+    }
+    if let Some(v) = p.superscript {
+        rp.superscript = v;
+    }
+    if let Some(v) = p.subscript {
+        rp.subscript = v;
     }
 }
 

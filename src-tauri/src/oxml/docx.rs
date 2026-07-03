@@ -515,7 +515,8 @@ fn apply_leaf(
         b"w:jc" | b"w:spacing" | b"w:ind" if has(b"w:pPr") && !has(b"w:rPr") => {
             para_prop(para_direct, name, e)
         }
-        b"w:b" | b"w:i" | b"w:u" | b"w:strike" | b"w:sz" | b"w:color"
+        b"w:b" | b"w:i" | b"w:u" | b"w:strike" | b"w:sz" | b"w:color" | b"w:rFonts"
+        | b"w:highlight" | b"w:shd" | b"w:vertAlign"
             if has(b"w:r") && has(b"w:rPr") =>
         {
             run_prop(run_direct, name, e)

@@ -12,7 +12,7 @@ use quick_xml::Writer;
 use super::{Package, PackageError};
 
 /// A run as edited in the WYSIWYG surface, for rich (formatting-preserving) save.
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct RunEdit {
     pub text: String,
     #[serde(default)]
@@ -21,11 +21,22 @@ pub struct RunEdit {
     pub italic: bool,
     #[serde(default)]
     pub underline: bool,
+    #[serde(default)]
+    pub strike: bool,
     /// "RRGGBB" hex (with or without leading '#').
     #[serde(default)]
     pub color: Option<String>,
     #[serde(default)]
     pub size_pt: Option<f32>,
+    /// Font family (`w:rFonts`).
+    #[serde(default)]
+    pub font: Option<String>,
+    /// Highlight fill, "RRGGBB".
+    #[serde(default)]
+    pub highlight: Option<String>,
+    /// "super" | "sub" (`w:vertAlign`).
+    #[serde(default)]
+    pub vert: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -442,25 +453,43 @@ fn write_run(main: &mut Writer<Cursor<Vec<u8>>>, r: &RunEdit) -> Result<(), Edit
     Ok(())
 }
 
-/// Serialize one run to `<w:r>…</w:r>` with its run properties.
+/// Serialize one run to `<w:r>…</w:r>` with its run properties (emitted in WML
+/// `rPr` schema order: rFonts, b, i, strike, u, color, sz, shd, vertAlign).
 fn run_xml(r: &RunEdit) -> String {
+    let has_rpr = r.bold || r.italic || r.underline || r.strike || r.color.is_some()
+        || r.size_pt.is_some() || r.font.is_some() || r.highlight.is_some() || r.vert.is_some();
     let mut s = String::from("<w:r>");
-    if r.bold || r.italic || r.underline || r.color.is_some() || r.size_pt.is_some() {
+    if has_rpr {
         s.push_str("<w:rPr>");
+        if let Some(f) = &r.font {
+            let f = xml_escape(f).replace('"', "");
+            s.push_str(&format!("<w:rFonts w:ascii=\"{f}\" w:hAnsi=\"{f}\" w:cs=\"{f}\"/>"));
+        }
         if r.bold {
             s.push_str("<w:b/>");
         }
         if r.italic {
             s.push_str("<w:i/>");
         }
+        if r.strike {
+            s.push_str("<w:strike/>");
+        }
         if r.underline {
             s.push_str("<w:u w:val=\"single\"/>");
+        }
+        if let Some(c) = &r.color {
+            s.push_str(&format!("<w:color w:val=\"{}\"/>", c.trim_start_matches('#')));
         }
         if let Some(sz) = r.size_pt {
             s.push_str(&format!("<w:sz w:val=\"{}\"/>", (sz * 2.0).round() as i32));
         }
-        if let Some(c) = &r.color {
-            s.push_str(&format!("<w:color w:val=\"{}\"/>", c.trim_start_matches('#')));
+        if let Some(h) = &r.highlight {
+            s.push_str(&format!("<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"{}\"/>", h.trim_start_matches('#')));
+        }
+        match r.vert.as_deref() {
+            Some("super") => s.push_str("<w:vertAlign w:val=\"superscript\"/>"),
+            Some("sub") => s.push_str("<w:vertAlign w:val=\"subscript\"/>"),
+            _ => {}
         }
         s.push_str("</w:rPr>");
     }
@@ -1087,8 +1116,8 @@ mod tests {
           <w:p><w:r><w:t>keep</w:t></w:r></w:p>
         </w:body></w:document>"#;
         let runs = vec![
-            RunEdit { text: "New ".into(), bold: true, italic: false, underline: false, color: None, size_pt: None },
-            RunEdit { text: "text".into(), bold: false, italic: true, underline: false, color: None, size_pt: None },
+            RunEdit { text: "New ".into(), bold: true, italic: false, underline: false, color: None, size_pt: None, ..Default::default() },
+            RunEdit { text: "text".into(), bold: false, italic: true, underline: false, color: None, size_pt: None, ..Default::default() },
         ];
         let out = set_paragraph_runs_in_package(&docx_with(xml), 0, &runs, None).unwrap();
         let text = document_text(&out);
@@ -1104,8 +1133,8 @@ mod tests {
     fn full_body_save_rebuilds_paragraphs_and_keeps_sectpr() {
         let xml = r#"<w:document xmlns:w="x"><w:body><w:p><w:r><w:t>one</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>"#;
         let paras = vec![
-            ParaEdit { runs: vec![RunEdit { text: "one".into(), bold: false, italic: false, underline: false, color: None, size_pt: None }], align: None },
-            ParaEdit { runs: vec![RunEdit { text: "two".into(), bold: true, italic: false, underline: false, color: None, size_pt: None }], align: Some("center".into()) },
+            ParaEdit { runs: vec![RunEdit { text: "one".into(), bold: false, italic: false, underline: false, color: None, size_pt: None, ..Default::default() }], align: None },
+            ParaEdit { runs: vec![RunEdit { text: "two".into(), bold: true, italic: false, underline: false, color: None, size_pt: None, ..Default::default() }], align: Some("center".into()) },
         ];
         let out = save_body_in_package(&docx_with(xml), &paras).unwrap();
         let text = document_text(&out);
@@ -1124,13 +1153,30 @@ mod tests {
     #[test]
     fn sets_paragraph_alignment() {
         let xml = r#"<w:document xmlns:w="x"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
-        let runs = vec![RunEdit { text: "x".into(), bold: false, italic: false, underline: false, color: None, size_pt: None }];
+        let runs = vec![RunEdit { text: "x".into(), bold: false, italic: false, underline: false, color: None, size_pt: None, ..Default::default() }];
         let out = set_paragraph_runs_in_package(&docx_with(xml), 0, &runs, Some("center")).unwrap();
         assert!(document_text(&out).contains("<w:jc w:val=\"center\"/>"), "alignment injected into pPr");
     }
 
     fn run(text: &str, bold: bool) -> RunEdit {
-        RunEdit { text: text.into(), bold, italic: false, underline: false, color: None, size_pt: None }
+        RunEdit { text: text.into(), bold, italic: false, underline: false, color: None, size_pt: None, ..Default::default() }
+    }
+
+    #[test]
+    fn run_xml_emits_extended_props() {
+        let r = RunEdit {
+            text: "x".into(),
+            strike: true,
+            font: Some("Calibri".into()),
+            highlight: Some("FFFF00".into()),
+            vert: Some("super".into()),
+            ..Default::default()
+        };
+        let out = run_xml(&r);
+        assert!(out.contains("<w:rFonts w:ascii=\"Calibri\""), "font emitted");
+        assert!(out.contains("<w:strike/>"), "strike emitted");
+        assert!(out.contains("w:fill=\"FFFF00\""), "highlight emitted");
+        assert!(out.contains("<w:vertAlign w:val=\"superscript\"/>"), "superscript emitted");
     }
 
     #[test]

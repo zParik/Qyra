@@ -130,11 +130,22 @@ fn para_style(p: &Paragraph) -> String {
 
 fn run_style(rp: &RunProps) -> String {
     let mut s = format!("font-size:{:.1}pt;color:#{:02x}{:02x}{:02x}", rp.size_pt, rp.color[0], rp.color[1], rp.color[2]);
+    if let Some(font) = &rp.font {
+        s.push_str(&format!(";font-family:'{}'", font.replace('\'', "")));
+    }
     if rp.bold {
         s.push_str(";font-weight:bold");
     }
     if rp.italic {
         s.push_str(";font-style:italic");
+    }
+    if let Some(h) = rp.highlight {
+        s.push_str(&format!(";background-color:#{:02x}{:02x}{:02x}", h[0], h[1], h[2]));
+    }
+    if rp.superscript {
+        s.push_str(";vertical-align:super;font-size:0.7em");
+    } else if rp.subscript {
+        s.push_str(";vertical-align:sub;font-size:0.7em");
     }
     let mut deco = String::new();
     if rp.underline {

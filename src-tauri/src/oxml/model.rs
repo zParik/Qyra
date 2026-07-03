@@ -146,6 +146,12 @@ pub struct RunProps {
     pub strike: bool,
     pub size_pt: f32,
     pub color: [u8; 3],
+    /// Font family (`w:rFonts`); `None` = the editor's default face.
+    pub font: Option<String>,
+    /// Highlight / run shading fill (`w:highlight` or run `w:shd`).
+    pub highlight: Option<[u8; 3]>,
+    pub superscript: bool,
+    pub subscript: bool,
 }
 
 impl Default for RunProps {
@@ -157,6 +163,10 @@ impl Default for RunProps {
             strike: false,
             size_pt: 11.0,
             color: [0, 0, 0],
+            font: None,
+            highlight: None,
+            superscript: false,
+            subscript: false,
         }
     }
 }

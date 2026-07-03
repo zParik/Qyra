@@ -293,6 +293,23 @@ function collectCellParas(td: HTMLElement): ParaEdit[] {
   return ps.map((p) => ({ runs: collectRuns(p), align: mapAlign(getComputedStyle(p).textAlign) }));
 }
 
+/** First inline value of a CSS property on the run's span chain (up to the
+ *  paragraph), i.e. an explicitly-set value rather than an inherited default. */
+function inlineStyle(el: HTMLElement | null, prop: string): string {
+  let n: HTMLElement | null = el;
+  while (n && n.tagName && n.tagName.toLowerCase() !== "p") {
+    const v = (n.style as unknown as Record<string, string>)[prop];
+    if (v) return v;
+    n = n.parentElement;
+  }
+  return "";
+}
+
+function primaryFont(fam: string): string | undefined {
+  const f = fam.split(",")[0]?.replace(/["']/g, "").trim();
+  return f || undefined;
+}
+
 /** Serialize a paragraph element's text into formatting-grouped runs. */
 function collectRuns(p: HTMLElement): RunEdit[] {
   const runs: RunEdit[] = [];
@@ -305,16 +322,26 @@ function collectRuns(p: HTMLElement): RunEdit[] {
     const text = node.textContent || "";
     if (!text) continue;
     const cs = getComputedStyle(parent);
+    const deco = cs.textDecorationLine || cs.textDecoration || "";
     const bold = cs.fontWeight === "bold" || parseInt(cs.fontWeight, 10) >= 600;
     const italic = cs.fontStyle === "italic";
-    const underline = (cs.textDecorationLine || cs.textDecoration || "").includes("underline");
+    const underline = deco.includes("underline");
+    const strike = deco.includes("line-through");
     const color = rgbToHex(cs.color);
     const size_pt = pxToPt(cs.fontSize);
+    // font/highlight only when explicitly set inline (not the inherited default).
+    const font = primaryFont(inlineStyle(parent, "fontFamily"));
+    const bg = inlineStyle(parent, "backgroundColor");
+    const highlight = bg ? rgbToHex(bg) : undefined;
+    const va = cs.verticalAlign;
+    const vert: "super" | "sub" | undefined = va === "super" ? "super" : va === "sub" ? "sub" : undefined;
     const last = runs[runs.length - 1];
-    if (last && !!last.bold === bold && !!last.italic === italic && !!last.underline === underline && last.color === color && last.size_pt === size_pt) {
+    if (last && !!last.bold === bold && !!last.italic === italic && !!last.underline === underline
+      && !!last.strike === strike && last.color === color && last.size_pt === size_pt
+      && last.font === font && last.highlight === highlight && last.vert === vert) {
       last.text += text;
     } else {
-      runs.push({ text, bold, italic, underline, color, size_pt });
+      runs.push({ text, bold, italic, underline, strike, color, size_pt, font, highlight, vert });
     }
   }
   return runs;

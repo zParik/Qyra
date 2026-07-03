@@ -232,8 +232,12 @@ export interface RunEdit {
   bold?: boolean;
   italic?: boolean;
   underline?: boolean;
+  strike?: boolean;
   color?: string;   // "RRGGBB"
   size_pt?: number;
+  font?: string;    // family name
+  highlight?: string; // "RRGGBB"
+  vert?: "super" | "sub";
 }
 
 /** Rich edit: replace body paragraph `index`'s runs (keeps formatting) + set
