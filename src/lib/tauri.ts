@@ -239,6 +239,7 @@ export interface RunEdit {
   highlight?: string; // "RRGGBB"
   vert?: "super" | "sub";
   br?: "page" | "line"; // a break run instead of text
+  link?: string;    // hyperlink target URL
 }
 
 /** Rich edit: replace body paragraph `index`'s runs (keeps formatting) + set

@@ -612,7 +612,7 @@ mod tests {
     fn text_para(s: &str, align: Align) -> Block {
         Block::Paragraph(Paragraph {
             props: ParaProps { align, ..Default::default() },
-            inlines: vec![Inline::Text(TextRun { props: RunProps::default(), text: s.into() })],
+            inlines: vec![Inline::Text(TextRun { props: RunProps::default(), text: s.into(), link: None })],
         })
     }
 
@@ -649,9 +649,9 @@ mod tests {
         let para = Block::Paragraph(Paragraph {
             props: ParaProps::default(),
             inlines: vec![
-                Inline::Text(TextRun { props: RunProps::default(), text: "Top".into() }),
+                Inline::Text(TextRun { props: RunProps::default(), text: "Top".into(), link: None }),
                 Inline::PageBreak,
-                Inline::Text(TextRun { props: RunProps::default(), text: "Next".into() }),
+                Inline::Text(TextRun { props: RunProps::default(), text: "Next".into(), link: None }),
             ],
         });
         let res = layout_document(&doc(vec![para]), &FontSet::default_set());
@@ -662,7 +662,7 @@ mod tests {
     fn list_paragraph_gets_bullet() {
         let para = Block::Paragraph(Paragraph {
             props: ParaProps { list: Some(ListMarker { num_id: 1, level: 0 }), ..Default::default() },
-            inlines: vec![Inline::Text(TextRun { props: RunProps::default(), text: "Item".into() })],
+            inlines: vec![Inline::Text(TextRun { props: RunProps::default(), text: "Item".into(), link: None })],
         });
         let res = layout_document(&doc(vec![para]), &FontSet::default_set());
         assert_eq!(res.pages[0].lines[0].runs[0].text, "\u{2022}");

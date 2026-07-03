@@ -110,7 +110,11 @@ fn cell_html(cell: &Cell, out: &mut String, ri: usize, ci: usize) {
 fn inline_html(inline: &Inline, out: &mut String) {
     match inline {
         Inline::Text(run) => {
-            out.push_str(&format!("<span style=\"{}\">{}</span>", run_style(&run.props), esc(&run.text)));
+            let span = format!("<span style=\"{}\">{}</span>", run_style(&run.props), esc(&run.text));
+            match &run.link {
+                Some(url) => out.push_str(&format!("<a href=\"{}\" class=\"qyra-link\">{}</a>", esc(url), span)),
+                None => out.push_str(&span),
+            }
         }
         Inline::Tab => out.push_str("<span class=\"qyra-tab\">\u{2003}</span>"),
         Inline::LineBreak => out.push_str("<br>"),
@@ -206,6 +210,7 @@ mod tests {
                 inlines: vec![Inline::Text(TextRun {
                     props: RunProps { bold: true, ..Default::default() },
                     text: "Hi <there>".into(),
+                    link: None,
                 })],
             })],
             header: vec![],

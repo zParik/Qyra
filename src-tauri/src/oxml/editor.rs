@@ -3,6 +3,7 @@
 //! saved file round-trips in Word. This is the spine of editing — the editable
 //! surface (find/replace now, richer edits later) grows on top of it.
 
+use std::collections::HashMap;
 use std::io::{Cursor, Write};
 
 use quick_xml::events::{BytesText, Event};
@@ -41,6 +42,9 @@ pub struct RunEdit {
     /// (`<w:br/>`). When set, `text` and the other props are ignored.
     #[serde(default)]
     pub br: Option<String>,
+    /// Hyperlink target URL; consecutive same-URL runs are wrapped in `<w:hyperlink>`.
+    #[serde(default)]
+    pub link: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -663,6 +667,7 @@ pub fn reconcile_body_in_package(bytes: &[u8], blocks: &[BlockEdit]) -> Result<V
         .to_owned();
 
     let cap = capture_body(&xml)?;
+    let link_rids = assign_link_ids(blocks);
 
     let mut body = String::with_capacity(xml.len());
     body.push_str(&xml[..cap.body_open_end]);
@@ -689,10 +694,10 @@ pub fn reconcile_body_in_package(bytes: &[u8], blocks: &[BlockEdit]) -> Result<V
                             body.push_str(&xml[c.start..c.end]);
                         } else {
                             let (start_tag, ppr) = split_paragraph(&xml[c.start..c.end]);
-                            emit_paragraph(&mut body, &start_tag, ppr.as_bytes(), runs, o);
+                            emit_paragraph(&mut body, &start_tag, ppr.as_bytes(), runs, o, &link_rids);
                         }
                     }
-                    None => emit_paragraph(&mut body, "<w:p>", b"", runs, o),
+                    None => emit_paragraph(&mut body, "<w:p>", b"", runs, o, &link_rids),
                 }
             }
             BlockEdit::Table { orig, cols, rows } => {
@@ -700,7 +705,7 @@ pub fn reconcile_body_in_package(bytes: &[u8], blocks: &[BlockEdit]) -> Result<V
                     .and_then(|i| cap.blocks.get(i))
                     .filter(|c| c.is_table)
                     .map(|c| parse_table_skeleton(&xml[c.start..c.end]));
-                emit_table(&mut body, skel.as_ref(), *cols, rows);
+                emit_table(&mut body, skel.as_ref(), *cols, rows, &link_rids);
             }
         }
     }
@@ -715,8 +720,88 @@ pub fn reconcile_body_in_package(bytes: &[u8], blocks: &[BlockEdit]) -> Result<V
     if uses_list {
         ensure_list_numbering(&mut pkg)?;
     }
+    if !link_rids.is_empty() {
+        ensure_hyperlink_rels(&mut pkg, &link_rids);
+    }
 
     Ok(pkg.save()?)
+}
+
+/// Assign a relationship id to each distinct hyperlink URL used by an edited
+/// paragraph (body or table cell). Ids use the `rIdHl` prefix so a re-save can
+/// replace them wholesale (see `ensure_hyperlink_rels`).
+fn assign_link_ids(blocks: &[BlockEdit]) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let add = |runs: &[RunEdit], map: &mut HashMap<String, String>| {
+        for r in runs {
+            if let Some(u) = &r.link {
+                if !u.is_empty() && !map.contains_key(u) {
+                    let n = map.len() + 1;
+                    map.insert(u.clone(), format!("rIdHl{n}"));
+                }
+            }
+        }
+    };
+    for b in blocks {
+        match b {
+            BlockEdit::Para { runs, .. } => add(runs, &mut map),
+            BlockEdit::Table { rows, .. } => {
+                for row in rows {
+                    for cell in &row.cells {
+                        if let CellEdit::Cell { blocks, .. } = cell {
+                            for pe in blocks {
+                                add(&pe.runs, &mut map);
+                            }
+                        }
+                    }
+                }
+            }
+            BlockEdit::Verbatim { .. } => {}
+        }
+    }
+    map
+}
+
+/// Add an external hyperlink relationship for each `url → rId`, replacing any of
+/// our previously-generated `rIdHl*` relationships so repeated saves stay clean.
+fn ensure_hyperlink_rels(pkg: &mut Package, links: &HashMap<String, String>) {
+    let add: String = links
+        .iter()
+        .map(|(url, rid)| {
+            format!(
+                "<Relationship Id=\"{rid}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink\" Target=\"{}\" TargetMode=\"External\"/>",
+                attr_escape(url)
+            )
+        })
+        .collect();
+    if let Some(i) = pkg.parts.iter().position(|p| p.name == "word/_rels/document.xml.rels") {
+        let mut s = String::from_utf8_lossy(&pkg.parts[i].data).into_owned();
+        drop_prefixed_rels(&mut s, "rIdHl");
+        if let Some(close) = s.rfind("</Relationships>") {
+            s.insert_str(close, &add);
+        }
+        pkg.parts[i].data = s.into_bytes();
+    } else {
+        let rels = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">{add}</Relationships>"
+        );
+        pkg.parts.push(Part { name: "word/_rels/document.xml.rels".into(), data: rels.into_bytes() });
+    }
+}
+
+/// Remove every `<Relationship … Id="{prefix}…"/>` from a rels part string.
+fn drop_prefixed_rels(s: &mut String, id_prefix: &str) {
+    let needle = format!("Id=\"{id_prefix}");
+    while let Some(idpos) = s.find(&needle) {
+        let Some(start) = s[..idpos].rfind("<Relationship") else { break };
+        let Some(rel) = s[idpos..].find("/>") else { break };
+        s.replace_range(start..idpos + rel + 2, "");
+    }
+}
+
+fn attr_escape(s: &str) -> String {
+    xml_escape(s).replace('"', "&quot;")
 }
 
 /// Ensure `word/numbering.xml` defines our bullet (numId 9990) + decimal
@@ -876,12 +961,27 @@ fn capture_body(xml: &str) -> Result<BodyCapture, EditError> {
 }
 
 /// Emit a `<w:p>`: the (open) start tag, its `pPr` (with the overrides applied),
-/// then the edited runs.
-fn emit_paragraph(body: &mut String, start_tag: &str, ppr: &[u8], runs: &[RunEdit], o: PpOverride) {
+/// then the edited runs. Consecutive runs sharing a hyperlink URL (present in
+/// `links` → rId) are wrapped in a single `<w:hyperlink>`.
+fn emit_paragraph(body: &mut String, start_tag: &str, ppr: &[u8], runs: &[RunEdit], o: PpOverride, links: &HashMap<String, String>) {
     body.push_str(start_tag);
     body.push_str(&String::from_utf8_lossy(&build_ppr(ppr, o)));
-    for r in runs {
-        body.push_str(&run_xml(r));
+    let mut i = 0;
+    while i < runs.len() {
+        match runs[i].link.as_ref().and_then(|u| links.get(u).map(|rid| (u.clone(), rid.clone()))) {
+            Some((url, rid)) => {
+                body.push_str(&format!("<w:hyperlink r:id=\"{rid}\">"));
+                while i < runs.len() && runs[i].link.as_deref() == Some(url.as_str()) {
+                    body.push_str(&run_xml(&runs[i]));
+                    i += 1;
+                }
+                body.push_str("</w:hyperlink>");
+            }
+            None => {
+                body.push_str(&run_xml(&runs[i]));
+                i += 1;
+            }
+        }
     }
     body.push_str("</w:p>");
 }
@@ -982,7 +1082,7 @@ fn parse_table_skeleton(tbl: &str) -> TableSkeleton {
 
 /// Emit a `<w:tbl>` from the edited `rows`, reusing the source skeleton (`tblPr`,
 /// grid, `trPr`, `tcPr`, verbatim cells) where the edit references it.
-fn emit_table(body: &mut String, skel: Option<&TableSkeleton>, cols: usize, rows: &[RowEdit]) {
+fn emit_table(body: &mut String, skel: Option<&TableSkeleton>, cols: usize, rows: &[RowEdit], links: &HashMap<String, String>) {
     body.push_str("<w:tbl>");
     match skel {
         Some(s) if !s.tbl_pr.is_empty() => body.push_str(&s.tbl_pr),
@@ -1022,7 +1122,7 @@ fn emit_table(body: &mut String, skel: Option<&TableSkeleton>, cols: usize, rows
                         body.push_str("<w:p/>"); // a cell must hold at least one block
                     } else {
                         for pe in blocks {
-                            emit_paragraph(body, "<w:p>", b"", &pe.runs, PpOverride { align: pe.align.as_deref(), ..Default::default() });
+                            emit_paragraph(body, "<w:p>", b"", &pe.runs, PpOverride { align: pe.align.as_deref(), ..Default::default() }, links);
                         }
                     }
                     body.push_str("</w:tc>");
@@ -1366,6 +1466,24 @@ mod tests {
         let n = String::from_utf8(num.data.clone()).unwrap();
         assert!(n.contains("w:numId=\"9991\""), "numbering defines the decimal list");
         assert!(n.contains("w:numFmt w:val=\"decimal\""));
+    }
+
+    #[test]
+    fn reconcile_wraps_hyperlink_and_adds_rel() {
+        let xml = r#"<w:document xmlns:w="x"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let linked = RunEdit { text: "site".into(), link: Some("https://example.com".into()), ..Default::default() };
+        let edit = vec![BlockEdit::Para {
+            orig: Some(0), runs: vec![linked], align: None, style: None,
+            indent: None, line: None, list: None, ilvl: None,
+        }];
+        let out = reconcile_body_in_package(&docx_with(xml), &edit).unwrap();
+        let doc = document_text(&out);
+        assert!(doc.contains("<w:hyperlink r:id=\"rIdHl1\">"), "run wrapped in hyperlink");
+        assert!(doc.contains("</w:hyperlink>"));
+        let pkg = Package::load(&out).unwrap();
+        let rels = pkg.part("word/_rels/document.xml.rels").expect("rels part created");
+        let r = String::from_utf8(rels.data.clone()).unwrap();
+        assert!(r.contains("Target=\"https://example.com\"") && r.contains("TargetMode=\"External\""), "external hyperlink rel added");
     }
 
     #[test]

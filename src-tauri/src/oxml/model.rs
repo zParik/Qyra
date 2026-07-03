@@ -138,6 +138,8 @@ pub struct ImageRef {
 pub struct TextRun {
     pub props: RunProps,
     pub text: String,
+    /// Hyperlink target URL if this run is inside a `<w:hyperlink>`.
+    pub link: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

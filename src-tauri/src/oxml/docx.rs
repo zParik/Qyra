@@ -81,7 +81,66 @@ pub fn open(bytes: &[u8]) -> Result<Document, DocxError> {
     if let Some(b) = ftr.and_then(|rid| part_blocks(&pkg, &rels, &rid, &styles, &media, &numbering)) {
         doc.footer = b;
     }
+    // Runs carry the hyperlink r:id after parsing; resolve them to URLs.
+    resolve_links(&mut doc.blocks, &load_hyperlink_targets(&pkg));
     Ok(doc)
+}
+
+/// Relationship-id → external hyperlink target URL.
+fn load_hyperlink_targets(pkg: &Package) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let Some(rels) = pkg
+        .part("word/_rels/document.xml.rels")
+        .and_then(|p| std::str::from_utf8(&p.data).ok())
+    else {
+        return map;
+    };
+    let mut reader = Reader::from_str(rels);
+    let mut buf = Vec::new();
+    loop {
+        let ev = match reader.read_event_into(&mut buf) {
+            Ok(ev) => ev,
+            Err(_) => break,
+        };
+        match ev {
+            Event::Empty(e) | Event::Start(e) if e.name().as_ref() == b"Relationship" => {
+                if attr_str(&e, b"Type").unwrap_or_default().ends_with("/hyperlink") {
+                    if let (Some(id), Some(target)) = (attr_str(&e, b"Id"), attr_str(&e, b"Target")) {
+                        map.insert(id, target);
+                    }
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    map
+}
+
+/// Replace each run's stored hyperlink r:id with its resolved URL (recursing into
+/// table cells). An unresolved id becomes `None`.
+fn resolve_links(blocks: &mut [Block], targets: &HashMap<String, String>) {
+    for b in blocks {
+        match b {
+            Block::Paragraph(p) => {
+                for inl in &mut p.inlines {
+                    if let Inline::Text(run) = inl {
+                        if let Some(rid) = run.link.take() {
+                            run.link = targets.get(&rid).cloned();
+                        }
+                    }
+                }
+            }
+            Block::Table(t) => {
+                for row in &mut t.rows {
+                    for cell in &mut row.cells {
+                        resolve_links(&mut cell.blocks, targets);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Parse `word/_rels/document.xml.rels` into a relationship-id → package-path map.
@@ -215,6 +274,8 @@ pub fn parse_document_xml(
     let mut para_sectpr_break = false;
     // Set by a leading <w:lastRenderedPageBreak/> — the paragraph starts a new page.
     let mut para_break_before = false;
+    // r:id of the enclosing <w:hyperlink> (resolved to a URL after parsing).
+    let mut cur_link: Option<String> = None;
     let mut cur_tab_stops: Vec<f32> = Vec::new();
 
     // Paragraph-in-progress state.
@@ -260,6 +321,7 @@ pub fn parse_document_xml(
                         para_sectpr_break = true;
                     }
                     b"w:lastRenderedPageBreak" if in_para => para_break_before = true,
+                    b"w:hyperlink" => cur_link = attr_str(&e, b"r:id"),
                     b"w:r" => run_direct = RunPropsPartial::default(),
                     b"w:t" => {
                         in_text = true;
@@ -309,9 +371,10 @@ pub fn parse_document_xml(
                                 rp.color = [0, 0, 238];
                                 rp.underline = true;
                             }
-                            inlines.push(Inline::Text(TextRun { props: rp, text: std::mem::take(&mut text) }));
+                            inlines.push(Inline::Text(TextRun { props: rp, text: std::mem::take(&mut text), link: cur_link.clone() }));
                         }
                     }
+                    b"w:hyperlink" => cur_link = None,
                     b"w:r" => run_direct = RunPropsPartial::default(),
                     b"w:p" => {
                         // A section break in this paragraph's pPr means "break after

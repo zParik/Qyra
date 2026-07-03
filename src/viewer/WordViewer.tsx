@@ -348,13 +348,15 @@ function collectRuns(p: HTMLElement): RunEdit[] {
     const highlight = bg ? rgbToHex(bg) : undefined;
     const va = cs.verticalAlign;
     const vert: "super" | "sub" | undefined = va === "super" ? "super" : va === "sub" ? "sub" : undefined;
+    const a = parent.closest("a");
+    const link = a ? (a.getAttribute("href") || undefined) : undefined;
     const last = runs[runs.length - 1];
     if (last && !last.br && !!last.bold === bold && !!last.italic === italic && !!last.underline === underline
       && !!last.strike === strike && last.color === color && last.size_pt === size_pt
-      && last.font === font && last.highlight === highlight && last.vert === vert) {
+      && last.font === font && last.highlight === highlight && last.vert === vert && last.link === link) {
       last.text += text;
     } else {
-      runs.push({ text, bold, italic, underline, strike, color, size_pt, font, highlight, vert });
+      runs.push({ text, bold, italic, underline, strike, color, size_pt, font, highlight, vert, link });
     }
   };
 
@@ -820,6 +822,18 @@ export default function WordViewer() {
     reflow();
   }
 
+  /** Wrap the selection in a hyperlink. */
+  function insertLink() {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed) { setStatus("Select text first to add a link."); return; }
+    const url = window.prompt("Link address", "https://");
+    if (!url) return;
+    pushUndo();
+    document.execCommand("createLink", false, url);
+    editRef.current?.focus();
+    reflow();
+  }
+
   /** Insert a page break as a new paragraph after the caret's block. */
   function insertPageBreak() {
     if (!editRef.current) return;
@@ -1020,6 +1034,9 @@ export default function WordViewer() {
                 <Group label="Tables">
                   <button onMouseDown={(e) => { e.preventDefault(); insertTable(); }} title="Insert a 2×2 table" style={wbtn}>▦ Table</button>
                 </Group>
+                <Group label="Links">
+                  <button onMouseDown={(e) => { e.preventDefault(); insertLink(); }} title="Insert hyperlink" style={wbtn}>🔗 Link</button>
+                </Group>
                 <Group label="Pages">
                   <button onMouseDown={(e) => { e.preventDefault(); insertPageBreak(); }} title="Insert page break" style={wbtn}>⤓ Page break</button>
                 </Group>
@@ -1082,6 +1099,7 @@ export default function WordViewer() {
         .qyra-li-bullet::before { content:"•"; position:absolute; left:10px; }
         .qyra-li-decimal { padding-left:30px; position:relative; counter-increment:qyra-ol; }
         .qyra-li-decimal::before { content:counter(qyra-ol) "."; position:absolute; left:6px; }
+        .qyra-link { color:#2e5bba; text-decoration:underline; cursor:text; }
       `}</style>
 
       <div className="flex-1 overflow-auto" onScroll={onScrollPages} style={{ padding: 24, background: "var(--bg1)" }}>
