@@ -83,6 +83,12 @@ pub enum BlockEdit {
         align: Option<String>,
         #[serde(default)]
         style: Option<String>,
+        /// Left indent in points.
+        #[serde(default)]
+        indent: Option<f32>,
+        /// Line spacing as a multiple of a single line.
+        #[serde(default)]
+        line: Option<f32>,
     },
     /// A table. `orig = Some(i)` reuses block `i`'s `tblPr`, column widths, per-row
     /// `trPr`, and per-cell `tcPr` from the source; `cols` is the current column
@@ -413,7 +419,7 @@ fn emit_runs(
     align: Option<&str>,
 ) -> Result<(), EditError> {
     let pp_bytes = ppw.get_ref().get_ref();
-    let ppr = build_ppr(pp_bytes, align, None);
+    let ppr = build_ppr(pp_bytes, PpOverride { align, ..Default::default() });
     main.get_mut().write_all(&ppr)?;
     for r in runs {
         write_run(main, r)?;
@@ -421,11 +427,22 @@ fn emit_runs(
     Ok(())
 }
 
-/// Return the paragraph's `pPr` bytes, setting/replacing `w:pStyle` and/or `w:jc`
-/// when given (creating a `pPr` if there wasn't one). Emitted in schema order:
-/// `pStyle` before `jc`.
-fn build_ppr(pp_bytes: &[u8], align: Option<&str>, style: Option<&str>) -> Vec<u8> {
-    if align.is_none() && style.is_none() {
+/// Overrides applied to a paragraph's `pPr` on save (from the ribbon controls).
+#[derive(Default, Clone, Copy)]
+pub struct PpOverride<'a> {
+    pub align: Option<&'a str>,
+    pub style: Option<&'a str>,
+    /// Left indent in points.
+    pub indent_pt: Option<f32>,
+    /// Line spacing as a multiple of a single line.
+    pub line: Option<f32>,
+}
+
+/// Return the paragraph's `pPr` bytes with the given overrides set/replaced
+/// (creating a `pPr` if there wasn't one). Emitted in WML schema order:
+/// `pStyle`, `spacing`, `ind`, `jc`.
+fn build_ppr(pp_bytes: &[u8], o: PpOverride) -> Vec<u8> {
+    if o.align.is_none() && o.style.is_none() && o.indent_pt.is_none() && o.line.is_none() {
         return pp_bytes.to_vec();
     }
     let mut s = String::from_utf8_lossy(pp_bytes).into_owned();
@@ -434,13 +451,21 @@ fn build_ppr(pp_bytes: &[u8], align: Option<&str>, style: Option<&str>) -> Vec<u
     } else if let Some(i) = s.find("<w:pPr/>") {
         s.replace_range(i..i + "<w:pPr/>".len(), "<w:pPr></w:pPr>");
     }
-    // Insert after the <w:pPr …> open tag; jc first, then pStyle in front of it,
-    // so the final order is pStyle, jc.
-    if let Some(a) = align {
+    // Each insert goes right after the <w:pPr …> open tag, so insert in reverse
+    // of the desired order → final order pStyle, spacing, ind, jc.
+    if let Some(a) = o.align {
         drop_self_closing(&mut s, "<w:jc");
         insert_after_open(&mut s, &format!("<w:jc w:val=\"{}\"/>", jc_val(a)));
     }
-    if let Some(st) = style {
+    if let Some(pt) = o.indent_pt {
+        drop_self_closing(&mut s, "<w:ind");
+        insert_after_open(&mut s, &format!("<w:ind w:left=\"{}\"/>", (pt * 20.0).round() as i32));
+    }
+    if let Some(mult) = o.line {
+        drop_self_closing(&mut s, "<w:spacing");
+        insert_after_open(&mut s, &format!("<w:spacing w:line=\"{}\" w:lineRule=\"auto\"/>", (mult * 240.0).round() as i32));
+    }
+    if let Some(st) = o.style {
         drop_self_closing(&mut s, "<w:pStyle");
         insert_after_open(&mut s, &format!("<w:pStyle w:val=\"{}\"/>", xml_escape(st).replace('"', "")));
     }
@@ -620,7 +645,8 @@ pub fn reconcile_body_in_package(bytes: &[u8], blocks: &[BlockEdit]) -> Result<V
                 })?;
                 body.push_str(&xml[c.start..c.end]);
             }
-            BlockEdit::Para { orig, runs, align, style } => {
+            BlockEdit::Para { orig, runs, align, style, indent, line } => {
+                let o = PpOverride { align: align.as_deref(), style: style.as_deref(), indent_pt: *indent, line: *line };
                 match orig {
                     Some(i) => {
                         let c = cap.blocks.get(*i).ok_or_else(|| {
@@ -631,10 +657,10 @@ pub fn reconcile_body_in_package(bytes: &[u8], blocks: &[BlockEdit]) -> Result<V
                             body.push_str(&xml[c.start..c.end]);
                         } else {
                             let (start_tag, ppr) = split_paragraph(&xml[c.start..c.end]);
-                            emit_paragraph(&mut body, &start_tag, ppr.as_bytes(), runs, align.as_deref(), style.as_deref());
+                            emit_paragraph(&mut body, &start_tag, ppr.as_bytes(), runs, o);
                         }
                     }
-                    None => emit_paragraph(&mut body, "<w:p>", b"", runs, align.as_deref(), style.as_deref()),
+                    None => emit_paragraph(&mut body, "<w:p>", b"", runs, o),
                 }
             }
             BlockEdit::Table { orig, cols, rows } => {
@@ -737,11 +763,11 @@ fn capture_body(xml: &str) -> Result<BodyCapture, EditError> {
     Ok(BodyCapture { body_open_end, body_close, blocks, sectpr })
 }
 
-/// Emit a `<w:p>`: the (open) start tag, its `pPr` (with `align` / `style`
-/// applied), then the edited runs.
-fn emit_paragraph(body: &mut String, start_tag: &str, ppr: &[u8], runs: &[RunEdit], align: Option<&str>, style: Option<&str>) {
+/// Emit a `<w:p>`: the (open) start tag, its `pPr` (with the overrides applied),
+/// then the edited runs.
+fn emit_paragraph(body: &mut String, start_tag: &str, ppr: &[u8], runs: &[RunEdit], o: PpOverride) {
     body.push_str(start_tag);
-    body.push_str(&String::from_utf8_lossy(&build_ppr(ppr, align, style)));
+    body.push_str(&String::from_utf8_lossy(&build_ppr(ppr, o)));
     for r in runs {
         body.push_str(&run_xml(r));
     }
@@ -884,7 +910,7 @@ fn emit_table(body: &mut String, skel: Option<&TableSkeleton>, cols: usize, rows
                         body.push_str("<w:p/>"); // a cell must hold at least one block
                     } else {
                         for pe in blocks {
-                            emit_paragraph(body, "<w:p>", b"", &pe.runs, pe.align.as_deref(), None);
+                            emit_paragraph(body, "<w:p>", b"", &pe.runs, PpOverride { align: pe.align.as_deref(), ..Default::default() });
                         }
                     }
                     body.push_str("</w:tc>");
@@ -1197,7 +1223,7 @@ mod tests {
 
     #[test]
     fn build_ppr_sets_style_and_align_in_order() {
-        let out = build_ppr(b"<w:pPr><w:jc w:val=\"left\"/></w:pPr>", Some("center"), Some("Heading1"));
+        let out = build_ppr(b"<w:pPr><w:jc w:val=\"left\"/></w:pPr>", PpOverride { align: Some("center"), style: Some("Heading1"), ..Default::default() });
         let s = String::from_utf8(out).unwrap();
         assert!(s.contains("<w:pStyle w:val=\"Heading1\"/>"), "style set");
         assert!(s.contains("<w:jc w:val=\"center\"/>"), "align replaced");
@@ -1221,7 +1247,7 @@ mod tests {
     fn reconcile_edits_paragraph_keeps_table_verbatim() {
         let xml = r#"<w:document xmlns:w="x"><w:body><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>old</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:sectPr/></w:body></w:document>"#;
         let edit = vec![
-            BlockEdit::Para { orig: Some(0), runs: vec![run("New", true)], align: None, style: None },
+            BlockEdit::Para { orig: Some(0), runs: vec![run("New", true)], align: None, style: None, indent: None, line: None },
             BlockEdit::Verbatim { orig: 1 },
         ];
         let out = reconcile_body_in_package(&docx_with(xml), &edit).unwrap();
@@ -1241,7 +1267,7 @@ mod tests {
         // Keep the second paragraph, drop the first, append a new right-aligned one.
         let edit = vec![
             BlockEdit::Verbatim { orig: 1 },
-            BlockEdit::Para { orig: None, runs: vec![run("fresh", false)], align: Some("right".into()), style: None },
+            BlockEdit::Para { orig: None, runs: vec![run("fresh", false)], align: Some("right".into()), style: None, indent: None, line: None },
         ];
         let out = reconcile_body_in_package(&docx_with(xml), &edit).unwrap();
         let text = document_text(&out);

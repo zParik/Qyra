@@ -167,10 +167,18 @@ function collectBlocks(root: HTMLElement, orig: Record<number, string>, cellOrig
       continue;
     }
     const styleAttr = el.getAttribute("data-style");
-    if (origIdx != null && !styleAttr && el.innerHTML === orig[origIdx]) {
+    const indentAttr = el.getAttribute("data-indent");
+    const lineAttr = el.getAttribute("data-line");
+    if (origIdx != null && !styleAttr && !indentAttr && !lineAttr && el.innerHTML === orig[origIdx]) {
       out.push({ kind: "verbatim", orig: origIdx });
     } else {
-      out.push({ kind: "para", orig: origIdx, runs: collectRuns(el), align: mapAlign(getComputedStyle(el).textAlign), style: styleAttr ?? null });
+      out.push({
+        kind: "para", orig: origIdx, runs: collectRuns(el),
+        align: mapAlign(getComputedStyle(el).textAlign),
+        style: styleAttr ?? null,
+        indent: indentAttr ? parseFloat(indentAttr) : null,
+        line: lineAttr ? parseFloat(lineAttr) : null,
+      });
     }
   }
   return out;
@@ -555,6 +563,26 @@ export default function WordViewer() {
     editRef.current?.focus();
     reflow();
   }
+  function indentBy(deltaPt: number) {
+    const p = caretParagraph();
+    if (!p) return;
+    pushUndo();
+    const cur = parseFloat(p.dataset.indent || "") || pxToPt(getComputedStyle(p).marginLeft) || 0;
+    const next = Math.max(0, cur + deltaPt);
+    p.dataset.indent = String(next);
+    p.style.marginLeft = next + "pt";
+    editRef.current?.focus();
+    reflow();
+  }
+  function setLineSpacing(mult: number) {
+    const p = caretParagraph();
+    if (!p) return;
+    pushUndo();
+    p.dataset.line = String(mult);
+    p.style.lineHeight = String(mult);
+    editRef.current?.focus();
+    reflow();
+  }
   function clearFormat() {
     document.execCommand("removeFormat");
     const p = caretParagraph();
@@ -888,6 +916,13 @@ export default function WordViewer() {
                   {([["justifyLeft", "L", "Align left"], ["justifyCenter", "C", "Center"], ["justifyRight", "R", "Align right"], ["justifyFull", "J", "Justify"]] as const).map(([cmd, label, title]) => (
                     <button key={cmd} onMouseDown={(e) => { e.preventDefault(); exec(cmd); }} title={title} style={tbtn}>{label}</button>
                   ))}
+                  <span style={sepStyle} />
+                  <button onMouseDown={(e) => { e.preventDefault(); indentBy(-36); }} title="Decrease indent" style={tbtn}>⇤</button>
+                  <button onMouseDown={(e) => { e.preventDefault(); indentBy(36); }} title="Increase indent" style={tbtn}>⇥</button>
+                  <select value="" onChange={(e) => setLineSpacing(parseFloat(e.target.value))} title="Line spacing" style={{ ...selStyle, width: 54 }}>
+                    <option value="" disabled>↕</option>
+                    {[1.0, 1.15, 1.5, 2.0].map((v) => <option key={v} value={v}>{v.toFixed(2)}</option>)}
+                  </select>
                 </Group>
                 <Group label="Styles">
                   <select value={curStyle} onChange={(e) => applyStyle(e.target.value)} title="Paragraph style" style={{ ...selStyle, width: 112 }}>
