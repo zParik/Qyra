@@ -9,7 +9,7 @@ use quick_xml::events::{BytesText, Event};
 use quick_xml::reader::Reader;
 use quick_xml::Writer;
 
-use super::{Package, PackageError};
+use super::{Package, PackageError, Part};
 
 /// A run as edited in the WYSIWYG surface, for rich (formatting-preserving) save.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
@@ -93,6 +93,12 @@ pub enum BlockEdit {
         /// Line spacing as a multiple of a single line.
         #[serde(default)]
         line: Option<f32>,
+        /// "bullet" | "decimal" | "none" (list membership).
+        #[serde(default)]
+        list: Option<String>,
+        /// List level.
+        #[serde(default)]
+        ilvl: Option<u32>,
     },
     /// A table. `orig = Some(i)` reuses block `i`'s `tblPr`, column widths, per-row
     /// `trPr`, and per-cell `tcPr` from the source; `cols` is the current column
@@ -440,13 +446,21 @@ pub struct PpOverride<'a> {
     pub indent_pt: Option<f32>,
     /// Line spacing as a multiple of a single line.
     pub line: Option<f32>,
+    /// "bullet" | "decimal" | "none" (list membership via `w:numPr`).
+    pub list: Option<&'a str>,
+    /// List level (`w:ilvl`), default 0.
+    pub ilvl: Option<u32>,
 }
+
+/// numId of our injected bullet / decimal list definitions (see `ensure_list_numbering`).
+const BULLET_NUM_ID: u32 = 9990;
+const DECIMAL_NUM_ID: u32 = 9991;
 
 /// Return the paragraph's `pPr` bytes with the given overrides set/replaced
 /// (creating a `pPr` if there wasn't one). Emitted in WML schema order:
 /// `pStyle`, `spacing`, `ind`, `jc`.
 fn build_ppr(pp_bytes: &[u8], o: PpOverride) -> Vec<u8> {
-    if o.align.is_none() && o.style.is_none() && o.indent_pt.is_none() && o.line.is_none() {
+    if o.align.is_none() && o.style.is_none() && o.indent_pt.is_none() && o.line.is_none() && o.list.is_none() {
         return pp_bytes.to_vec();
     }
     let mut s = String::from_utf8_lossy(pp_bytes).into_owned();
@@ -456,7 +470,7 @@ fn build_ppr(pp_bytes: &[u8], o: PpOverride) -> Vec<u8> {
         s.replace_range(i..i + "<w:pPr/>".len(), "<w:pPr></w:pPr>");
     }
     // Each insert goes right after the <w:pPr …> open tag, so insert in reverse
-    // of the desired order → final order pStyle, spacing, ind, jc.
+    // of the desired order → final order pStyle, numPr, spacing, ind, jc.
     if let Some(a) = o.align {
         drop_self_closing(&mut s, "<w:jc");
         insert_after_open(&mut s, &format!("<w:jc w:val=\"{}\"/>", jc_val(a)));
@@ -468,6 +482,13 @@ fn build_ppr(pp_bytes: &[u8], o: PpOverride) -> Vec<u8> {
     if let Some(mult) = o.line {
         drop_self_closing(&mut s, "<w:spacing");
         insert_after_open(&mut s, &format!("<w:spacing w:line=\"{}\" w:lineRule=\"auto\"/>", (mult * 240.0).round() as i32));
+    }
+    if let Some(kind) = o.list {
+        remove_element(&mut s, "w:numPr"); // paired element
+        if kind != "none" {
+            let num_id = if kind == "decimal" { DECIMAL_NUM_ID } else { BULLET_NUM_ID };
+            insert_after_open(&mut s, &format!("<w:numPr><w:ilvl w:val=\"{}\"/><w:numId w:val=\"{num_id}\"/></w:numPr>", o.ilvl.unwrap_or(0)));
+        }
     }
     if let Some(st) = o.style {
         drop_self_closing(&mut s, "<w:pStyle");
@@ -653,8 +674,11 @@ pub fn reconcile_body_in_package(bytes: &[u8], blocks: &[BlockEdit]) -> Result<V
                 })?;
                 body.push_str(&xml[c.start..c.end]);
             }
-            BlockEdit::Para { orig, runs, align, style, indent, line } => {
-                let o = PpOverride { align: align.as_deref(), style: style.as_deref(), indent_pt: *indent, line: *line };
+            BlockEdit::Para { orig, runs, align, style, indent, line, list, ilvl } => {
+                let o = PpOverride {
+                    align: align.as_deref(), style: style.as_deref(), indent_pt: *indent, line: *line,
+                    list: list.as_deref(), ilvl: *ilvl,
+                };
                 match orig {
                     Some(i) => {
                         let c = cap.blocks.get(*i).ok_or_else(|| {
@@ -684,8 +708,88 @@ pub fn reconcile_body_in_package(bytes: &[u8], blocks: &[BlockEdit]) -> Result<V
     body.push_str(&xml[cap.body_close..]);
 
     pkg.parts[idx].data = body.into_bytes();
+
+    // If any paragraph became a list, make sure the package carries the list
+    // definitions Word needs to resolve numId 9990/9991.
+    let uses_list = blocks.iter().any(|b| matches!(b, BlockEdit::Para { list: Some(l), .. } if l != "none"));
+    if uses_list {
+        ensure_list_numbering(&mut pkg)?;
+    }
+
     Ok(pkg.save()?)
 }
+
+/// Ensure `word/numbering.xml` defines our bullet (numId 9990) + decimal
+/// (numId 9991) lists, wiring the content-type override and document relationship
+/// when the part is created. Idempotent.
+fn ensure_list_numbering(pkg: &mut Package) -> Result<(), EditError> {
+    if let Some(i) = pkg.parts.iter().position(|p| p.name == "word/numbering.xml") {
+        let xml = String::from_utf8_lossy(&pkg.parts[i].data).into_owned();
+        if xml.contains("w:numId=\"9990\"") {
+            return Ok(()); // already injected
+        }
+        let mut s = xml;
+        // abstractNum before num (schema): abstractNums after the root open tag,
+        // nums right before the close tag.
+        if let Some(open_end) = s.find("<w:numbering").and_then(|st| s[st..].find('>').map(|e| st + e + 1)) {
+            s.insert_str(open_end, LIST_ABSTRACT_NUMS);
+        }
+        if let Some(close) = s.rfind("</w:numbering>") {
+            s.insert_str(close, LIST_NUMS);
+        }
+        pkg.parts[i].data = s.into_bytes();
+        return Ok(());
+    }
+
+    // Create the part + wire it up.
+    let doc = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+<w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">{}{}</w:numbering>",
+        LIST_ABSTRACT_NUMS, LIST_NUMS
+    );
+    pkg.parts.push(Part { name: "word/numbering.xml".into(), data: doc.into_bytes() });
+
+    // [Content_Types].xml override.
+    if let Some(i) = pkg.parts.iter().position(|p| p.name == "[Content_Types].xml") {
+        let mut s = String::from_utf8_lossy(&pkg.parts[i].data).into_owned();
+        if !s.contains("numbering.xml") {
+            if let Some(close) = s.rfind("</Types>") {
+                s.insert_str(close, "<Override PartName=\"/word/numbering.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml\"/>");
+                pkg.parts[i].data = s.into_bytes();
+            }
+        }
+    }
+
+    // Relationship from document.xml → numbering.xml.
+    let rel = "<Relationship Id=\"rIdQyraNum\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering\" Target=\"numbering.xml\"/>";
+    if let Some(i) = pkg.parts.iter().position(|p| p.name == "word/_rels/document.xml.rels") {
+        let mut s = String::from_utf8_lossy(&pkg.parts[i].data).into_owned();
+        if !s.contains("relationships/numbering") {
+            if let Some(close) = s.rfind("</Relationships>") {
+                s.insert_str(close, rel);
+                pkg.parts[i].data = s.into_bytes();
+            }
+        }
+    } else {
+        let rels = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">{rel}</Relationships>"
+        );
+        pkg.parts.push(Part { name: "word/_rels/document.xml.rels".into(), data: rels.into_bytes() });
+    }
+    Ok(())
+}
+
+/// Bullet + decimal abstract list definitions (single level).
+const LIST_ABSTRACT_NUMS: &str = "<w:abstractNum w:abstractNumId=\"9990\"><w:multiLevelType w:val=\"hybridMultilevel\"/>\
+<w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"bullet\"/><w:lvlText w:val=\"\u{f0b7}\"/><w:lvlJc w:val=\"left\"/>\
+<w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr><w:rPr><w:rFonts w:ascii=\"Symbol\" w:hAnsi=\"Symbol\" w:hint=\"default\"/></w:rPr></w:lvl></w:abstractNum>\
+<w:abstractNum w:abstractNumId=\"9991\"><w:multiLevelType w:val=\"hybridMultilevel\"/>\
+<w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/><w:lvlText w:val=\"%1.\"/><w:lvlJc w:val=\"left\"/>\
+<w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr></w:lvl></w:abstractNum>";
+
+const LIST_NUMS: &str = "<w:num w:numId=\"9990\"><w:abstractNumId w:val=\"9990\"/></w:num>\
+<w:num w:numId=\"9991\"><w:abstractNumId w:val=\"9991\"/></w:num>";
 
 /// Captured original body: byte-slice offsets, the top-level blocks, and the
 /// trailing body-level `sectPr`.
@@ -1240,6 +1344,31 @@ mod tests {
     }
 
     #[test]
+    fn build_ppr_injects_and_clears_numpr() {
+        let s = String::from_utf8(build_ppr(b"", PpOverride { list: Some("bullet"), ..Default::default() })).unwrap();
+        assert!(s.contains("<w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"9990\"/></w:numPr>"), "bullet numPr");
+        let cleared = String::from_utf8(build_ppr(b"<w:pPr><w:numPr><w:numId w:val=\"9990\"/></w:numPr></w:pPr>", PpOverride { list: Some("none"), ..Default::default() })).unwrap();
+        assert!(!cleared.contains("<w:numPr>"), "list removed");
+    }
+
+    #[test]
+    fn reconcile_list_adds_numbering_part() {
+        let xml = r#"<w:document xmlns:w="x"><w:body><w:p><w:r><w:t>item</w:t></w:r></w:p></w:body></w:document>"#;
+        let edit = vec![BlockEdit::Para {
+            orig: Some(0), runs: vec![run("item", false)], align: None, style: None,
+            indent: None, line: None, list: Some("decimal".into()), ilvl: Some(0),
+        }];
+        let out = reconcile_body_in_package(&docx_with(xml), &edit).unwrap();
+        let doc = document_text(&out);
+        assert!(doc.contains("<w:numId w:val=\"9991\"/>"), "paragraph references the decimal list");
+        let pkg = Package::load(&out).unwrap();
+        let num = pkg.part("word/numbering.xml").expect("numbering.xml created");
+        let n = String::from_utf8(num.data.clone()).unwrap();
+        assert!(n.contains("w:numId=\"9991\""), "numbering defines the decimal list");
+        assert!(n.contains("w:numFmt w:val=\"decimal\""));
+    }
+
+    #[test]
     fn reconcile_all_verbatim_is_byte_identical() {
         let xml = r#"<w:document xmlns:w="x"><w:body><w:p><w:r><w:t>hello</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>"#;
         let out = reconcile_body_in_package(
@@ -1255,7 +1384,7 @@ mod tests {
     fn reconcile_edits_paragraph_keeps_table_verbatim() {
         let xml = r#"<w:document xmlns:w="x"><w:body><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>old</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:sectPr/></w:body></w:document>"#;
         let edit = vec![
-            BlockEdit::Para { orig: Some(0), runs: vec![run("New", true)], align: None, style: None, indent: None, line: None },
+            BlockEdit::Para { orig: Some(0), runs: vec![run("New", true)], align: None, style: None, indent: None, line: None, list: None, ilvl: None },
             BlockEdit::Verbatim { orig: 1 },
         ];
         let out = reconcile_body_in_package(&docx_with(xml), &edit).unwrap();
@@ -1275,7 +1404,7 @@ mod tests {
         // Keep the second paragraph, drop the first, append a new right-aligned one.
         let edit = vec![
             BlockEdit::Verbatim { orig: 1 },
-            BlockEdit::Para { orig: None, runs: vec![run("fresh", false)], align: Some("right".into()), style: None, indent: None, line: None },
+            BlockEdit::Para { orig: None, runs: vec![run("fresh", false)], align: Some("right".into()), style: None, indent: None, line: None, list: None, ilvl: None },
         ];
         let out = reconcile_body_in_package(&docx_with(xml), &edit).unwrap();
         let text = document_text(&out);

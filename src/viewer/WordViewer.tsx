@@ -169,7 +169,9 @@ function collectBlocks(root: HTMLElement, orig: Record<number, string>, cellOrig
     const styleAttr = el.getAttribute("data-style");
     const indentAttr = el.getAttribute("data-indent");
     const lineAttr = el.getAttribute("data-line");
-    if (origIdx != null && !styleAttr && !indentAttr && !lineAttr && el.innerHTML === orig[origIdx]) {
+    const listAttr = el.getAttribute("data-list");
+    const ilvlAttr = el.getAttribute("data-ilvl");
+    if (origIdx != null && !styleAttr && !indentAttr && !lineAttr && !listAttr && el.innerHTML === orig[origIdx]) {
       out.push({ kind: "verbatim", orig: origIdx });
     } else {
       out.push({
@@ -178,6 +180,8 @@ function collectBlocks(root: HTMLElement, orig: Record<number, string>, cellOrig
         style: styleAttr ?? null,
         indent: indentAttr ? parseFloat(indentAttr) : null,
         line: lineAttr ? parseFloat(lineAttr) : null,
+        list: (listAttr as "bullet" | "decimal" | "none" | null) ?? null,
+        ilvl: ilvlAttr ? parseInt(ilvlAttr, 10) : null,
       });
     }
   }
@@ -559,8 +563,23 @@ export default function WordViewer() {
     if (!p) return;
     pushUndo();
     p.setAttribute("data-style", id);
-    p.className = id === "Normal" ? "" : "qs-" + id;
+    p.classList.remove("qs-Title", "qs-Heading1", "qs-Heading2", "qs-Heading3");
+    if (id !== "Normal") p.classList.add("qs-" + id);
     setCurStyle(id);
+    editRef.current?.focus();
+    reflow();
+  }
+
+  /** Toggle the caret paragraph in/out of a bullet or numbered list. */
+  function toggleList(kind: "bullet" | "decimal") {
+    const p = caretParagraph();
+    if (!p) return;
+    pushUndo();
+    const next = p.dataset.list === kind ? "none" : kind;
+    p.dataset.list = next;
+    p.classList.remove("qyra-li-bullet", "qyra-li-decimal");
+    if (next === "bullet") p.classList.add("qyra-li-bullet");
+    else if (next === "decimal") p.classList.add("qyra-li-decimal");
     editRef.current?.focus();
     reflow();
   }
@@ -972,6 +991,8 @@ export default function WordViewer() {
                   {([["justifyLeft", "L", "Align left"], ["justifyCenter", "C", "Center"], ["justifyRight", "R", "Align right"], ["justifyFull", "J", "Justify"]] as const).map(([cmd, label, title]) => (
                     <button key={cmd} onMouseDown={(e) => { e.preventDefault(); exec(cmd); }} title={title} style={tbtn}>{label}</button>
                   ))}
+                  <button onMouseDown={(e) => { e.preventDefault(); toggleList("bullet"); }} title="Bullet list" style={tbtn}>•≡</button>
+                  <button onMouseDown={(e) => { e.preventDefault(); toggleList("decimal"); }} title="Numbered list" style={tbtn}>1.≡</button>
                   <span style={sepStyle} />
                   <button onMouseDown={(e) => { e.preventDefault(); indentBy(-36); }} title="Decrease indent" style={tbtn}>⇤</button>
                   <button onMouseDown={(e) => { e.preventDefault(); indentBy(36); }} title="Increase indent" style={tbtn}>⇥</button>
@@ -1056,6 +1077,11 @@ export default function WordViewer() {
         .qs-Heading1, .qs-Heading1 * { font-size:16pt !important; font-weight:700 !important; color:#2e74b5 !important; }
         .qs-Heading2, .qs-Heading2 * { font-size:13pt !important; font-weight:700 !important; color:#2e74b5 !important; }
         .qs-Heading3, .qs-Heading3 * { font-size:12pt !important; font-weight:700 !important; color:#1f3864 !important; }
+        .qyra-doc { counter-reset: qyra-ol; }
+        .qyra-li-bullet { padding-left:26px; position:relative; }
+        .qyra-li-bullet::before { content:"•"; position:absolute; left:10px; }
+        .qyra-li-decimal { padding-left:30px; position:relative; counter-increment:qyra-ol; }
+        .qyra-li-decimal::before { content:counter(qyra-ol) "."; position:absolute; left:6px; }
       `}</style>
 
       <div className="flex-1 overflow-auto" onScroll={onScrollPages} style={{ padding: 24, background: "var(--bg1)" }}>
@@ -1074,6 +1100,7 @@ export default function WordViewer() {
             )}
             <div
               ref={editRef}
+              className="qyra-doc"
               contentEditable={html != null}
               suppressContentEditableWarning
               spellCheck={false}
