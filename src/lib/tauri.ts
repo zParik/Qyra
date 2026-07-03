@@ -285,7 +285,7 @@ export interface RowEdit { orig_row: number | null; cells: CellEdit[] }
  *    `cols` = current column count, `rows` = current grid. */
 export type BlockEdit =
   | { kind: "verbatim"; orig: number }
-  | { kind: "para"; orig: number | null; runs: RunEdit[]; align?: string | null }
+  | { kind: "para"; orig: number | null; runs: RunEdit[]; align?: string | null; style?: string | null }
   | { kind: "table"; orig: number | null; cols: number; rows: RowEdit[] };
 
 /** Structure-preserving save: rebuild the body from the ordered block list,

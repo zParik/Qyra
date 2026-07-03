@@ -166,10 +166,11 @@ function collectBlocks(root: HTMLElement, orig: Record<number, string>, cellOrig
       if (runs.length) out.push({ kind: "para", orig: null, runs, align: mapAlign(getComputedStyle(el).textAlign) });
       continue;
     }
-    if (origIdx != null && el.innerHTML === orig[origIdx]) {
+    const styleAttr = el.getAttribute("data-style");
+    if (origIdx != null && !styleAttr && el.innerHTML === orig[origIdx]) {
       out.push({ kind: "verbatim", orig: origIdx });
     } else {
-      out.push({ kind: "para", orig: origIdx, runs: collectRuns(el), align: mapAlign(getComputedStyle(el).textAlign) });
+      out.push({ kind: "para", orig: origIdx, runs: collectRuns(el), align: mapAlign(getComputedStyle(el).textAlign), style: styleAttr ?? null });
     }
   }
   return out;
@@ -353,6 +354,13 @@ type RibbonTab = (typeof RIBBON_TABS)[number];
 const FONTS = ["Calibri", "Arial", "Times New Roman", "Cambria", "Georgia", "Verdana", "Tahoma", "Courier New", "Segoe UI", "Comic Sans MS"];
 const SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 36, 48, 72];
 const HIGHLIGHTS = ["FFFF00", "00FF00", "00FFFF", "FF00FF", "FF9900"];
+const STYLES: { id: string; label: string }[] = [
+  { id: "Normal", label: "Normal" },
+  { id: "Title", label: "Title" },
+  { id: "Heading1", label: "Heading 1" },
+  { id: "Heading2", label: "Heading 2" },
+  { id: "Heading3", label: "Heading 3" },
+];
 
 /** One labelled cluster of ribbon controls (Word's grouped-command layout). */
 function Group({ label, children }: { label: string; children: React.ReactNode }) {
@@ -388,6 +396,7 @@ export default function WordViewer() {
   const [tab, setTab] = useState<RibbonTab>("home");
   const [curFont, setCurFont] = useState("");
   const [curSize, setCurSize] = useState<number | "">("");
+  const [curStyle, setCurStyle] = useState("Normal");
 
   const editRef = useRef<HTMLDivElement>(null);
   const origHtmlRef = useRef<Record<number, string>>({});
@@ -470,6 +479,7 @@ export default function WordViewer() {
         setCurFont(primaryFont(cs.fontFamily) ?? "");
         setCurSize(pxToPt(cs.fontSize) ?? "");
       }
+      setCurStyle(caretParagraph()?.getAttribute("data-style") ?? "Normal");
     };
     document.addEventListener("selectionchange", onSel);
     return () => document.removeEventListener("selectionchange", onSel);
@@ -489,6 +499,24 @@ export default function WordViewer() {
   /** The `<td>` containing the caret, if inside the editor. */
   function caretCell(): HTMLTableCellElement | null {
     return caretElement()?.closest("td") ?? null;
+  }
+
+  /** The top-level paragraph element containing the caret. */
+  function caretParagraph(): HTMLElement | null {
+    return (caretElement()?.closest("p") as HTMLElement | null) ?? null;
+  }
+
+  /** Apply a paragraph style (Normal / Heading n / Title): preview via a CSS
+   *  class, and tag the paragraph so the save sets its `w:pStyle`. */
+  function applyStyle(id: string) {
+    const p = caretParagraph();
+    if (!p) return;
+    pushUndo();
+    p.setAttribute("data-style", id);
+    p.className = id === "Normal" ? "" : "qs-" + id;
+    setCurStyle(id);
+    editRef.current?.focus();
+    reflow();
   }
 
   // ---- character formatting that must produce CSS spans (readable by collectRuns) ----
@@ -845,6 +873,12 @@ export default function WordViewer() {
                     <button key={cmd} onMouseDown={(e) => { e.preventDefault(); exec(cmd); }} title={title} style={tbtn}>{label}</button>
                   ))}
                 </Group>
+                <Group label="Styles">
+                  <select value={curStyle} onChange={(e) => applyStyle(e.target.value)} title="Paragraph style" style={{ ...selStyle, width: 112 }}>
+                    {!STYLES.some((s) => s.id === curStyle) && curStyle && <option value={curStyle}>{curStyle}</option>}
+                    {STYLES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                  </select>
+                </Group>
                 <Group label="Editing">
                   <input style={inputStyle} placeholder="Find" value={find} onChange={(e) => setFind(e.target.value)} />
                   <input style={inputStyle} placeholder="Replace" value={replace} onChange={(e) => setReplace(e.target.value)} />
@@ -906,6 +940,10 @@ export default function WordViewer() {
         .qyra-pagebreak { border:none; border-top:1px dashed #c8c8c8; height:0; margin:6px 0; }
         .qyra-header, .qyra-footer { pointer-events:none; user-select:none; }
         .qyra-header p, .qyra-footer p { margin:2px 0; }
+        .qs-Title, .qs-Title * { font-size:28pt !important; font-weight:700 !important; }
+        .qs-Heading1, .qs-Heading1 * { font-size:16pt !important; font-weight:700 !important; color:#2e74b5 !important; }
+        .qs-Heading2, .qs-Heading2 * { font-size:13pt !important; font-weight:700 !important; color:#2e74b5 !important; }
+        .qs-Heading3, .qs-Heading3 * { font-size:12pt !important; font-weight:700 !important; color:#1f3864 !important; }
       `}</style>
 
       <div className="flex-1 overflow-auto" style={{ padding: 24, background: "var(--bg1)" }}>

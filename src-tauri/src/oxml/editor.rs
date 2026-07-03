@@ -73,13 +73,16 @@ pub enum BlockEdit {
     /// original block list.
     Verbatim { orig: usize },
     /// A paragraph. `orig = Some(i)` preserves block `i`'s `<w:p>` attributes and
-    /// `pPr` (only the runs change); `None` is a newly inserted paragraph.
+    /// `pPr` (only the runs change); `None` is a newly inserted paragraph. `style`
+    /// sets/replaces `w:pStyle` (paragraph style dropdown).
     Para {
         #[serde(default)]
         orig: Option<usize>,
         runs: Vec<RunEdit>,
         #[serde(default)]
         align: Option<String>,
+        #[serde(default)]
+        style: Option<String>,
     },
     /// A table. `orig = Some(i)` reuses block `i`'s `tblPr`, column widths, per-row
     /// `trPr`, and per-cell `tcPr` from the source; `cols` is the current column
@@ -410,7 +413,7 @@ fn emit_runs(
     align: Option<&str>,
 ) -> Result<(), EditError> {
     let pp_bytes = ppw.get_ref().get_ref();
-    let ppr = build_ppr(pp_bytes, align);
+    let ppr = build_ppr(pp_bytes, align, None);
     main.get_mut().write_all(&ppr)?;
     for r in runs {
         write_run(main, r)?;
@@ -418,34 +421,47 @@ fn emit_runs(
     Ok(())
 }
 
-/// Return the paragraph's `pPr` bytes, setting/replacing `w:jc` when `align` is
-/// given (creating a `pPr` if there wasn't one).
-fn build_ppr(pp_bytes: &[u8], align: Option<&str>) -> Vec<u8> {
-    let Some(a) = align else {
+/// Return the paragraph's `pPr` bytes, setting/replacing `w:pStyle` and/or `w:jc`
+/// when given (creating a `pPr` if there wasn't one). Emitted in schema order:
+/// `pStyle` before `jc`.
+fn build_ppr(pp_bytes: &[u8], align: Option<&str>, style: Option<&str>) -> Vec<u8> {
+    if align.is_none() && style.is_none() {
         return pp_bytes.to_vec();
-    };
-    let val = match a {
-        "center" => "center",
-        "right" => "right",
-        "justify" | "both" => "both",
-        _ => "left",
-    };
-    let mut s = String::from_utf8_lossy(pp_bytes).into_owned();
-    // Drop any existing <w:jc .../>.
-    while let Some(start) = s.find("<w:jc") {
-        if let Some(rel) = s[start..].find("/>") {
-            s.replace_range(start..start + rel + 2, "");
-        } else {
-            break;
-        }
     }
-    let jc = format!("<w:jc w:val=\"{val}\"/>");
+    let mut s = String::from_utf8_lossy(pp_bytes).into_owned();
     if s.is_empty() {
-        s = format!("<w:pPr>{jc}</w:pPr>");
-    } else if let Some(open_end) = s.find('>') {
-        s.insert_str(open_end + 1, &jc);
+        s = "<w:pPr></w:pPr>".into();
+    } else if let Some(i) = s.find("<w:pPr/>") {
+        s.replace_range(i..i + "<w:pPr/>".len(), "<w:pPr></w:pPr>");
+    }
+    // Insert after the <w:pPr …> open tag; jc first, then pStyle in front of it,
+    // so the final order is pStyle, jc.
+    if let Some(a) = align {
+        drop_self_closing(&mut s, "<w:jc");
+        insert_after_open(&mut s, &format!("<w:jc w:val=\"{}\"/>", jc_val(a)));
+    }
+    if let Some(st) = style {
+        drop_self_closing(&mut s, "<w:pStyle");
+        insert_after_open(&mut s, &format!("<w:pStyle w:val=\"{}\"/>", xml_escape(st).replace('"', "")));
     }
     s.into_bytes()
+}
+
+/// Remove every self-closing element whose start tag begins with `prefix`.
+fn drop_self_closing(s: &mut String, prefix: &str) {
+    while let Some(start) = s.find(prefix) {
+        match s[start..].find("/>") {
+            Some(rel) => s.replace_range(start..start + rel + 2, ""),
+            None => break,
+        }
+    }
+}
+
+/// Insert `frag` right after the first `>` (the `<w:pPr …>` open tag).
+fn insert_after_open(s: &mut String, frag: &str) {
+    if let Some(open_end) = s.find('>') {
+        s.insert_str(open_end + 1, frag);
+    }
 }
 
 fn write_run(main: &mut Writer<Cursor<Vec<u8>>>, r: &RunEdit) -> Result<(), EditError> {
@@ -604,7 +620,7 @@ pub fn reconcile_body_in_package(bytes: &[u8], blocks: &[BlockEdit]) -> Result<V
                 })?;
                 body.push_str(&xml[c.start..c.end]);
             }
-            BlockEdit::Para { orig, runs, align } => {
+            BlockEdit::Para { orig, runs, align, style } => {
                 match orig {
                     Some(i) => {
                         let c = cap.blocks.get(*i).ok_or_else(|| {
@@ -615,10 +631,10 @@ pub fn reconcile_body_in_package(bytes: &[u8], blocks: &[BlockEdit]) -> Result<V
                             body.push_str(&xml[c.start..c.end]);
                         } else {
                             let (start_tag, ppr) = split_paragraph(&xml[c.start..c.end]);
-                            emit_paragraph(&mut body, &start_tag, ppr.as_bytes(), runs, align.as_deref());
+                            emit_paragraph(&mut body, &start_tag, ppr.as_bytes(), runs, align.as_deref(), style.as_deref());
                         }
                     }
-                    None => emit_paragraph(&mut body, "<w:p>", b"", runs, align.as_deref()),
+                    None => emit_paragraph(&mut body, "<w:p>", b"", runs, align.as_deref(), style.as_deref()),
                 }
             }
             BlockEdit::Table { orig, cols, rows } => {
@@ -721,11 +737,11 @@ fn capture_body(xml: &str) -> Result<BodyCapture, EditError> {
     Ok(BodyCapture { body_open_end, body_close, blocks, sectpr })
 }
 
-/// Emit a `<w:p>`: the (open) start tag, its `pPr` (with `align` applied), then
-/// the edited runs.
-fn emit_paragraph(body: &mut String, start_tag: &str, ppr: &[u8], runs: &[RunEdit], align: Option<&str>) {
+/// Emit a `<w:p>`: the (open) start tag, its `pPr` (with `align` / `style`
+/// applied), then the edited runs.
+fn emit_paragraph(body: &mut String, start_tag: &str, ppr: &[u8], runs: &[RunEdit], align: Option<&str>, style: Option<&str>) {
     body.push_str(start_tag);
-    body.push_str(&String::from_utf8_lossy(&build_ppr(ppr, align)));
+    body.push_str(&String::from_utf8_lossy(&build_ppr(ppr, align, style)));
     for r in runs {
         body.push_str(&run_xml(r));
     }
@@ -868,7 +884,7 @@ fn emit_table(body: &mut String, skel: Option<&TableSkeleton>, cols: usize, rows
                         body.push_str("<w:p/>"); // a cell must hold at least one block
                     } else {
                         for pe in blocks {
-                            emit_paragraph(body, "<w:p>", b"", &pe.runs, pe.align.as_deref());
+                            emit_paragraph(body, "<w:p>", b"", &pe.runs, pe.align.as_deref(), None);
                         }
                     }
                     body.push_str("</w:tc>");
@@ -1180,6 +1196,16 @@ mod tests {
     }
 
     #[test]
+    fn build_ppr_sets_style_and_align_in_order() {
+        let out = build_ppr(b"<w:pPr><w:jc w:val=\"left\"/></w:pPr>", Some("center"), Some("Heading1"));
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.contains("<w:pStyle w:val=\"Heading1\"/>"), "style set");
+        assert!(s.contains("<w:jc w:val=\"center\"/>"), "align replaced");
+        assert!(!s.contains("w:val=\"left\""), "old jc removed");
+        assert!(s.find("<w:pStyle").unwrap() < s.find("<w:jc").unwrap(), "pStyle before jc");
+    }
+
+    #[test]
     fn reconcile_all_verbatim_is_byte_identical() {
         let xml = r#"<w:document xmlns:w="x"><w:body><w:p><w:r><w:t>hello</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>"#;
         let out = reconcile_body_in_package(
@@ -1195,7 +1221,7 @@ mod tests {
     fn reconcile_edits_paragraph_keeps_table_verbatim() {
         let xml = r#"<w:document xmlns:w="x"><w:body><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>old</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:sectPr/></w:body></w:document>"#;
         let edit = vec![
-            BlockEdit::Para { orig: Some(0), runs: vec![run("New", true)], align: None },
+            BlockEdit::Para { orig: Some(0), runs: vec![run("New", true)], align: None, style: None },
             BlockEdit::Verbatim { orig: 1 },
         ];
         let out = reconcile_body_in_package(&docx_with(xml), &edit).unwrap();
@@ -1215,7 +1241,7 @@ mod tests {
         // Keep the second paragraph, drop the first, append a new right-aligned one.
         let edit = vec![
             BlockEdit::Verbatim { orig: 1 },
-            BlockEdit::Para { orig: None, runs: vec![run("fresh", false)], align: Some("right".into()) },
+            BlockEdit::Para { orig: None, runs: vec![run("fresh", false)], align: Some("right".into()), style: None },
         ];
         let out = reconcile_body_in_package(&docx_with(xml), &edit).unwrap();
         let text = document_text(&out);
