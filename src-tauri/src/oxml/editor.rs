@@ -37,6 +37,10 @@ pub struct RunEdit {
     /// "super" | "sub" (`w:vertAlign`).
     #[serde(default)]
     pub vert: Option<String>,
+    /// A break run instead of text: "page" (`<w:br w:type="page"/>`) or "line"
+    /// (`<w:br/>`). When set, `text` and the other props are ignored.
+    #[serde(default)]
+    pub br: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -497,6 +501,10 @@ fn write_run(main: &mut Writer<Cursor<Vec<u8>>>, r: &RunEdit) -> Result<(), Edit
 /// Serialize one run to `<w:r>…</w:r>` with its run properties (emitted in WML
 /// `rPr` schema order: rFonts, b, i, strike, u, color, sz, shd, vertAlign).
 fn run_xml(r: &RunEdit) -> String {
+    if let Some(kind) = &r.br {
+        let br = if kind == "page" { "<w:br w:type=\"page\"/>" } else { "<w:br/>" };
+        return format!("<w:r>{br}</w:r>");
+    }
     let has_rpr = r.bold || r.italic || r.underline || r.strike || r.color.is_some()
         || r.size_pt.is_some() || r.font.is_some() || r.highlight.is_some() || r.vert.is_some();
     let mut s = String::from("<w:r>");

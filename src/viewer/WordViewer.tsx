@@ -319,17 +319,18 @@ function primaryFont(fam: string): string | undefined {
   return f || undefined;
 }
 
-/** Serialize a paragraph element's text into formatting-grouped runs. */
+/** Serialize a paragraph's inline content into formatting-grouped runs. Walks
+ *  nodes in order so a page break (`.qyra-pagebreak`) survives an edit as a
+ *  break run; markers/tabs are skipped, plain filler `<br>` is ignored. */
 function collectRuns(p: HTMLElement): RunEdit[] {
   const runs: RunEdit[] = [];
-  const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
-  let node: Node | null;
-  while ((node = walker.nextNode())) {
+
+  const pushText = (node: Text) => {
     const parent = node.parentElement;
-    if (!parent) continue;
-    if (parent.closest(".qyra-marker") || parent.closest(".qyra-tab")) continue;
+    if (!parent) return;
+    if (parent.closest(".qyra-marker") || parent.closest(".qyra-tab")) return;
     const text = node.textContent || "";
-    if (!text) continue;
+    if (!text) return;
     const cs = getComputedStyle(parent);
     const deco = cs.textDecorationLine || cs.textDecoration || "";
     const bold = cs.fontWeight === "bold" || parseInt(cs.fontWeight, 10) >= 600;
@@ -338,21 +339,31 @@ function collectRuns(p: HTMLElement): RunEdit[] {
     const strike = deco.includes("line-through");
     const color = rgbToHex(cs.color);
     const size_pt = pxToPt(cs.fontSize);
-    // font/highlight only when explicitly set inline (not the inherited default).
     const font = primaryFont(inlineStyle(parent, "fontFamily"));
     const bg = inlineStyle(parent, "backgroundColor");
     const highlight = bg ? rgbToHex(bg) : undefined;
     const va = cs.verticalAlign;
     const vert: "super" | "sub" | undefined = va === "super" ? "super" : va === "sub" ? "sub" : undefined;
     const last = runs[runs.length - 1];
-    if (last && !!last.bold === bold && !!last.italic === italic && !!last.underline === underline
+    if (last && !last.br && !!last.bold === bold && !!last.italic === italic && !!last.underline === underline
       && !!last.strike === strike && last.color === color && last.size_pt === size_pt
       && last.font === font && last.highlight === highlight && last.vert === vert) {
       last.text += text;
     } else {
       runs.push({ text, bold, italic, underline, strike, color, size_pt, font, highlight, vert });
     }
-  }
+  };
+
+  const visit = (node: Node) => {
+    if (node.nodeType === Node.TEXT_NODE) { pushText(node as Text); return; }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    const el = node as HTMLElement;
+    if (el.classList.contains("qyra-pagebreak")) { runs.push({ text: "", br: "page" }); return; }
+    if (el.classList.contains("qyra-marker") || el.classList.contains("qyra-tab")) return;
+    for (const c of Array.from(el.childNodes)) visit(c);
+  };
+
+  for (const c of Array.from(p.childNodes)) visit(c);
   return runs;
 }
 
@@ -760,6 +771,20 @@ export default function WordViewer() {
     if (top && top.parentElement === editRef.current) top.after(tbl);
     else editRef.current.appendChild(tbl);
     editRef.current.focus();
+    reflow();
+  }
+
+  /** Insert a page break as a new paragraph after the caret's block. */
+  function insertPageBreak() {
+    if (!editRef.current) return;
+    pushUndo();
+    const brP = document.createElement("p");
+    brP.innerHTML = '<hr class="qyra-pagebreak" contenteditable="false">';
+    const p = caretParagraph();
+    if (p && p.parentElement) p.after(brP);
+    else editRef.current.appendChild(brP);
+    editRef.current.focus();
+    reflow();
   }
 
   async function browse() {
@@ -939,9 +964,14 @@ export default function WordViewer() {
             )}
 
             {tab === "insert" && (
-              <Group label="Tables">
-                <button onMouseDown={(e) => { e.preventDefault(); insertTable(); }} title="Insert a 2×2 table" style={wbtn}>▦ Table</button>
-              </Group>
+              <>
+                <Group label="Tables">
+                  <button onMouseDown={(e) => { e.preventDefault(); insertTable(); }} title="Insert a 2×2 table" style={wbtn}>▦ Table</button>
+                </Group>
+                <Group label="Pages">
+                  <button onMouseDown={(e) => { e.preventDefault(); insertPageBreak(); }} title="Insert page break" style={wbtn}>⤓ Page break</button>
+                </Group>
+              </>
             )}
 
             {tab === "table" && (

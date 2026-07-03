@@ -238,6 +238,7 @@ export interface RunEdit {
   font?: string;    // family name
   highlight?: string; // "RRGGBB"
   vert?: "super" | "sub";
+  br?: "page" | "line"; // a break run instead of text
 }
 
 /** Rich edit: replace body paragraph `index`'s runs (keeps formatting) + set
