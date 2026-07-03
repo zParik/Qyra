@@ -49,6 +49,8 @@ pub struct Cell {
     pub blocks: Vec<Block>,
     /// Horizontal cell span (`w:gridSpan`); 1 = no span.
     pub grid_span: u32,
+    /// Cell shading fill (`w:shd`/`w:fill` in `tcPr`).
+    pub shading: Option<[u8; 3]>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

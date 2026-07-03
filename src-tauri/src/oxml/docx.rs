@@ -17,7 +17,7 @@ use super::model::{
 };
 use super::numbering::Numbering;
 use super::styles::{
-    apply_para_partial, apply_run_partial, attr_f32, attr_str, para_prop, run_prop,
+    apply_para_partial, apply_run_partial, attr_f32, attr_str, para_prop, parse_color, run_prop,
     ParaPropsPartial, RunPropsPartial, Styles,
 };
 use super::{Package, PackageError};
@@ -51,6 +51,7 @@ struct TableB {
 struct CellB {
     blocks: Vec<Block>,
     grid_span: u32,
+    shading: Option<[u8; 3]>,
 }
 
 /// Load a `.docx` and parse its main document, resolving styles, media,
@@ -241,7 +242,7 @@ pub fn parse_document_xml(
                     }
                     b"w:tc" => {
                         if let Some(tb) = tables.last_mut() {
-                            tb.cur_cell = Some(CellB { blocks: Vec::new(), grid_span: 1 });
+                            tb.cur_cell = Some(CellB { grid_span: 1, ..Default::default() });
                         }
                     }
                     b"w:p" => {
@@ -266,7 +267,7 @@ pub fn parse_document_xml(
                     }
                     _ => {}
                 }
-                if !handle_table_leaf(&name, &e, &mut tables)
+                if !handle_table_leaf(&name, &e, &stack, &mut tables)
                     && !handle_image_leaf(&name, &e, media, &mut cur_ext, &mut inlines, in_para)
                     && !try_page_break(&name, &e, &mut inlines, in_para)
                 {
@@ -283,7 +284,7 @@ pub fn parse_document_xml(
                     if in_para {
                         para_break_before = true;
                     }
-                } else if !handle_table_leaf(&name, &e, &mut tables)
+                } else if !handle_table_leaf(&name, &e, &stack, &mut tables)
                     && !handle_image_leaf(&name, &e, media, &mut cur_ext, &mut inlines, in_para)
                     && !try_page_break(&name, &e, &mut inlines, in_para)
                 {
@@ -330,7 +331,7 @@ pub fn parse_document_xml(
                         if let Some(tb) = tables.last_mut() {
                             if let Some(cell) = tb.cur_cell.take() {
                                 if let Some(row) = tb.cur_row.as_mut() {
-                                    row.push(Cell { blocks: cell.blocks, grid_span: cell.grid_span.max(1) });
+                                    row.push(Cell { blocks: cell.blocks, grid_span: cell.grid_span.max(1), shading: cell.shading });
                                 }
                             }
                         }
@@ -405,9 +406,10 @@ fn handle_image_leaf(
     }
 }
 
-/// Handle table-grid leaves (`w:gridCol` widths, `w:gridSpan`). Returns true if
-/// consumed.
-fn handle_table_leaf(name: &[u8], e: &BytesStart, tables: &mut [TableB]) -> bool {
+/// Handle table-grid leaves (`w:gridCol` widths, `w:gridSpan`, cell `w:shd`).
+/// Returns true if consumed.
+fn handle_table_leaf(name: &[u8], e: &BytesStart, stack: &[Vec<u8>], tables: &mut [TableB]) -> bool {
+    let has = |n: &[u8]| stack.iter().any(|x| x.as_slice() == n);
     match name {
         b"w:gridCol" => {
             if let Some(tb) = tables.last_mut() {
@@ -422,6 +424,19 @@ fn handle_table_leaf(name: &[u8], e: &BytesStart, tables: &mut [TableB]) -> bool
                 if let Some(cell) = tb.cur_cell.as_mut() {
                     if let Some(v) = attr_f32(e, b"w:val") {
                         cell.grid_span = v as u32;
+                    }
+                }
+            }
+            true
+        }
+        // Cell shading (in tcPr, not a run's rPr).
+        b"w:shd" if has(b"w:tcPr") && !has(b"w:rPr") => {
+            if let Some(fill) = attr_str(e, b"w:fill") {
+                if !fill.eq_ignore_ascii_case("auto") && fill.len() >= 6 {
+                    if let Some(tb) = tables.last_mut() {
+                        if let Some(cell) = tb.cur_cell.as_mut() {
+                            cell.shading = Some(parse_color(&fill));
+                        }
                     }
                 }
             }
@@ -680,5 +695,15 @@ mod tests {
         assert_eq!(t.rows[0].cells.len(), 2);
         let Block::Paragraph(p) = &t.rows[0].cells[0].blocks[0] else { panic!() };
         assert_eq!(p.inlines.len(), 1);
+    }
+
+    #[test]
+    fn parses_cell_shading() {
+        let xml = r#"<w:document xmlns:w="x"><w:body><w:tbl>
+          <w:tr><w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="FFFF00"/></w:tcPr><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc></w:tr>
+        </w:tbl></w:body></w:document>"#;
+        let doc = parse_document_xml(xml, &Styles::empty(), &MediaMap::new(), &Numbering::empty()).expect("parse");
+        let Block::Table(t) = &doc.blocks[0] else { panic!("expected table") };
+        assert_eq!(t.rows[0].cells[0].shading, Some([255, 255, 0]), "cell fill parsed");
     }
 }

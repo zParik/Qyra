@@ -670,7 +670,7 @@ mod tests {
 
     #[test]
     fn table_emits_lines_and_border_rects() {
-        let cell = |s: &str| Cell { blocks: vec![text_para(s, Align::Left)], grid_span: 1 };
+        let cell = |s: &str| Cell { blocks: vec![text_para(s, Align::Left)], grid_span: 1, shading: None };
         let table = Block::Table(Table {
             col_widths_pt: vec![100.0, 100.0],
             rows: vec![Row { cells: vec![cell("A"), cell("B")] }],

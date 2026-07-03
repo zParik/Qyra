@@ -60,7 +60,21 @@ fn paragraph_html(p: &Paragraph, out: &mut String, block_idx: Option<usize>) {
 
 fn table_html(t: &Table, out: &mut String, block_idx: Option<usize>) {
     let key = block_idx.map(|i| format!(" data-block=\"{i}\"")).unwrap_or_default();
-    out.push_str(&format!("<table{} class=\"qyra-table\" style=\"border-collapse:collapse\">", key));
+    let widths_sum: f32 = t.col_widths_pt.iter().sum();
+    let has_widths = !t.col_widths_pt.is_empty() && widths_sum > 1.0;
+    let table_style = if has_widths {
+        format!("border-collapse:collapse;table-layout:fixed;width:{:.1}pt", widths_sum)
+    } else {
+        "border-collapse:collapse".to_string()
+    };
+    out.push_str(&format!("<table{} class=\"qyra-table\" style=\"{}\">", key, table_style));
+    if has_widths {
+        out.push_str("<colgroup>");
+        for w in &t.col_widths_pt {
+            out.push_str(&format!("<col style=\"width:{:.1}pt\">", w));
+        }
+        out.push_str("</colgroup>");
+    }
     for (ri, row) in t.rows.iter().enumerate() {
         out.push_str("<tr>");
         for (ci, cell) in row.cells.iter().enumerate() {
@@ -77,8 +91,12 @@ fn cell_html(cell: &Cell, out: &mut String, ri: usize, ci: usize) {
     } else {
         String::new()
     };
+    let bg = cell
+        .shading
+        .map(|c| format!(";background:#{:02x}{:02x}{:02x}", c[0], c[1], c[2]))
+        .unwrap_or_default();
     out.push_str(&format!(
-        "<td data-r=\"{ri}\" data-c=\"{ci}\"{span} style=\"border:1px solid #aaa;padding:4px;vertical-align:top\">"
+        "<td data-r=\"{ri}\" data-c=\"{ci}\"{span} style=\"border:1px solid #aaa;padding:4px;vertical-align:top{bg}\">"
     ));
     for b in &cell.blocks {
         match b {
