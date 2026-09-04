@@ -126,6 +126,10 @@ pub fn split_pdf_by_bookmarks(path: String, output_dir: Option<String>) -> AppRe
 
         let mut part = doc.clone();
         part.delete_pages(&pages_to_delete);
+        // delete_pages() unlinks the pages from the tree but leaves their content
+        // streams, fonts and images in the object map, so without this every part
+        // still carries the whole source document.
+        part.prune_objects();
 
         // Sanitize title for use as filename
         let safe_title: String = title.chars()
@@ -182,6 +186,10 @@ pub fn split_pdf(
 
         let mut part = doc.clone();
         part.delete_pages(&pages_to_delete);
+        // delete_pages() unlinks the pages from the tree but leaves their content
+        // streams, fonts and images in the object map, so without this every part
+        // still carries the whole source document.
+        part.prune_objects();
 
         let out = format!("{}/{}_part{}.pdf", dir, stem, i + 1);
         part.save(&out)?;
@@ -192,13 +200,13 @@ pub fn split_pdf(
 }
 
 /// Split into individual pages.
-/// Uses direct page-tree manipulation instead of clone+delete_pages for each page,
-/// avoiding O(N²) deletions. Each output file contains only the target page in its
-/// page tree (other page objects are technically unreferenced but PDF viewers ignore them).
+/// Each output holds only the objects its page actually reaches: the page tree is
+/// pointed at the single page and everything left unreferenced is pruned, so a
+/// per-page file is the size of that page rather than of the whole source.
 #[tauri::command]
 pub fn split_pdf_per_page(path: String, output_dir: Option<String>) -> AppResult<Vec<String>> {
     let _t = crate::utils::timing::Timer::start("split_pdf_per_page", String::new());
-    let mut doc = Document::load(&path)?;
+    let doc = Document::load(&path)?;
     let total = doc.get_pages().len() as u32;
 
     let stem = Path::new(&path)
@@ -210,49 +218,41 @@ pub fn split_pdf_per_page(path: String, output_dir: Option<String>) -> AppResult
     // Collect page ObjectIds once.
     let pages_map = doc.get_pages();
 
-    // Locate the Pages root from the catalog.
-    let pages_root_id = {
-        let catalog = doc.catalog()?;
-        catalog
-            .get(b"Pages")
-            .and_then(|obj| obj.as_reference())?
-    };
-
-    // Ensure every page's Parent already points to the root (flatten any nested tree).
-    for (_, &page_obj_id) in &pages_map {
-        if let Some(Object::Dictionary(page_dict)) = doc.objects.get_mut(&page_obj_id) {
-            page_dict.set("Parent", Object::Reference(pages_root_id));
-        }
-    }
-
     let mut output_paths = Vec::new();
     for page_num in 1..=total {
         let page_obj_id = pages_map[&page_num];
 
-        // Swap the Kids array to contain only this page, then save, then restore.
-        // This avoids N full document clones while producing correct output.
-        let single_kids = Object::Array(vec![Object::Reference(page_obj_id)]);
+        // Work on a clone so the pruning below cannot destroy objects that later
+        // pages still need.
+        let mut part = doc.clone();
 
-        let old_kids = if let Some(Object::Dictionary(dict)) = doc.objects.get_mut(&pages_root_id) {
-            let old = dict.get(b"Kids").ok().cloned();
-            dict.set("Kids", single_kids);
-            dict.set("Count", Object::Integer(1));
-            old
-        } else {
-            return Err(AppError::Pdf("Could not find Pages root dictionary".to_string()));
+        let pages_root_id = {
+            let catalog = part.catalog()?;
+            catalog
+                .get(b"Pages")
+                .and_then(|obj| obj.as_reference())?
         };
 
-        let out = format!("{}/{}_page{:04}.pdf", dir, stem, page_num);
-        doc.save(&out)?;
-        output_paths.push(out);
-
-        // Restore the original Kids and Count for the next iteration.
-        if let Some(Object::Dictionary(dict)) = doc.objects.get_mut(&pages_root_id) {
-            if let Some(kids) = old_kids {
-                dict.set("Kids", kids);
-            }
-            dict.set("Count", Object::Integer(total as i64));
+        // Flatten any nested page tree: this page hangs directly off the root.
+        if let Some(Object::Dictionary(page_dict)) = part.objects.get_mut(&page_obj_id) {
+            page_dict.set("Parent", Object::Reference(pages_root_id));
         }
+
+        // Point the page tree at this page alone.
+        if let Some(Object::Dictionary(dict)) = part.objects.get_mut(&pages_root_id) {
+            dict.set("Kids", Object::Array(vec![Object::Reference(page_obj_id)]));
+            dict.set("Count", Object::Integer(1));
+        } else {
+            return Err(AppError::Pdf("Could not find Pages root dictionary".to_string()));
+        }
+
+        // Drop everything the remaining page does not reach. Without this each
+        // output would still serialise every other page's content and resources.
+        part.prune_objects();
+
+        let out = format!("{}/{}_page{:04}.pdf", dir, stem, page_num);
+        part.save(&out)?;
+        output_paths.push(out);
     }
 
     Ok(output_paths)
