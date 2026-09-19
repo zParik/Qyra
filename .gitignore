@@ -37,6 +37,10 @@ docs/
 # Tauri updater private key — never commit this
 src-tauri/updater.key
 
+# Word engine font: vendored locally for dev (often a copied system font like
+# Arial). Don't commit it — vendor real DejaVu Sans for any shared/CI build.
+src-tauri/assets/fonts/*.ttf
+
 # Misc
 src-tauri/nul
 target/
