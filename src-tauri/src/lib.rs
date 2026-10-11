@@ -340,7 +340,8 @@ pub fn run() {
             .path_and_query()
             .map(|p| p.as_str().to_string())
             .unwrap_or_default();
-        std::thread::spawn(move || {
+        // Tokio's blocking pool (bounded, reused) — not a fresh OS thread per image.
+        tauri::async_runtime::spawn_blocking(move || {
             let reply = |status: u16, ctype: &str, body: Vec<u8>| {
                 tauri::http::Response::builder()
                     .status(status)

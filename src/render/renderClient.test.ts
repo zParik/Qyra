@@ -49,6 +49,18 @@ describe("renderTile", () => {
     expect(invoke).toHaveBeenCalledWith("cancel_renders", { ids: [expect.any(Number)] });
   });
 
+  it("resolves null when an aborted request's IPC call fails", async () => {
+    let reject!: (e: unknown) => void;
+    invoke.mockImplementation((cmd: string) =>
+      cmd === "render_tile" ? new Promise((_, r) => (reject = r)) : Promise.resolve(),
+    );
+    const ctl = new AbortController();
+    const p = renderTile(req, ctl.signal);
+    ctl.abort();
+    reject(new Error("tile worker dropped reply"));
+    await expect(p).resolves.toBeNull();
+  });
+
   it("returns null without invoking when already aborted", async () => {
     const ctl = new AbortController();
     ctl.abort();

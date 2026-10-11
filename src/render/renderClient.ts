@@ -47,6 +47,9 @@ export async function renderTile(
   try {
     const buf = await invoke<ArrayBuffer>("render_tile", { req: { ...req, id } });
     return signal?.aborted ? null : decodeRgba(buf);
+  } catch (e) {
+    if (signal?.aborted) return null; // cancellation is never an error
+    throw e;
   } finally {
     signal?.removeEventListener("abort", onAbort);
   }

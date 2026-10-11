@@ -1,7 +1,9 @@
 //! Tile pool: N below-normal-priority threads rendering display-list regions.
+use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{channel, Sender};
 use std::sync::Arc;
+
+use tokio::sync::oneshot;
 
 use crate::commands::render_worker::RenderWorker;
 use crate::error::{AppError, AppResult};
@@ -32,7 +34,7 @@ struct Job {
     page: u32,
     scale: f64,
     region: Region,
-    reply: Sender<AppResult<Option<RgbaImage>>>,
+    reply: oneshot::Sender<AppResult<Option<RgbaImage>>>,
 }
 
 #[derive(Clone)]
@@ -50,9 +52,11 @@ pub fn internal_id() -> u64 {
 }
 
 impl RenderService {
+    /// Spawn `threads` tile workers. (0 is allowed: jobs then stay queued, which
+    /// tests use to exercise cancellation deterministically.)
     pub fn new(worker: RenderWorker, threads: usize) -> Self {
         let sched = Arc::new(Scheduler::new());
-        for i in 0..threads.max(1) {
+        for i in 0..threads {
             let sched = sched.clone();
             let worker = worker.clone();
             std::thread::Builder::new()
@@ -80,6 +84,7 @@ impl RenderService {
         &self.worker
     }
 
+    /// Queue a job now; the returned future resolves with its result.
     fn submit(
         &self,
         id: u64,
@@ -88,27 +93,52 @@ impl RenderService {
         scale: f64,
         pri: Priority,
         region: Region,
-    ) -> AppResult<Option<RgbaImage>> {
-        let (reply, rx) = channel();
+    ) -> impl Future<Output = AppResult<Option<RgbaImage>>> {
+        let (reply, rx) = oneshot::channel();
         let group = path.clone();
         self.sched.push(id, &group, pri, Job { path, page, scale, region, reply });
-        rx.recv().map_err(|_| AppError::Other("tile worker dropped reply".into()))?
+        async move { rx.await.map_err(|_| AppError::Other("tile worker dropped reply".into()))? }
     }
 
-    pub fn tile(&self, r: TileReq) -> AppResult<Option<RgbaImage>> {
+    /// One tile; await it from async code (no thread held while queued).
+    pub fn tile_async(&self, r: TileReq) -> impl Future<Output = AppResult<Option<RgbaImage>>> {
         self.submit(r.id, r.path, r.page, r.scale, r.priority, Region::Tile { tx: r.tx, ty: r.ty })
     }
 
-    pub fn page(&self, id: u64, path: String, page: u32, scale: f64, pri: Priority) -> AppResult<Option<RgbaImage>> {
+    /// A whole page; await it from async code.
+    pub fn page_async(
+        &self,
+        id: u64,
+        path: String,
+        page: u32,
+        scale: f64,
+        pri: Priority,
+    ) -> impl Future<Output = AppResult<Option<RgbaImage>>> {
         self.submit(id, path, page, scale, pri, Region::WholePage)
     }
 
+    /// Blocking form of `tile_async`, for non-async callers.
+    pub fn tile(&self, r: TileReq) -> AppResult<Option<RgbaImage>> {
+        tauri::async_runtime::block_on(self.tile_async(r))
+    }
+
+    /// Blocking form of `page_async`, for non-async callers (thumbnails, export).
+    pub fn page(&self, id: u64, path: String, page: u32, scale: f64, pri: Priority) -> AppResult<Option<RgbaImage>> {
+        tauri::async_runtime::block_on(self.page_async(id, path, page, scale, pri))
+    }
+
+    /// Cancel jobs. Queued ones answer `Ok(None)` right away — cancellation is
+    /// never an error; running ones finish and are discarded.
     pub fn cancel(&self, ids: &[u64]) {
-        self.sched.cancel(ids);
+        for job in self.sched.cancel(ids) {
+            let _ = job.reply.send(Ok(None));
+        }
     }
 
     pub fn cancel_doc(&self, path: &str) {
-        self.sched.cancel_group(path);
+        for job in self.sched.cancel_group(path) {
+            let _ = job.reply.send(Ok(None));
+        }
     }
 }
 

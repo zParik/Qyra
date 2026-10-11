@@ -200,10 +200,8 @@ pub async fn render_tile(
     service: tauri::State<'_, crate::render::service::RenderService>,
     req: crate::render::service::TileReq,
 ) -> AppResult<tauri::ipc::Response> {
-    let service = service.inner().clone();
-    let img = tokio::task::spawn_blocking(move || service.tile(req))
-        .await
-        .map_err(|e| AppError::Other(e.to_string()))??;
+    // Awaited, not blocked on: a queued tile holds no thread.
+    let img = service.tile_async(req).await?;
     Ok(tauri::ipc::Response::new(crate::render::raster::to_wire(img.as_ref())))
 }
 
@@ -216,18 +214,15 @@ pub async fn render_page_rgba(
     page: u32,
     scale: f64,
 ) -> AppResult<tauri::ipc::Response> {
-    let service = service.inner().clone();
-    let img = tokio::task::spawn_blocking(move || {
-        service.page(
+    let img = service
+        .page_async(
             crate::render::service::internal_id(),
             path,
             page,
             scale,
             crate::render::scheduler::Priority::Visible,
         )
-    })
-    .await
-    .map_err(|e| AppError::Other(e.to_string()))??;
+        .await?;
     Ok(tauri::ipc::Response::new(crate::render::raster::to_wire(img.as_ref())))
 }
 

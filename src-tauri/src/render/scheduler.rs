@@ -105,20 +105,38 @@ impl<J> Scheduler<J> {
         s.stale.remove(&id)
     }
 
-    pub fn cancel(&self, ids: &[u64]) {
-        let mut s = self.state.lock().unwrap();
+    /// Cancel `ids`. Queued jobs are removed and handed back (so the caller can
+    /// answer whoever waits on them); running ones are marked stale.
+    pub fn cancel(&self, ids: &[u64]) -> Vec<J> {
         let ids: HashSet<u64> = ids.iter().copied().collect();
-        s.queue.retain(|e| !ids.contains(&e.id));
+        let mut s = self.state.lock().unwrap();
         let running: Vec<u64> = s.running.keys().copied().filter(|id| ids.contains(id)).collect();
         s.stale.extend(running);
+        Self::take_queued(&mut s, |e| ids.contains(&e.id))
     }
 
-    pub fn cancel_group(&self, group: &str) {
+    /// Cancel every job of `group` (queued: removed and handed back; running: stale).
+    pub fn cancel_group(&self, group: &str) -> Vec<J> {
         let mut s = self.state.lock().unwrap();
-        s.queue.retain(|e| e.group != group);
         let running: Vec<u64> =
             s.running.iter().filter(|(_, g)| g.as_str() == group).map(|(id, _)| *id).collect();
         s.stale.extend(running);
+        Self::take_queued(&mut s, |e| e.group == group)
+    }
+
+    /// Remove queued entries matching `pred`, in priority order, keeping the rest.
+    fn take_queued(s: &mut State<J>, pred: impl Fn(&Entry<J>) -> bool) -> Vec<J> {
+        let mut taken = Vec::new();
+        let mut kept = BinaryHeap::with_capacity(s.queue.len());
+        for e in std::mem::take(&mut s.queue).into_sorted_vec().into_iter().rev() {
+            if pred(&e) {
+                taken.push(e.job);
+            } else {
+                kept.push(e);
+            }
+        }
+        s.queue = kept;
+        taken
     }
 
     pub fn shutdown(&self) {
@@ -147,7 +165,7 @@ mod tests {
         let s = Scheduler::new();
         s.push(1, "a", Priority::Visible, "x");
         s.push(2, "a", Priority::Visible, "y");
-        s.cancel(&[1]);
+        assert_eq!(s.cancel(&[1]), vec!["x"], "dropped job handed back");
         assert_eq!(s.pop().unwrap(), (2, "y"));
     }
 
@@ -176,7 +194,7 @@ mod tests {
         let (running, _) = s.pop().unwrap();
         s.push(2, "doc-a", Priority::Visible, 2);
         s.push(3, "doc-b", Priority::Visible, 3);
-        s.cancel_group("doc-a");
+        assert_eq!(s.cancel_group("doc-a"), vec![2], "queued doc-a job handed back");
         assert!(s.finish(running));
         assert_eq!(s.pop().unwrap(), (3, 3));
     }

@@ -176,3 +176,20 @@ fn jpg_export_is_jpeg() {
     export_page_image(&open("text.pdf"), 1, 72, "jpg", &out).unwrap();
     assert_eq!(&std::fs::read(&out).unwrap()[0..2], &[0xFF, 0xD8]);
 }
+
+#[tokio::test]
+async fn tile_reply_can_be_awaited_without_blocking_a_thread() {
+    let path = fixture("text.pdf").to_string_lossy().into_owned();
+    let img = service().tile_async(req(1, &path, 0, 0)).await.unwrap();
+    assert!(img.is_some());
+}
+
+#[tokio::test]
+async fn cancelling_a_queued_tile_resolves_none_not_an_error() {
+    // No worker threads: the job stays queued until cancelled.
+    let svc = RenderService::new(RenderWorker::new(), 0);
+    let path = fixture("text.pdf").to_string_lossy().into_owned();
+    let pending = svc.tile_async(req(42, &path, 0, 0));
+    svc.cancel(&[42]);
+    assert!(pending.await.unwrap().is_none());
+}
