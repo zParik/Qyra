@@ -2,8 +2,8 @@
 mod common;
 
 use common::fixture;
-use qyra_lib::render::geometry::PageSizePt;
-use qyra_lib::render::raster::{build_display_list, page_sizes};
+use qyra_lib::render::geometry::{grid, page_px, tile_rect, PageSizePt, TileRect};
+use qyra_lib::render::raster::{build_display_list, encode_png, page_sizes, render_region, to_wire};
 
 fn open(name: &str) -> mupdf::Document {
     mupdf::Document::open(fixture(name).to_str().unwrap()).unwrap()
@@ -31,4 +31,79 @@ fn display_list_bounds_match_page_size() {
         assert!(((b.x1 - b.x0) as f64 - size.w).abs() < 0.01, "page {i} width");
         assert!(((b.y1 - b.y0) as f64 - size.h).abs() < 0.01, "page {i} height");
     }
+}
+
+fn whole(px: (u32, u32)) -> TileRect {
+    TileRect { x0: 0, y0: 0, x1: px.0, y1: px.1 }
+}
+
+/// Render every tile and copy it into one buffer the size of the page.
+fn stitched(list: &mupdf::DisplayList, scale: f64, px: (u32, u32)) -> Vec<u8> {
+    let mut out = vec![0u8; (px.0 * px.1 * 4) as usize];
+    let (cols, rows) = grid(px);
+    for ty in 0..rows {
+        for tx in 0..cols {
+            let r = tile_rect(px, tx, ty).unwrap();
+            let t = render_region(list, scale, r).unwrap();
+            assert_eq!((t.width, t.height), (r.width(), r.height()));
+            for row in 0..t.height {
+                let src = (row * t.width * 4) as usize;
+                let dst = (((r.y0 + row) * px.0 + r.x0) * 4) as usize;
+                out[dst..dst + (t.width * 4) as usize]
+                    .copy_from_slice(&t.data[src..src + (t.width * 4) as usize]);
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn stitched_tiles_equal_whole_page_render() {
+    let doc = open("mixed-sizes.pdf");
+    for (i, size) in page_sizes(&doc).unwrap().into_iter().enumerate() {
+        let list = build_display_list(&doc, i as i32).unwrap();
+        let scale = 2.0;
+        let px = page_px(size, scale);
+        let full = render_region(&list, scale, whole(px)).unwrap();
+        assert_eq!(full.data, stitched(&list, scale, px), "page {i}: tiles must match exactly");
+    }
+}
+
+#[test]
+fn render_region_is_opaque_rgba_on_white() {
+    let doc = open("text.pdf");
+    let list = build_display_list(&doc, 0).unwrap();
+    let img = render_region(&list, 1.0, TileRect { x0: 0, y0: 0, x1: 4, y1: 4 }).unwrap();
+    assert_eq!(img.data.len(), 4 * 4 * 4);
+    assert!(img.data.chunks(4).all(|p| p == [255, 255, 255, 255]), "top-left corner is blank white");
+}
+
+#[test]
+fn page_with_text_has_dark_pixels() {
+    let doc = open("text.pdf");
+    let list = build_display_list(&doc, 0).unwrap();
+    let px = page_px(page_sizes(&doc).unwrap()[0], 1.0);
+    let img = render_region(&list, 1.0, whole(px)).unwrap();
+    assert!(img.data.chunks(4).any(|p| p[0] < 128), "text must render");
+}
+
+#[test]
+fn wire_format_has_le_header_then_pixels() {
+    let doc = open("text.pdf");
+    let list = build_display_list(&doc, 0).unwrap();
+    let img = render_region(&list, 1.0, TileRect { x0: 0, y0: 0, x1: 3, y1: 2 }).unwrap();
+    let wire = to_wire(Some(&img));
+    assert_eq!(&wire[0..4], &3u32.to_le_bytes());
+    assert_eq!(&wire[4..8], &2u32.to_le_bytes());
+    assert_eq!(wire.len(), 8 + 3 * 2 * 4);
+    assert_eq!(to_wire(None), vec![0u8; 8]);
+}
+
+#[test]
+fn encode_png_produces_a_png() {
+    let doc = open("text.pdf");
+    let list = build_display_list(&doc, 0).unwrap();
+    let img = render_region(&list, 0.5, TileRect { x0: 0, y0: 0, x1: 50, y1: 50 }).unwrap();
+    let png = encode_png(&img).unwrap();
+    assert_eq!(&png[0..8], b"\x89PNG\r\n\x1a\n");
 }
