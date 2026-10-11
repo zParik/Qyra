@@ -275,19 +275,7 @@ impl Rewriter {
         // xref table in its place. The full output never lives in the heap.
         progress_cb(0, 1, "Writing compressed PDF");
 
-        let objstm_ok = match write_object_streams_to(out_path, &live, &out_trailer) {
-            Ok(()) => validate_output(out_path, expected_pages),
-            Err(_e) => {
-                #[cfg(debug_assertions)]
-                eprintln!("[compress] object-stream write failed: {_e}; falling back");
-                false
-            }
-        };
-
-        if !objstm_ok {
-            // Fallback: classic cross-reference table (trusted, no re-validation).
-            write_classic_to(out_path, &live, out_trailer)?;
-        }
+        write_validated(out_path, &live, out_trailer, expected_pages)?;
 
         let written = std::fs::metadata(out_path)?.len();
         #[cfg(debug_assertions)]
@@ -299,6 +287,35 @@ impl Rewriter {
 // ---------------------------------------------------------------------------
 // Output writers (stream to disk) + validation
 // ---------------------------------------------------------------------------
+
+/// Write `live` to `path`, preferring object streams + an xref stream and
+/// falling back to a classic xref table. Whichever form is written must pass
+/// `validate_output`; if neither does, the output is rejected so the caller
+/// keeps the original file.
+fn write_validated(
+    path: &Path,
+    live: &[(ObjectId, PdfObject)],
+    trailer: PdfDict,
+    expected_pages: usize,
+) -> Result<(), PdfError> {
+    match write_object_streams_to(path, live, &trailer) {
+        Ok(()) if validate_output(path, expected_pages) => return Ok(()),
+        Ok(()) => {}
+        Err(_e) => {
+            #[cfg(debug_assertions)]
+            eprintln!("[compress] object-stream write failed: {_e}; falling back");
+        }
+    }
+
+    write_classic_to(path, live, trailer)?;
+    if validate_output(path, expected_pages) {
+        Ok(())
+    } else {
+        Err(PdfError::WriteError(
+            "compressed output failed validation; original left unchanged".into(),
+        ))
+    }
+}
 
 /// Write `live` to `path` using object streams + an xref stream, streamed.
 fn write_object_streams_to(
@@ -438,3 +455,54 @@ fn lower_current_thread_priority() {
 
 #[cfg(not(any(windows, unix)))]
 fn lower_current_thread_priority() {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a classic-xref PDF from `(object number, body)` pairs, computing
+    /// real byte offsets so the reader takes the normal (non-repair) path.
+    fn pdf_with(objects: &[(u32, &str)]) -> Vec<u8> {
+        let mut out = b"%PDF-1.4\n".to_vec();
+        let mut offsets = Vec::new();
+        for (num, body) in objects {
+            offsets.push((*num, out.len()));
+            out.extend_from_slice(format!("{num} 0 obj\n{body}\nendobj\n").as_bytes());
+        }
+        let size = objects.iter().map(|(n, _)| n).max().unwrap() + 1;
+        let xref_at = out.len();
+        out.extend_from_slice(format!("xref\n0 {size}\n0000000000 65535 f \n").as_bytes());
+        for n in 1..size {
+            match offsets.iter().find(|(o, _)| *o == n) {
+                Some((_, off)) => out.extend_from_slice(format!("{off:010} 00000 n \n").as_bytes()),
+                None => out.extend_from_slice(b"0000000000 65535 f \n"),
+            }
+        }
+        out.extend_from_slice(
+            format!("trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{xref_at}\n%%EOF\n")
+                .as_bytes(),
+        );
+        out
+    }
+
+    const CATALOG: &str = "<< /Type /Catalog /Pages 2 0 R >>";
+    const PAGES: &str = "<< /Type /Pages /Kids [3 0 R] /Count 1 >>";
+
+    #[test]
+    fn write_validated_rejects_output_that_fails_validation() {
+        // Expecting 2 pages from a 1-page document fails validation for the
+        // object-stream write AND the classic fallback; both must be rejected.
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("out.pdf");
+        let reader = PdfReader::new(pdf_with(&[
+            (1, CATALOG),
+            (2, PAGES),
+            (3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>"),
+        ]))
+        .unwrap();
+        let trailer = reader.trailer().clone();
+        let catalog = crate::pdf::parser::object::parse_object_at(CATALOG.as_bytes(), 0).unwrap().0;
+        let live = vec![((1u32, 0u16), catalog)];
+        assert!(write_validated(&out, &live, trailer, 2).is_err());
+    }
+}
