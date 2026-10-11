@@ -131,7 +131,7 @@ impl<W: Write> PdfWriter<W> {
             serialize::write_object_body(&mut scratch, obj)?;
             scratch.extend_from_slice(b"\nendobj\n");
             self.write_raw(&scratch)?;
-            rows[id.0 as usize] = XrefRow::InUse { offset };
+            rows[id.0 as usize] = XrefRow::InUse { offset, gen: id.1 };
         }
 
         // 2) Object streams: members → type-2 rows; the ObjStm itself → type 1.
@@ -152,12 +152,12 @@ impl<W: Write> PdfWriter<W> {
             serialize::write_object_body(&mut scratch, &PdfObject::Stream(stream))?;
             scratch.extend_from_slice(b"\nendobj\n");
             self.write_raw(&scratch)?;
-            rows[objstm_num as usize] = XrefRow::InUse { offset };
+            rows[objstm_num as usize] = XrefRow::InUse { offset, gen: 0 };
         }
 
         // 3) XRef stream at the end (references itself by offset, type 1).
         let xref_offset = self.pos;
-        rows[xref_id as usize] = XrefRow::InUse { offset: xref_offset };
+        rows[xref_id as usize] = XrefRow::InUse { offset: xref_offset, gen: 0 };
         let xref_stream = build_xref_stream(&rows, &trailer)?;
         scratch.clear();
         scratch.extend_from_slice(format!("{} 0 obj\n", xref_id).as_bytes());
@@ -355,5 +355,31 @@ mod tests {
         let mut reader = PdfReader::new(bytes).expect("reader parses object-stream output");
         let page_ids = reader.pages().expect("pages resolve");
         assert_eq!(page_ids.len(), 1);
+    }
+
+    #[test]
+    fn object_streams_keep_nonzero_generation_resolvable() {
+        use crate::pdf::parser::PdfReader;
+
+        // Object 4 has generation 2 (left over from an incremental update).
+        // Its xref-stream row must carry that generation, or `4 2 R` dangles.
+        let mut catalog = PdfDict::new();
+        catalog.set(b"Type", PdfObject::Name(b"Catalog".to_vec()));
+        catalog.set(b"Extra", PdfObject::Reference((4, 2)));
+        let objects = vec![
+            ((1u32, 0u16), PdfObject::Dictionary(catalog)),
+            ((4u32, 2u16), PdfObject::Integer(42)),
+        ];
+        let mut trailer = PdfDict::new();
+        trailer.set(b"Root", PdfObject::Reference((1, 0)));
+
+        let mut w = writer();
+        w.write_header().unwrap();
+        w.write_with_object_streams(&objects, trailer).unwrap();
+        let bytes = w.finish().unwrap();
+
+        let mut reader = PdfReader::new(bytes).expect("reader parses output");
+        let obj = reader.get_object((4, 2)).expect("4 2 R resolves");
+        assert_eq!(obj.as_integer(), Some(42));
     }
 }
