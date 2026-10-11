@@ -156,3 +156,24 @@ fn thumbnail_is_png_of_requested_width_and_cached() {
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1, "written to disk cache");
     assert_eq!(thumb_png(&svc, &cache, &path, 1, 256).unwrap(), png, "cache hit is identical");
 }
+
+use qyra_lib::render::export::export_page_image;
+
+#[test]
+fn png_export_is_real_png_at_full_300_dpi() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("p1.png");
+    export_page_image(&open("text.pdf"), 1, 300, "png", &out).unwrap();
+    let bytes = std::fs::read(&out).unwrap();
+    assert_eq!(&bytes[0..8], b"\x89PNG\r\n\x1a\n", "PNG means PNG, not JPEG");
+    let img = image::load_from_memory(&bytes).unwrap();
+    assert_eq!((img.width(), img.height()), (2550, 3300), "no 2600 px cap");
+}
+
+#[test]
+fn jpg_export_is_jpeg() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("p1.jpg");
+    export_page_image(&open("text.pdf"), 1, 72, "jpg", &out).unwrap();
+    assert_eq!(&std::fs::read(&out).unwrap()[0..2], &[0xFF, 0xD8]);
+}

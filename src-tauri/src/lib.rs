@@ -422,6 +422,7 @@ pub fn run() {
             commands::render::render_tile,
             commands::render::render_page_rgba,
             commands::render::cancel_renders,
+            commands::render::export_page_image,
             links::add_link,
             links::remove_link,
             create::images_to_pdf,

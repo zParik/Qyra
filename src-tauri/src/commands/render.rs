@@ -491,32 +491,20 @@ pub async fn pdf_to_images(
         let doc = mupdf::Document::open(&path)?;
         let page_count = doc.page_count()?;
         let fmt = format.unwrap_or_else(|| "png".to_string()).to_lowercase();
-        let scale = dpi.unwrap_or(150) as f32 / 72.0;
+        let dpi = dpi.unwrap_or(150);
         let stem = Path::new(&path)
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("page");
         let dir = output_dir
             .unwrap_or_else(|| std::env::temp_dir().to_string_lossy().to_string());
-        let matrix = mupdf::Matrix::new_scale(scale, scale);
-        let cs = mupdf::Colorspace::device_rgb();
-        let img_fmt = match fmt.as_str() {
-            "jpg" | "jpeg" => image::ImageFormat::Jpeg,
-            _ => image::ImageFormat::Png,
-        };
+        // Unknown formats fall back to PNG data under the requested extension
+        // (the previous behaviour).
+        let encoding = if matches!(fmt.as_str(), "jpg" | "jpeg") { "jpg" } else { "png" };
         let mut paths = Vec::new();
         for i in 0..page_count {
-            // Same raster as the viewer: contents + annotations (issue #64),
-            // minus widgets and sticky-note icons.
-            let pixmap = crate::commands::render_worker::rasterize_page(&doc, i, &matrix, &cs)?;
-            let img = image::RgbImage::from_raw(
-                pixmap.width(),
-                pixmap.height(),
-                pixmap.samples().to_vec(),
-            )
-            .ok_or_else(|| AppError::Pdf("pixmap→image failed".to_string()))?;
             let out = format!("{}/{}_page{:04}.{}", dir, stem, i + 1, fmt);
-            img.save_with_format(&out, img_fmt)?;
+            crate::render::export::export_page_image(&doc, i as u32 + 1, dpi, encoding, Path::new(&out))?;
             paths.push(out);
         }
         Ok(paths)
@@ -594,4 +582,16 @@ pub async fn render_page_rgba(
 #[cfg(not(target_os = "android"))]
 pub fn cancel_renders(service: tauri::State<'_, crate::render::service::RenderService>, ids: Vec<u64>) {
     service.cancel(&ids);
+}
+
+/// Write one page to an image file at `dpi` — lossless PNG or JPEG (q92), no size cap.
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+pub async fn export_page_image(path: String, page: u32, dpi: u32, format: String, out: String) -> AppResult<()> {
+    tokio::task::spawn_blocking(move || {
+        let doc = mupdf::Document::open(&path)?;
+        crate::render::export::export_page_image(&doc, page, dpi, &format, Path::new(&out))
+    })
+    .await
+    .map_err(|e| AppError::Other(e.to_string()))?
 }
