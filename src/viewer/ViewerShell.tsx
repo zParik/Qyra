@@ -188,7 +188,7 @@ export default function ViewerShell() {
               }}
             >
               <ErrorBoundary FallbackComponent={ViewerErrorFallback} key={tab.path}>
-                <Viewer tabPath={tab.path} />
+                <Viewer tabPath={tab.path} isActive={i === activeTabIndex} />
               </ErrorBoundary>
             </div>
           )

@@ -45,7 +45,7 @@ export function slotAt(l: Layout, y: number): number {
   if (hi < 0) return 0;
   while (lo < hi) {
     const mid = (lo + hi + 1) >> 1;
-    if (l.tops[mid] <= y) lo = mid;
+    if (l.tops[mid]! <= y) lo = mid;
     else hi = mid - 1;
   }
   return lo;
@@ -63,8 +63,8 @@ export function visibleRange(l: Layout, scrollTop: number, viewportH: number, bu
 export function anchorY(oldL: Layout, newL: Layout, y: number): number {
   if (oldL.tops.length === 0 || newL.tops.length === 0) return y;
   const i = Math.min(slotAt(oldL, y), newL.tops.length - 1);
-  const frac = (y - oldL.tops[i]) / oldL.slotHeights[i];
-  return newL.tops[i] + frac * newL.slotHeights[i];
+  const frac = (y - oldL.tops[i]!) / oldL.slotHeights[i]!;
+  return newL.tops[i]! + frac * newL.slotHeights[i]!;
 }
 
 /** Zoom at which the widest page fills the container inside SIDE_PAD on both sides. */

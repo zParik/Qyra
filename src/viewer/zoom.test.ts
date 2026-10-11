@@ -3,10 +3,16 @@ import { ZOOM_MIN, ZOOM_MAX, ZOOM_STEP, clampZoom, nextZoomFromWheel, snapZoom }
 
 describe("clampZoom", () => {
   it("clamps below the minimum", () => {
-    expect(clampZoom(0.1)).toBe(ZOOM_MIN);
+    expect(clampZoom(0.01)).toBe(ZOOM_MIN);
   });
   it("clamps above the maximum", () => {
-    expect(clampZoom(9)).toBe(ZOOM_MAX);
+    expect(clampZoom(99)).toBe(ZOOM_MAX);
+  });
+  it("allows 10% to 1600% zoom", () => {
+    expect(ZOOM_MIN).toBe(0.1);
+    expect(ZOOM_MAX).toBe(16);
+    expect(clampZoom(20)).toBe(16);
+    expect(clampZoom(0.01)).toBe(0.1);
   });
   it("passes through in-range values", () => {
     expect(clampZoom(1.5)).toBe(1.5);
@@ -69,8 +75,8 @@ describe("snapZoom", () => {
   });
 
   it("produces only a bounded set of distinct values across the range", () => {
-    // The whole point: continuous input → a small, fixed set of outputs, so the
-    // compositor caches a bounded number of per-scale rasters.
+    // Continuous input → a small, fixed set of outputs, so a gesture only ever
+    // requests tiles at a bounded number of render scales.
     const seen = new Set<number>();
     for (let z = ZOOM_MIN; z <= ZOOM_MAX; z += 0.001) {
       seen.add(Math.round(snapZoom(z) * 1000)); // round to kill float noise

@@ -9,12 +9,15 @@ import { ScrollPageIndicator } from "./ScrollPageIndicator";
 import { ZoomFab } from "./ZoomFab";
 import { ToolSidebar, ViewerTool } from "./ToolSidebar";
 import { invoke } from "@tauri-apps/api/core";
-import { copyFile, showSaveDialog, bakeAnnotations, setActiveDocument, saveCompressedCopy, addPdfAnnotation, redactPdf } from "../lib/tauri";
+import { copyFile, showSaveDialog, bakeAnnotations, saveCompressedCopy, addPdfAnnotation, redactPdf } from "../lib/tauri";
 import { loadSetting, Settings } from "../lib/settings";
 import { triggerPrint } from "./tools/PrintPanel";
 import { DrawingCanvas } from "./DrawingCanvas";
 import { VirtualPageBackground } from "./VirtualPageBackground";
-import { PageCanvas } from "./PageCanvas";
+import { PageView } from "./PageView";
+import { buildLayout, visibleRange, slotAt, anchorY, fitWidthZoom, PT_TO_CSS, PAGE_GAP, SIDE_PAD } from "../render/layout";
+import { docOpen, type DocInfo } from "../render/renderClient";
+import { tileCache, tileKeyPrefix } from "../render/tileCache";
 import { DrawToolbar } from "./tools/DrawToolbar";
 import { TextLayer } from "./TextLayer";
 import { LinkLayer } from "./LinkLayer";
@@ -78,7 +81,7 @@ function findActiveMatchOrdinalOnPage(
   return ordinal;
 }
 
-export default function Viewer({ tabPath }: { tabPath: string }) {
+export default function Viewer({ tabPath, isActive }: { tabPath: string; isActive: boolean }) {
   const navigate = useNavigate();
   const viewerFile = useAppStore((s) => {
     const file = s.tabFiles[tabPath];
@@ -111,7 +114,7 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
   // "Add page" inline UI: which insertion point is open (afterRealPage value)
   const [addPageAt, setAddPageAt] = useState<number | null>(null);
 
-  const [docAspectRatio, setDocAspectRatio] = useState(1.4142);
+  const [docInfo, setDocInfo] = useState<DocInfo | null>(null);
   const [zoom, setZoom] = useState(1.0);
   // Always-fresh mirror of `zoom` for the wheel handler, which accumulates a
   // gesture's zoom in a ref and commits to React state only once it settles.
@@ -316,6 +319,7 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
   // no re-raster of pages); on settle we commit the real zoom and clear the transform.
   const contentWrapperRef = useRef<HTMLDivElement>(null);
   const [centerScrollTop, setCenterScrollTop] = useState(0);
+  const [centerScrollLeft, setCenterScrollLeft] = useState(0);
   const [containerWidth, setContainerWidth] = useState(0);
   const [containerHeight, setContainerHeight] = useState(0);
   const suppressScrollRef = useRef(false);
@@ -355,41 +359,24 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
     return () => observer.disconnect();
   }, []);
 
-  // Slot height: page content (A4 aspect ratio at current zoom) + vertical margins (sm:my-8 = 32px each side)
-  const SLOT_MARGIN = 64;   // 32px top + 32px bottom per slot
-  const TOP_PAD    = 32;    // sm:py-8
-  const SIDE_PAD   = 32;    // sm:px-8
   const BUFFER_SLOTS = 2;   // small buffer to avoid gaps when scrolling
-  // Base width (CSS px) the page CANVAS BACKING STORE is rendered at — pinned, so the
-  // bitmap memory a page costs never grows with zoom. The page BOX is laid out at the
-  // zoomed pixel width (zoom*768) and the canvas (w-full) CSS-stretches this fixed
-  // bitmap to fill it — no transform/zoom scale, so the WebView never caches a per-scale
-  // raster tile-set in native RAM (that pyramid hit ~20 GB during zoom-spam). See the
-  // page render block.
-  const BASE_PAGE_W = 768;
 
-  const basePageW = zoom * 768;
-  const actualPageW = basePageW;
-  const slotH = actualPageW * docAspectRatio + SLOT_MARGIN;
+  // Per-slot sizes: PDF slots use their page's real size; virtual (notes)
+  // pages use page 1's size.
+  const slotSizes = useMemo(() => {
+    const pages = docInfo?.pages ?? [];
+    const fallback = pages[0] ?? { w: 612, h: 792 };
+    return pageSlots.map((s) => (s.type === "pdf" ? pages[s.pdfPage - 1] ?? fallback : fallback));
+  }, [docInfo, pageSlots]);
+  const layout = useMemo(() => buildLayout(slotSizes, zoom), [slotSizes, zoom]);
+  // Read by the once-registered gesture/wheel handlers.
+  const slotSizesRef = useRef(slotSizes);
+  slotSizesRef.current = slotSizes;
+  const isActiveRef = useRef(isActive);
+  isActiveRef.current = isActive;
   const containerH = containerHeight || 600;
-  const firstSlot  = Math.max(0, Math.floor((centerScrollTop - TOP_PAD) / slotH) - BUFFER_SLOTS);
-  const lastSlot   = Math.min(pageSlots.length - 1, Math.ceil((centerScrollTop + containerH - TOP_PAD) / slotH) + BUFFER_SLOTS);
-  const totalH     = TOP_PAD * 2 + pageSlots.length * slotH;
-
-  // Visible PDF page numbers come from the virtual scroll window — no IntersectionObserver
-  // needed — but HARD-CAPPED to ±MAX_LOADED_RADIUS of the current page. That bounds the
-  // rendered/decoded set (the only heavy memory) no matter how far zoomed out, and means
-  // a fast scroll only ever loads a tight band around where you actually are.
-  const visiblePageNums = useMemo(() => {
-    const nums = new Set<number>();
-    for (let i = firstSlot; i <= lastSlot; i++) {
-      const slot = pageSlots[i];
-      if (slot?.type === 'pdf' && Math.abs(slot.pdfPage - currentPage) <= MAX_LOADED_RADIUS) {
-        nums.add(slot.pdfPage);
-      }
-    }
-    return nums;
-  }, [firstSlot, lastSlot, pageSlots, currentPage]);
+  const [firstSlot, lastSlot] = visibleRange(layout, centerScrollTop, containerH, BUFFER_SLOTS);
+  const totalH = layout.totalH;
 
   // O(1) lookup: PDF page number → slot index, used by scrollToPage
   const pageToSlotIndex = useMemo(() => {
@@ -414,56 +401,44 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
   }, [stripVisibleRange, pageCount]);
 
   const stripThumbnails = usePageThumbnails(viewerFile?.path ?? null, pageCount, 0.3, stripVisibleNums);
-  // Render-at-zoom, quantized: the page bitmap is rasterized (by MuPDF) at the current
-  // zoom BUCKET's resolution and CSS-downscaled the rest of the way. With no transform
-  // scaling the canvas, the WebView (software-compositing here, GPU stays idle) never
-  // caches a per-scale raster tile-set in system RAM — the multi-GB zoom-spam blowup.
-  //
-  // Why buckets instead of the exact zoom: re-rendering on every 0.1 ladder step costs
-  // a full band re-render + IPC per step and mints a new cache key each time. Rounding
-  // the RENDER resolution UP to the next 0.5 bucket means steps inside a bucket re-render
-  // NOTHING (the canvas just CSS-resizes its unchanged backing — no clear, no decode,
-  // no flicker) and the whole 0.25–3.0 range uses at most 6 distinct scales, so the LRU
-  // holds several zoom levels of the visible band and revisits are instant. Rounding up
-  // guarantees downscale-only display: never blurry, at worst ~2× transient pixels.
-  // The Rust worker clamps the longest raster edge (MAX_RENDER_DIM) as the upper guard.
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const renderZoomBucket = Math.min(3, Math.max(0.5, Math.ceil(zoom * 2) / 2));
-  const centerRenderScale = 1.5 * dpr * renderZoomBucket;
-  const centerThumbnails = usePageThumbnails(viewerFile?.path ?? null, pageCount, centerRenderScale, visiblePageNums);
+  // Device pixel ratio, tracked so moving the window to a monitor with a
+  // different scale factor re-renders tiles at the new exact resolution.
+  const [dpr, setDpr] = useState(() => window.devicePixelRatio || 1);
+  useEffect(() => {
+    const mq = window.matchMedia(`(resolution: ${dpr}dppx)`);
+    const onChange = () => setDpr(window.devicePixelRatio || 1);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, [dpr]);
 
   // Anchor of the zoom gesture in content coords + its offset inside the viewport.
   // Captured at gesture start (wheel: cursor; pinch: midpoint); consumed by the commit
   // layout effect so the exact content point under the cursor/fingers stays put.
   const zoomAnchorRef = useRef<{ cx: number; cy: number; ox: number; oy: number } | null>(null);
 
-  // On a committed zoom/aspect change: clear the gesture preview transform and re-anchor
+  // On a committed zoom/layout change: clear the gesture preview transform and re-anchor
   // scroll so the gesture's anchor point (cursor / pinch midpoint, falling back to the
   // viewport centre for keyboard/toolbar zoom) stays on the same content — matching the
   // preview's transform-origin, so there is no jump at the preview→commit handoff.
   // useLayoutEffect so both happen BEFORE the browser paints the new layout — otherwise
   // the new (larger) layout would paint one frame with the stale preview transform = flash.
-  // Vertical positions scale by newSlotH/oldSlotH (slots are uniform); horizontal page
-  // coords scale by the raw zoom ratio about the SIDE_PAD edge (the browser clamps when
-  // there is no horizontal overflow).
+  // Vertical: the anchor keeps its relative position inside the same slot (anchorY);
+  // horizontal page coords scale by the raw zoom ratio about the SIDE_PAD edge (the
+  // browser clamps when there is no horizontal overflow).
   const prevZoomRef = useRef(zoom);
-  const prevAspectRef = useRef(docAspectRatio);
+  const prevLayoutRef = useRef(layout);
   const prevContainerWidthRef = useRef(containerWidth);
   useLayoutEffect(() => {
-    if (prevZoomRef.current === zoom && prevAspectRef.current === docAspectRatio && prevContainerWidthRef.current === containerWidth) return;
+    if (prevLayoutRef.current === layout && prevContainerWidthRef.current === containerWidth) return;
     const prevZoom = prevZoomRef.current;
-    const prevAspect = prevAspectRef.current;
+    const prevLayout = prevLayoutRef.current;
     prevZoomRef.current = zoom;
-    prevAspectRef.current = docAspectRatio;
+    prevLayoutRef.current = layout;
     prevContainerWidthRef.current = containerWidth;
     // Clear the transient preview transform now that the real layout is at this zoom.
     if (contentWrapperRef.current) contentWrapperRef.current.style.transform = "";
     const container = scrollContainerRef.current;
     if (!container) return;
-    const oldSlotH = prevZoom * 768 * prevAspect + SLOT_MARGIN;
-    const newSlotH = zoom * 768 * docAspectRatio + SLOT_MARGIN;
-    if (oldSlotH <= 0) return;
-    const ratioV = newSlotH / oldSlotH;
     const ratioH = prevZoom > 0 ? zoom / prevZoom : 1;
     const half = container.clientHeight / 2;
     const anchor = zoomAnchorRef.current ?? {
@@ -473,33 +448,28 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
       oy: half,
     };
     zoomAnchorRef.current = null;
-    const newSt = Math.max(0, TOP_PAD + (anchor.cy - TOP_PAD) * ratioV - anchor.oy);
+    const newSt = Math.max(0, anchorY(prevLayout, layout, anchor.cy) - anchor.oy);
     const newSl = Math.max(0, SIDE_PAD + (anchor.cx - SIDE_PAD) * ratioH - anchor.ox);
     suppressScrollRef.current = true;
     container.scrollTop = newSt;
     container.scrollLeft = newSl;
     setCenterScrollTop(newSt);
+    setCenterScrollLeft(newSl);
     requestAnimationFrame(() => suppressScrollRef.current = false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [zoom, docAspectRatio, containerWidth]);
+  }, [layout, containerWidth]);
 
   useEffect(() => {
     if (!viewerFile) navigate("/");
   }, [viewerFile]);
 
-  // Fetch aspect ratio of the first page via MuPDF (Rust) — no WebView parse spike.
+  // Page sizes (every page, true size) + cache-busting version via MuPDF (Rust).
   useEffect(() => {
     if (!viewerFile?.path) return;
     let cancelled = false;
-    async function fetchAspectRatio() {
-      try {
-        const ratio = await invoke<number>("get_page_aspect_ratio", { path: viewerFile!.path });
-        if (!cancelled && ratio > 0) setDocAspectRatio(ratio);
-      } catch {
-        // ignore
-      }
-    }
-    fetchAspectRatio();
+    docOpen(viewerFile.path)
+      .then((info) => { if (!cancelled) setDocInfo(info); })
+      .catch(() => {});
     return () => { cancelled = true; };
   }, [viewerFile?.path]);
 
@@ -544,16 +514,6 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
     loadPageCount();
     return () => { cancelled = true; };
   }, [viewerFile?.path]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Synchronise currently active document path with the Rust backend for instant thread cancellation
-  useEffect(() => {
-    if (!viewerFile?.path) return;
-    const path = viewerFile.path;
-    setActiveDocument(path).catch(() => {});
-    return () => {
-      setActiveDocument(null).catch(() => {});
-    };
-  }, [viewerFile?.path]);
 
   useEffect(() => {
     if (viewerFile && !isViewerDirty) {
@@ -620,7 +580,7 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
       if (previewZoom == null) return;
       const container = scrollContainerRef.current;
       const cw = container ? container.clientWidth : window.innerWidth;
-      const fitZoom = (cw - 32) / 768;
+      const fitZoom = fitWidthZoom(slotSizesRef.current, cw);
       // Snap on commit (fit-width magnet exempt so it stays exactly landable). The
       // layout effect then clears the transform + re-anchors, pre-paint.
       const committed = Math.abs(previewZoom - fitZoom) < 1e-6 ? previewZoom : snapZoom(previewZoom);
@@ -636,8 +596,8 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
       if (delta === 0) return;
       const container = scrollContainerRef.current;
       const cw = container ? container.clientWidth : window.innerWidth;
-      // fitZoom = zoom at which page exactly fills container (accounting for 32px horizontal padding)
-      const fitZoom = (cw - 32) / 768;
+      // fitZoom = zoom at which the widest page exactly fills the container
+      const fitZoom = fitWidthZoom(slotSizesRef.current, cw);
       const wasIdle = previewZoom == null;
       const base = previewZoom ?? zoomRef.current;
       // Continuous (un-snapped) so the preview is buttery; snapping happens at commit.
@@ -647,6 +607,8 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
       scheduleCommit();
     }
     function onWheel(e: WheelEvent) {
+      // Hidden tabs stay mounted; only the visible one reacts to the wheel.
+      if (!isActiveRef.current) return;
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
         accumDelta += e.deltaY;
@@ -709,15 +671,18 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
   }, []);
 
   // Auto-fit zoom on small screens so the PDF isn't wider than the viewport
+  // (needs the page sizes, so it runs once they arrive).
   useEffect(() => {
-    if (window.innerWidth >= 640) return;
-    const fitZoom = (window.innerWidth - 32) / 768;
-    setZoom(Math.max(0.25, Math.min(1.0, fitZoom)));
-  }, []);
+    if (window.innerWidth >= 640 || !docInfo) return;
+    setZoom(Math.max(0.25, Math.min(1.0, fitWidthZoom(slotSizes, window.innerWidth))));
+  // Run once per document load, not on every zoom-driven slotSizes identity.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docInfo]);
 
   // Keyboard shortcuts
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if (!isActive) return; // hidden tabs ignore the keyboard
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
 
@@ -823,9 +788,26 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [isViewerDirty, confirmingBack, findOpen, currentPage, pageCount, viewerFile, undoViewerFile, originalViewerPath, zoom, activeTool, undoStroke, readingMode, showPresentation]);
+  }, [isActive, isViewerDirty, confirmingBack, findOpen, currentPage, pageCount, viewerFile, undoViewerFile, originalViewerPath, zoom, activeTool, undoStroke, readingMode, showPresentation]);
+
+  // Hidden tab: free its tiles (previews stay); they re-render on return.
+  useEffect(() => {
+    if (!isActive && viewerFile?.path) tileCache.dropPrefix(tileKeyPrefix(viewerFile.path));
+  }, [isActive, viewerFile?.path]);
 
   if (!viewerFile) return null;
+
+  // Visible part of slot i's page box, in that box's CSS px.
+  const pageVisibleCss = (i: number) => {
+    const boxTop = (layout.tops[i] ?? 0) + PAGE_GAP / 2;
+    const boxLeft = Math.max(SIDE_PAD, (containerWidth - (layout.widths[i] ?? 0)) / 2);
+    return {
+      x0: centerScrollLeft - boxLeft,
+      y0: centerScrollTop - boxTop,
+      x1: centerScrollLeft - boxLeft + containerWidth,
+      y1: centerScrollTop - boxTop + containerH,
+    };
+  };
 
   const displayName = isViewerDirty && originalViewerPath
     ? originalViewerPath.split(/[\\/]/).pop() ?? originalViewerPath
@@ -840,7 +822,6 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
   }
 
   function doBack() {
-    setActiveDocument(null).catch(() => {});
     setViewerFile(null);
     setUndoViewerFile(null);
     setOriginalViewerPath(null);
@@ -854,6 +835,7 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
     if (suppressScrollRef.current) return;
     const st = container.scrollTop;
     setCenterScrollTop(st);
+    setCenterScrollLeft(container.scrollLeft);
 
     // Fling detection: distance covered in the last ~150ms exceeding a viewport-height
     // means the user is flying past pages, not reading — strip the overlay layers.
@@ -876,7 +858,7 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
     }, 180);
 
     // Derive current page from scroll position — O(1), no DOM queries
-    const rawIdx = Math.max(0, Math.min(pageSlots.length - 1, Math.round((st - TOP_PAD) / slotH)));
+    const rawIdx = slotAt(layout, st + (containerHeight || 600) / 3);
     for (let i = rawIdx; i >= 0; i--) {
       const slot = pageSlots[i];
       if (slot?.type === 'pdf') { setCurrentPage(slot.pdfPage); break; }
@@ -888,7 +870,7 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
     const container = scrollContainerRef.current;
     if (!container) return;
     const idx = pageToSlotIndex.get(page) ?? 0;
-    const newSt = TOP_PAD + idx * slotH;
+    const newSt = layout.tops[idx] ?? 0;
     suppressScrollRef.current = true;
     container.scrollTop = newSt;
     setCenterScrollTop(newSt);
@@ -2009,7 +1991,7 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
             >
               {[1, 0.75, 0.55].map((w, i) => (
                 <div key={i} style={{
-                  width: `min(${Math.round(768 * w)}px, calc(100% - 64px))`,
+                  width: `min(${Math.round((docInfo?.pages[0]?.w ?? 612) * PT_TO_CSS * w)}px, calc(100% - 64px))`,
                   height: i === 0 ? 520 : i === 1 ? 24 : 16,
                   borderRadius: 4,
                   background: "var(--viewer-elevated)",
@@ -2034,11 +2016,12 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
 
             {pageSlots.slice(mountFirst, mountLast + 1).map((slot, i) => {
               const slotIndex = mountFirst + i;
-              const topPos = TOP_PAD + slotIndex * slotH;
+              const topPos = layout.tops[slotIndex] ?? 0;
+              const slotH = layout.slotHeights[slotIndex] ?? 0;
+              const sizePt = slotSizes[slotIndex] ?? { w: 612, h: 792 };
 
               if (slot.type === 'pdf') {
                 const page = slot.pdfPage;
-                const pageW = Math.round(zoom * 768);
                 const isSelected = activeTool === "remove" && selectedPages.has(page);
                 const shouldRenderTextLayer = true; // all visible pages (virtual scroll limits active pages)
                 return (
@@ -2046,46 +2029,37 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                     <div
                       style={{
                         position: "absolute",
-                        top: topPos + SLOT_MARGIN / 2,
+                        top: topPos + PAGE_GAP / 2,
                         left: 0,
                         right: 0,
                         paddingLeft: SIDE_PAD,
                         paddingRight: SIDE_PAD,
                       }}
                     >
-                      {/* Render-at-zoom page box: laid out at the zoomed pixel WIDTH with NO
-                          transform/zoom scaling. The page canvas is rendered at this zoom's
-                          resolution (see centerRenderScale) and shown ~1:1, so the software
-                          compositor holds one raster per visible page and never a per-scale pyramid.
-
-                          Height is deliberately NOT set: the canvas's own (true, per-page) aspect
-                          drives it. The slot math uses the document-nominal aspect, but a page whose
-                          real aspect differs would misalign every %-positioned overlay (text/links/
-                          comments/draw) if the box were forced to the nominal height — the box must
-                          shrink-wrap the canvas so overlays with inset:0 align by construction. */}
+                      {/* Page box at the page's true size × zoom. PageView shows a lossless
+                          preview immediately and lays exact-device-pixel tiles over it; tiles are
+                          only requested for the active tab, once scrolling settles, within the
+                          ±MAX_LOADED_RADIUS band. Overlays keep using inset:0 of this box. */}
                       <div
-                        className="relative"
                         data-page-index={page}
-                        style={{
-                          width: `${pageW}px`,
-                          margin: "0 auto",
-                          cursor: activeTool === "remove" ? "pointer" : undefined,
-                        }}
+                        style={{ width: `${layout.widths[slotIndex]}px`, margin: "0 auto" }}
                         onClick={activeTool === "remove" ? () => handlePageToggle(page) : undefined}
                       >
-                        {/* src is withheld during a fling: a page mounting mid-fling with a
-                            cached src would decode its JPEG into a full RGBA ImageBitmap +
-                            canvas backing (tens of MB each at high zoom) just to fly off
-                            screen — ~50 such decodes piled multi-GB of transient native RAM.
-                            Withholding src defers ALL decode to settle (≤ the ±3 band). Pages
-                            already showing a frame keep it (PageCanvas never clears on
-                            src→undefined), so nothing visible blanks. */}
-                        <PageCanvas
-                          src={scrollSettled ? centerThumbnails[page] : undefined}
-                          aspect={docAspectRatio}
-                          pageLabel={page}
-                          isSelected={isSelected}
-                        />
+                      <PageView
+                        path={viewerFile.path}
+                        version={docInfo?.version ?? ""}
+                        page={page}
+                        sizePt={sizePt}
+                        zoom={zoom}
+                        dpr={dpr}
+                        visibleCss={
+                          isActive && scrollSettled && Math.abs(page - currentPage) <= MAX_LOADED_RADIUS
+                            ? pageVisibleCss(slotIndex)
+                            : null
+                        }
+                        className="rounded"
+                        style={{ cursor: activeTool === "remove" ? "pointer" : undefined }}
+                      >
                         {isSelected && (
                           <div className="absolute inset-0 rounded flex items-center justify-center pointer-events-none"
                             style={{ background: "rgba(239, 68, 68, 0.25)" }}>
@@ -2161,6 +2135,7 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                           onRemoveRegion={(idx) => setRedactRegions(prev => prev.filter((_, i) => i !== idx))}
                         />
                         </>}
+                      </PageView>
                       </div>
                     </div>
                     {/* Add-page bar after this page (draw mode) */}
@@ -2174,15 +2149,17 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
               } else {
                 // Virtual (blank/ruled/grid/dotted) page
                 const vp = slot.vp;
-                const pageW = Math.round(zoom * 768);
-                const pageH = Math.round(pageW * docAspectRatio);
-                const baseH = Math.round(BASE_PAGE_W * docAspectRatio);
+                const pageW = layout.widths[slotIndex] ?? 0;
+                const pageH = layout.heights[slotIndex] ?? 0;
+                // Unzoomed CSS size; the SVG is drawn at this size and scaled by zoom.
+                const baseW = Math.round(sizePt.w * PT_TO_CSS);
+                const baseH = Math.round(sizePt.h * PT_TO_CSS);
                 return (
                   <div
                     key={slot.slotId}
                     style={{
                       position: "absolute",
-                      top: topPos + SLOT_MARGIN / 2,
+                      top: topPos + PAGE_GAP / 2,
                       left: 0,
                       right: 0,
                       paddingLeft: SIDE_PAD,
@@ -2196,13 +2173,13 @@ export default function Viewer({ tabPath }: { tabPath: string }) {
                     <div
                       className="relative rounded shadow-2xl overflow-hidden"
                       style={{
-                        width: `${BASE_PAGE_W}px`,
+                        width: `${baseW}px`,
                         height: `${baseH}px`,
                         transform: `scale(${zoom})`,
                         transformOrigin: "top left",
                       }}
                     >
-                      <VirtualPageBackground template={vp.template} width={BASE_PAGE_W} height={baseH} />
+                      <VirtualPageBackground template={vp.template} width={baseW} height={baseH} />
                       <DrawingCanvas
                         pageSlotId={slot.slotId}
                         docPath={viewerFile.path}
