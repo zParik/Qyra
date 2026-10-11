@@ -38,7 +38,10 @@ pub fn recompress_stream(stream: PdfStream, zlib_level: u32) -> Result<PdfStream
     let raw_decoded = match &filter {
         None => stream.raw_bytes.clone(),
         Some(PdfObject::Name(n)) if n == b"FlateDecode" || n == b"Fl" => {
-            stream.decode()?
+            match stream.decode() {
+                Ok(d) => d,
+                Err(_) => return Ok(stream), // undecodable: keep it byte-for-byte
+            }
         }
         Some(PdfObject::Array(arr)) if arr.len() == 1 => {
             let is_flat = arr
@@ -49,7 +52,10 @@ pub fn recompress_stream(stream: PdfStream, zlib_level: u32) -> Result<PdfStream
             if !is_flat {
                 return Ok(stream); // can't help
             }
-            stream.decode()?
+            match stream.decode() {
+                Ok(d) => d,
+                Err(_) => return Ok(stream),
+            }
         }
         _ => return Ok(stream), // DCT, JBIG2, LZW, etc — leave alone
     };
@@ -114,8 +120,6 @@ pub fn recompress_image(
     if is_dct && matches!(plan.cs, ResolvedColorSpace::Cmyk) {
         return Ok(stream);
     }
-
-    let original_len = stream.raw_bytes.len();
 
     // ---- decode to pixels -------------------------------------------------
     let mut img: DynamicImage = if is_dct {
@@ -356,5 +360,17 @@ mod tests {
         // Solid colour JPEG of 16x16 is tiny — must have shrunk + resized.
         assert_eq!(r.dict.get(b"Width").and_then(|v| v.as_integer()), Some(16));
         assert_eq!(r.dict.get(b"Height").and_then(|v| v.as_integer()), Some(16));
+    }
+
+    #[test]
+    fn recompress_stream_keeps_original_when_decode_fails() {
+        // Undecodable Flate data must be passed through untouched rather than
+        // aborting the whole compression run.
+        let mut dict = PdfDict::new();
+        dict.set(b"Filter", PdfObject::Name(b"FlateDecode".to_vec()));
+        let garbage: Vec<u8> = (0..4096u32).map(|i| (i * 7 % 251) as u8).collect();
+        let stream = PdfStream { dict, raw_bytes: garbage.clone() };
+        let r = recompress_stream(stream, 6).unwrap();
+        assert_eq!(r.raw_bytes, garbage);
     }
 }
