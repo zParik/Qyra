@@ -108,13 +108,12 @@ fn encode_png_produces_a_png() {
     assert_eq!(&png[0..8], b"\x89PNG\r\n\x1a\n");
 }
 
-use qyra_lib::commands::render::ActiveDocument;
 use qyra_lib::commands::render_worker::RenderWorker;
 use qyra_lib::render::scheduler::Priority;
 use qyra_lib::render::service::{RenderService, TileReq};
 
 fn service() -> RenderService {
-    RenderService::new(RenderWorker::new(ActiveDocument::new()), 2)
+    RenderService::new(RenderWorker::new(), 2)
 }
 
 fn req(id: u64, path: &str, tx: u32, ty: u32) -> TileReq {

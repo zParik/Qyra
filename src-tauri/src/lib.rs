@@ -213,29 +213,6 @@ pub fn init_ndk_context() -> Result<(), String> {
     result
 }
 
-fn cleanup_stale_sessions(current_pid: u32) {
-    let temp = std::env::temp_dir();
-    let now = std::time::SystemTime::now();
-    let Ok(entries) = std::fs::read_dir(&temp) else { return };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        if !name_str.starts_with("qyra-session-") { continue; }
-        if let Some(pid_str) = name_str.strip_prefix("qyra-session-") {
-            if pid_str.parse::<u32>().ok() == Some(current_pid) { continue; }
-        }
-        if let Ok(meta) = entry.metadata() {
-            if let Ok(modified) = meta.modified() {
-                if let Ok(age) = now.duration_since(modified) {
-                    if age.as_secs() > 3600 {
-                        let _ = std::fs::remove_dir_all(entry.path());
-                    }
-                }
-            }
-        }
-    }
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // MuPDF rendering at high scales (3.0+) on large pages can exceed the
@@ -259,12 +236,10 @@ pub fn run() {
         .num_threads(rayon_threads)
         .build_global();
 
-    // The render worker shares this exact ActiveDocument handle (Arc inside), so
-    // set_active_document still cancels in-flight renders for a doc the user
-    // navigated away from. Desktop only — Android renders via JNI PdfRenderer.
-    let active_document = commands::render::ActiveDocument::new();
+    // The MuPDF doc thread: owns open documents, serves page sizes, display
+    // lists, text and links. Desktop only — Android renders via JNI PdfRenderer.
     #[cfg(not(target_os = "android"))]
-    let render_worker = commands::render_worker::RenderWorker::new(active_document.clone());
+    let render_worker = commands::render_worker::RenderWorker::new();
     // Publish a global handle so plain command fns (get_page_count, get_outline)
     // can reuse the same cached documents without a tauri::State parameter.
     #[cfg(not(target_os = "android"))]
@@ -277,8 +252,6 @@ pub fn run() {
     );
 
     let builder = tauri::Builder::default()
-        .manage(commands::cache::SessionCacheState::new())
-        .manage(active_document)
         .manage(commands::crash::CrashLogDir::new())
         .setup(|app| {
             #[cfg(not(target_os = "android"))]
@@ -298,7 +271,6 @@ pub fn run() {
                 }
             }
 
-            cleanup_stale_sessions(std::process::id());
             let conn = commands::library::open_db(app.handle())
                 .unwrap_or_else(|e| {
                     eprintln!("[qyra] library db failed ({e}), using in-memory fallback");
@@ -306,12 +278,13 @@ pub fn run() {
                         .expect("in-memory sqlite always works")
                 });
             app.manage(commands::library::LibraryDb(Mutex::new(conn)));
-            let thumb_store = commands::thumb_store::ThumbStore::new(app.handle())
-                .expect("failed to initialize thumb store");
-            app.manage(thumb_store);
             // Lossless page thumbnails for the `qyra` URI scheme (bounded LRU).
             #[cfg(not(target_os = "android"))]
             {
+                // The old data-URL thumbnail store grew without bound; free it.
+                if let Ok(cache) = app.path().app_cache_dir() {
+                    let _ = std::fs::remove_dir_all(cache.join("thumbs"));
+                }
                 let dir = app
                     .path()
                     .app_cache_dir()
@@ -408,14 +381,8 @@ pub fn run() {
             rotate::rotate_pages,
             remove::remove_pages,
             reorder::reorder_pages,
-            commands::render::read_pdf_bytes,
-            commands::render::render_page,
-            commands::render::render_page_uncached,
-            commands::render::set_active_document,
-            commands::render::get_page_aspect_ratio,
             commands::render::get_text_page,
             commands::render::search_pdf,
-            commands::render::render_thumbnail,
             commands::render::pdf_to_images,
             commands::render::get_page_links,
             commands::render::doc_open,
@@ -455,18 +422,8 @@ pub fn run() {
             library::get_entry,
             library::get_setting,
             library::set_setting,
-            thumb_store::thumb_get,
-            thumb_store::thumb_put,
-            thumb_store::thumb_evict,
             page_count::get_page_count,
             page_count::get_file_size,
-            cache::cache_put,
-            cache::cache_get,
-            cache::cache_has,
-            cache::cache_remove,
-            cache::cache_evict_prefix,
-            cache::cache_stats,
-            cache::cache_clear,
             disk::get_disk_space,
             ocr::make_searchable,
             watermark::add_watermark,
