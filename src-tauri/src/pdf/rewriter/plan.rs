@@ -105,9 +105,10 @@ pub fn build_plans(
 
         let filter = filter_first_name(&dict);
         let is_dct = matches!(filter.as_deref(), Some(b"DCTDecode") | Some(b"DCT"));
-        // We can decode DCT directly via the JPEG decoder even if the colour
-        // space didn't resolve; Flate images need a resolved space.
-        if !is_dct && !cs.is_supported() {
+        // Every image needs a resolved colour space: Flate samples can't be
+        // unpacked without one, and a JPEG in Separation/DeviceN/Lab would be
+        // mislabelled DeviceRGB/Gray on re-encode (inverted or shifted colours).
+        if !cs.is_supported() {
             continue;
         }
 
