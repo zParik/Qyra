@@ -1,7 +1,7 @@
-//! Object deduplication: collapse byte-identical objects into one and remap
-//! every reference to the survivor. Byte-identical `PdfObject`s are fully
-//! interchangeable (same type, content, and outgoing references), so merging
-//! is always safe — repeated images, fonts, and resources are the big win.
+//! Stream deduplication: collapse byte-identical stream objects into one and
+//! remap every reference to the survivor. Identical streams are interchangeable
+//! (same data and outgoing references) — repeated images and fonts are the big
+//! win. Non-stream objects are never merged; see `dedup`.
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -67,12 +67,14 @@ pub fn dedup(
     let mut keep = vec![true; objects.len()];
 
     for i in 0..objects.len() {
-        // Skip serialization for large stream objects — they are almost never
-        // duplicates and serializing them is very expensive on object-heavy PDFs.
-        if let PdfObject::Stream(ref s) = objects[i].1 {
-            if s.raw_bytes.len() > 65_536 {
-                continue;
-            }
+        // Only streams (images, fonts, content) are merged. Non-stream objects
+        // can carry identity even when byte-identical — two blank pages, two
+        // identical link annotations, two OCG layers — and merging them breaks
+        // /Kids, /Annots and optional content. Large streams are skipped too:
+        // they are almost never duplicates and serializing them is expensive.
+        match &objects[i].1 {
+            PdfObject::Stream(s) if s.raw_bytes.len() <= 65_536 => {}
+            _ => continue,
         }
         let bytes = serialize(&objects[i].1);
         let key = hash_bytes(&bytes);
@@ -111,7 +113,7 @@ pub fn dedup(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pdf::types::PdfDict;
+    use crate::pdf::types::{PdfDict, PdfStream};
 
     fn dict_with(parent: u32) -> PdfObject {
         let mut d = PdfDict::new();
@@ -120,18 +122,24 @@ mod tests {
         PdfObject::Dictionary(d)
     }
 
+    fn image_stream() -> PdfObject {
+        let mut d = PdfDict::new();
+        d.set(b"Subtype", PdfObject::Name(b"Image".to_vec()));
+        PdfObject::Stream(PdfStream { dict: d, raw_bytes: vec![1, 2, 3, 4] })
+    }
+
     #[test]
-    fn merges_identical_objects_and_remaps() {
-        // Objects 2 and 3 are byte-identical; references to 3 must become 2.
+    fn merges_identical_streams_and_remaps() {
+        // Objects 2 and 3 are byte-identical streams; references to 3 must become 2.
         let mut container = PdfDict::new();
         container.set(
-            b"Kids",
+            b"XObjects",
             PdfObject::Array(vec![PdfObject::Reference((2, 0)), PdfObject::Reference((3, 0))]),
         );
         let objects = vec![
             ((1u32, 0u16), PdfObject::Dictionary(container)),
-            ((2u32, 0u16), dict_with(1)),
-            ((3u32, 0u16), dict_with(1)), // identical to 2
+            ((2u32, 0u16), image_stream()),
+            ((3u32, 0u16), image_stream()), // identical to 2
         ];
 
         let (out, remap) = dedup(objects);
@@ -139,10 +147,22 @@ mod tests {
         assert_eq!(out.len(), 2, "object 3 merged into object 2");
         assert_eq!(remap.get(&(3, 0)), Some(&(2, 0)));
 
-        // The container's Kids array now references 2 twice.
-        let kids = out[0].1.as_dict().unwrap().get(b"Kids").unwrap().as_array().unwrap();
-        assert_eq!(kids[0].as_reference(), Some((2, 0)));
-        assert_eq!(kids[1].as_reference(), Some((2, 0)));
+        let refs = out[0].1.as_dict().unwrap().get(b"XObjects").unwrap().as_array().unwrap();
+        assert_eq!(refs[0].as_reference(), Some((2, 0)));
+        assert_eq!(refs[1].as_reference(), Some((2, 0)));
+    }
+
+    #[test]
+    fn keeps_identical_dicts_separate() {
+        // Two identical annotation (or page, or OCG) dicts are still two
+        // distinct things; merging them breaks /Annots, /Kids and layers.
+        let objects = vec![
+            ((2u32, 0u16), dict_with(1)),
+            ((3u32, 0u16), dict_with(1)),
+        ];
+        let (out, remap) = dedup(objects);
+        assert_eq!(out.len(), 2);
+        assert!(remap.is_empty());
     }
 
     #[test]
