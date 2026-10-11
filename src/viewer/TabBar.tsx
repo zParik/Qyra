@@ -12,10 +12,9 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useAppStore } from "../store/useAppStore";
 import { UI } from "../lib/tokens";
 import { useIsPhone } from "../hooks/useMediaQuery";
-import { renderPage } from "../hooks/usePageThumbnails";
+import { thumbUrl } from "../render/renderClient";
 
 const HOVER_DELAY_MS = 450;
-const PREVIEW_SCALE = 0.35;
 
 function TabPill({
   id, label, active, dirty, isPdfPath, onActivate, onClose, onContextMenu, isPhone,
@@ -60,14 +59,9 @@ function TabPill({
       const rect = pillRef.current?.getBoundingClientRect();
       if (!rect) return;
       setPreviewPos({ left: rect.left, top: rect.bottom + 6 });
-      try {
-        const src = await renderPage(id, 1, PREVIEW_SCALE);
-        // Race guard — if user left during render the timer was nulled.
-        if (timerRef.current === null && pillRef.current?.matches(":hover") !== true) return;
-        setPreviewSrc(src);
-      } catch {
-        setPreviewFailed(true);
-      }
+      // Race guard — if the user left before the delay elapsed the timer was nulled.
+      if (timerRef.current === null && pillRef.current?.matches(":hover") !== true) return;
+      setPreviewSrc(thumbUrl(id, 1, 256));
     }, HOVER_DELAY_MS);
   }
 
@@ -162,6 +156,7 @@ function TabPill({
               alt=""
               style={{ display: "block", width: 200, height: "auto", borderRadius: 3 }}
               draggable={false}
+              onError={() => { setPreviewSrc(null); setPreviewFailed(true); }}
             />
           ) : (
             <div style={{ width: 200, height: 120, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--fg2)" }}>

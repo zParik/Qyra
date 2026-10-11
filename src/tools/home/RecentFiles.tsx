@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { UI, MONO } from "../../lib/tokens";
 import { IconProps, IcStar, IcArchive, IcGrid, IcList, IcFile, IcChevron } from "../../components/Icons";
 import type { LibraryEntry, RecentFile } from "../../lib/schemas";
-import { renderPage } from "../../hooks/usePageThumbnails";
+import { thumbUrl } from "../../render/renderClient";
 import { formatRelativeTime, fileSwatch } from "./types";
 
 export function SectionHeader({ title, subtitle, right }: {
@@ -81,17 +81,10 @@ export function RecentCard({ file, onOpen, starred, archived, onToggleStar, onTo
   isMobile: boolean;
 }) {
   const [hover, setHover] = useState(false);
-  const [thumb, setThumb] = useState<string | null>(null);
+  const [thumbFailed, setThumbFailed] = useState(false);
+  const thumb = thumbFailed ? null : thumbUrl(file.path, 1, 256);
   const swatch = fileSwatch(file.name);
   const ext = file.name.split(".").pop()?.toUpperCase() ?? "PDF";
-
-  useEffect(() => {
-    let cancelled = false;
-    renderPage(file.path, 1, 0.3).then((dataUrl) => {
-      if (!cancelled) setThumb(dataUrl);
-    }).catch(() => {});
-    return () => { cancelled = true; };
-  }, [file.path]);
 
   const showActions = isMobile || hover;
 
@@ -110,7 +103,7 @@ export function RecentCard({ file, onOpen, starred, archived, onToggleStar, onTo
     >
       <div style={{ position: "relative", aspectRatio: "0.77 / 1", width: "100%", borderRadius: 3, overflow: "hidden", border: "1px solid var(--line)", background: "var(--bg2)" }}>
         {thumb ? (
-          <img src={thumb} className="absolute inset-0 w-full h-full object-cover" alt="" />
+          <img src={thumb} className="absolute inset-0 w-full h-full object-cover" alt="" loading="lazy" onError={() => setThumbFailed(true)} />
         ) : (
           <>
             <div className="absolute inset-0" style={{ background: "repeating-linear-gradient(180deg, transparent 0 8px, var(--line2) 8px 9px)" }} />

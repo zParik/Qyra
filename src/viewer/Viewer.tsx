@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAppStore } from "../store/useAppStore";
 import { useNotesStore, PageTemplate, VirtualPage } from "../store/useNotesStore";
 
-import { usePageThumbnails, evictPathFromThumbnailCache, freePathMemoryThumbnails, seedThumbnailsForEdit } from "../hooks/usePageThumbnails";
+import { evictPathFromThumbnailCache, freePathMemoryThumbnails, seedThumbnailsForEdit } from "../hooks/usePageThumbnails";
 import { PageStrip } from "./PageStrip";
 import { ScrollPageIndicator } from "./ScrollPageIndicator";
 import { ZoomFab } from "./ZoomFab";
@@ -392,15 +392,6 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
   const mountFirst = Math.max(0, Math.min(firstSlot, curSlotIdx - KEEP_RADIUS));
   const mountLast = Math.min(pageSlots.length - 1, Math.max(lastSlot, curSlotIdx + KEEP_RADIUS));
 
-  const [stripVisibleRange, setStripVisibleRange] = useState<[number, number]>([1, 5]);
-  const stripVisibleNums = useMemo(() => {
-    const s = new Set<number>();
-    if (pageCount > 0) s.add(1); // always render page 1 regardless of scroll position
-    for (let p = stripVisibleRange[0]; p <= stripVisibleRange[1]; p++) s.add(p);
-    return s;
-  }, [stripVisibleRange, pageCount]);
-
-  const stripThumbnails = usePageThumbnails(viewerFile?.path ?? null, pageCount, 0.3, stripVisibleNums);
   // Device pixel ratio, tracked so moving the window to a monitor with a
   // different scale factor re-renders tiles at the new exact resolution.
   const [dpr, setDpr] = useState(() => window.devicePixelRatio || 1);
@@ -1823,8 +1814,9 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
           }}
         >
           <PageStrip
+            path={viewerFile.path}
+            version={docInfo?.version}
             pageCount={pageCount}
-            thumbnails={stripThumbnails}
             currentPage={currentPage}
             onPageSelect={(page) => {
               scrollToPage(page);
@@ -1835,7 +1827,6 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
             onPageToggle={handlePageToggle}
             splitAfter={activeTool === "split" ? splitAfter : undefined}
             onSplitAfterChange={activeTool === "split" ? setSplitAfter : undefined}
-            onVisibleRangeChange={setStripVisibleRange}
             onReorder={async (fromPage, dropBeforePage) => {
               if (!viewerFile) return;
               const pages = Array.from({ length: pageCount }, (_, i) => i + 1);

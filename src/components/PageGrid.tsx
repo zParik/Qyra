@@ -9,7 +9,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { LoadedFile } from "../store/useAppStore";
-import { useThumbnails } from "../hooks/useThumbnails";
+import { thumbUrl } from "../render/renderClient";
 
 import { UI, MONO } from "../lib/tokens";
 
@@ -141,10 +141,9 @@ export function PageGrid({ files, onRemove, onReorder, selectable, selected, onT
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
-  // Stable across renders unless `files` itself changes — feeds both the
-  // thumbnail hook and SortableContext without allocating a new array each render.
+  // Stable across renders unless `files` itself changes — feeds SortableContext
+  // without allocating a new array each render.
   const filePaths = useMemo(() => files.map((f) => f.path), [files]);
-  const thumbnails = useThumbnails(filePaths);
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
@@ -168,7 +167,7 @@ export function PageGrid({ files, onRemove, onReorder, selectable, selected, onT
             <FileCard
               key={file.path}
               file={file}
-              thumbnail={thumbnails[file.path]}
+              thumbnail={thumbUrl(file.path, 1, 256)}
               onRemove={onRemove}
               selectable={selectable}
               selected={selected?.has(file.path)}

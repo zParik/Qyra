@@ -1,9 +1,13 @@
 import { Fragment, useRef, useEffect, useCallback, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { thumbUrl } from "../render/renderClient";
 
 interface PageStripProps {
+  /** PDF whose pages are shown; thumbnails load from the qyra:// scheme. */
+  path: string;
+  /** Document version (mtime) so edited files never show stale thumbnails. */
+  version?: string;
   pageCount: number;
-  thumbnails: Record<number, string>;
   currentPage: number;
   onPageSelect: (page: number) => void;
   selectionMode?: boolean;
@@ -11,7 +15,6 @@ interface PageStripProps {
   onPageToggle?: (page: number) => void;
   splitAfter?: number;
   onSplitAfterChange?: (page: number) => void;
-  onVisibleRangeChange?: (range: [number, number]) => void;
   onReorder?: (fromPage: number, dropBeforePage: number) => void;
 }
 
@@ -19,8 +22,9 @@ const SLOT_HEIGHT = 120;
 const OVERSCAN = Math.ceil(400 / SLOT_HEIGHT);
 
 export function PageStrip({
+  path,
+  version,
   pageCount,
-  thumbnails,
   currentPage,
   onPageSelect,
   selectionMode = false,
@@ -28,7 +32,6 @@ export function PageStrip({
   onPageToggle,
   splitAfter,
   onSplitAfterChange,
-  onVisibleRangeChange,
   onReorder,
 }: PageStripProps) {
   const isSplitMode = onSplitAfterChange !== undefined;
@@ -45,14 +48,6 @@ export function PageStrip({
   });
 
   const virtualItems = virtualizer.getVirtualItems();
-  const firstVisible = virtualItems.length > 0 ? virtualItems[0]!.index + 1 : 0;
-  const lastVisible = virtualItems.length > 0 ? virtualItems[virtualItems.length - 1]!.index + 1 : 0;
-
-  // Notify parent of visible range so thumbnail hook can prioritize renders
-  useEffect(() => {
-    if (firstVisible === 0 || lastVisible === 0) return;
-    onVisibleRangeChange?.([firstVisible, lastVisible]);
-  }, [firstVisible, lastVisible, onVisibleRangeChange]);
 
   // Auto-scroll active page into view
   useEffect(() => {
@@ -175,24 +170,25 @@ export function PageStrip({
                     className="flex items-center justify-center relative"
                     style={{ background: "var(--viewer-elevated)", height: SLOT_HEIGHT - 28 }}
                   >
-                    {thumbnails[page] ? (
-                      <img
-                        src={thumbnails[page]}
-                        alt={`Page ${page}`}
-                        className="w-full h-full object-contain"
-                      />
-                    ) : (
-                      <svg
-                        className="w-5 h-5"
-                        style={{ color: "var(--viewer-text-muted)" }}
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                          d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                      </svg>
-                    )}
+                    {/* Placeholder icon underneath; the thumbnail covers it once
+                        loaded and hides itself if it fails, revealing the icon. */}
+                    <svg
+                      className="w-5 h-5"
+                      style={{ color: "var(--viewer-text-muted)" }}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                        d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                    </svg>
+                    <img
+                      src={thumbUrl(path, page, 256, version)}
+                      alt={`Page ${page}`}
+                      draggable={false}
+                      className="absolute inset-0 w-full h-full object-contain"
+                      onError={(e) => { e.currentTarget.style.visibility = "hidden"; }}
+                    />
 
                     {isSelected && (
                       <div
