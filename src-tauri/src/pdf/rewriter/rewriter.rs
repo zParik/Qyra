@@ -177,14 +177,19 @@ impl Rewriter {
                             let slice = &data_ref[offset as usize..end];
                             match parse_indirect_object(slice, 0) {
                                 Ok((_, o)) => o,
-                                Err(_) => return (id, Ok(PdfObject::Null)),
+                                Err(e) => return (id, Err(lost(id, e.to_string()))),
                             }
                         }
-                        XrefEntry::Compressed { obj_stream_id, index } => objstm_cache
+                        XrefEntry::Compressed { obj_stream_id, index } => match objstm_cache
                             .get(obj_stream_id)
                             .and_then(|v| v.get(*index as usize))
-                            .map(|(_, o)| o.clone())
-                            .unwrap_or(PdfObject::Null),
+                        {
+                            Some((_, o)) => o.clone(),
+                            // Its object stream failed to parse or decode.
+                            None => {
+                                return (id, Err(lost(id, format!("object stream {obj_stream_id} unreadable"))))
+                            }
+                        },
                         XrefEntry::Free => return (id, Ok(PdfObject::Null)),
                     };
 
@@ -237,11 +242,18 @@ impl Rewriter {
         #[cfg(debug_assertions)]
         eprintln!("[compress] Pass 2b: writing {} objects…", work_total);
 
+        // Objects we could not parse are set aside, not failed on yet: losing
+        // one is only harmless if nothing still references it (checked after GC).
+        let mut lost_ids: HashSet<ObjectId> = HashSet::new();
         let live: Vec<(ObjectId, PdfObject)> = transformed
             .into_iter()
             .filter_map(|(id, r)| match r {
                 Ok(PdfObject::Null) => None,
                 Ok(obj) => Some(Ok((id, obj))),
+                Err(PdfError::MalformedObject { id, .. }) => {
+                    lost_ids.insert(id);
+                    None
+                }
                 Err(e) => Some(Err(e)),
             })
             .collect::<Result<Vec<_>, PdfError>>()?;
@@ -268,6 +280,16 @@ impl Rewriter {
         // Drop objects unreachable from the trailer (orphaned fonts/images/etc.).
         progress_cb(0, 1, "Removing unused objects");
         let live = crate::pdf::rewriter::gc::gc(live, &out_trailer);
+
+        // Never silently drop content: if any unparseable object is still
+        // referenced (a font, an image, a page's contents), refuse to compress.
+        // The page-count validation below cannot notice such a loss.
+        if !lost_ids.is_empty() {
+            let reachable = crate::pdf::rewriter::gc::collect_reachable(&live, &out_trailer);
+            if let Some(&id) = lost_ids.iter().find(|id| reachable.contains(id)) {
+                return Err(lost(id, "referenced object could not be read; refusing to drop it".into()));
+            }
+        }
 
         // Stream the compressed PDF straight to `out_path`. Preferred path:
         // object streams + xref stream, then validate by re-opening the file
@@ -346,6 +368,12 @@ fn write_classic_to(
     w.write_xref_and_trailer(trailer)?;
     w.finish()?;
     Ok(())
+}
+
+/// Marks an object the rewriter could not read. `run` collects these and only
+/// fails if one is still referenced from the output.
+fn lost(id: ObjectId, reason: String) -> PdfError {
+    PdfError::MalformedObject { id, reason }
 }
 
 /// Re-open the written file (mmap) and confirm the page count matches. The
@@ -487,6 +515,38 @@ mod tests {
 
     const CATALOG: &str = "<< /Type /Catalog /Pages 2 0 R >>";
     const PAGES: &str = "<< /Type /Pages /Kids [3 0 R] /Count 1 >>";
+    const BROKEN: &str = "<< /Broken (unterminated >>";
+
+    fn compress(pdf: Vec<u8>) -> Result<u64, PdfError> {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("out.pdf");
+        Rewriter::new(0).run(Bytes::Owned(pdf), &out, |_, _, _| {}, &AtomicBool::new(false))
+    }
+
+    #[test]
+    fn run_fails_when_a_referenced_object_cannot_be_parsed() {
+        // The page's content stream is unparseable. Dropping it would ship a
+        // blank page that still passes the page-count check.
+        let pdf = pdf_with(&[
+            (1, CATALOG),
+            (2, PAGES),
+            (3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>"),
+            (4, BROKEN),
+        ]);
+        assert!(compress(pdf).is_err());
+    }
+
+    #[test]
+    fn run_tolerates_an_unreferenced_unparseable_object() {
+        // Garbage nothing points at is dead weight; losing it is harmless.
+        let pdf = pdf_with(&[
+            (1, CATALOG),
+            (2, PAGES),
+            (3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>"),
+            (4, BROKEN),
+        ]);
+        assert!(compress(pdf).is_ok());
+    }
 
     #[test]
     fn write_validated_rejects_output_that_fails_validation() {
