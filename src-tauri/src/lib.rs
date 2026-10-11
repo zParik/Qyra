@@ -1,6 +1,7 @@
 // `pub` so the integration test crate in `src-tauri/tests/` can drive commands
 // and PDF helpers directly (black-box, exactly as the IPC layer calls them).
 pub mod commands;
+pub mod render;
 mod error;
 pub mod pdf;
 pub mod utils;
@@ -358,16 +359,16 @@ pub fn run() {
             rotate::rotate_pages,
             remove::remove_pages,
             reorder::reorder_pages,
-            render::read_pdf_bytes,
-            render::render_page,
-            render::render_page_uncached,
-            render::set_active_document,
-            render::get_page_aspect_ratio,
-            render::get_text_page,
-            render::search_pdf,
-            render::render_thumbnail,
-            render::pdf_to_images,
-            render::get_page_links,
+            commands::render::read_pdf_bytes,
+            commands::render::render_page,
+            commands::render::render_page_uncached,
+            commands::render::set_active_document,
+            commands::render::get_page_aspect_ratio,
+            commands::render::get_text_page,
+            commands::render::search_pdf,
+            commands::render::render_thumbnail,
+            commands::render::pdf_to_images,
+            commands::render::get_page_links,
             links::add_link,
             links::remove_link,
             create::images_to_pdf,
