@@ -51,9 +51,6 @@ export const removePages = (path: string, pages: number[], output?: string) =>
 export const reorderPages = (path: string, order: number[], output?: string) =>
   invoke<string>("reorder_pages", { path, order, output });
 
-export const renderThumbnail = (path: string, page: number, dpi?: number) =>
-  invoke<string>("render_thumbnail", { path, page, dpi });
-
 export const pdfToImages = (path: string, format?: string, dpi?: number, outputDir?: string) =>
   invoke<string[]>("pdf_to_images", { path, format, dpi, outputDir });
 
@@ -99,8 +96,6 @@ export interface PdfPermissions {
 export const getPdfPermissions = (path: string) =>
   invoke<PdfPermissions>("get_pdf_permissions", { path });
 
-export const readPdfBytes = (path: string) =>
-  invoke<string>("read_pdf_bytes", { path });
 
 export const copyFile = (src: string, dst: string) =>
   invoke<void>("copy_file", { src, dst });
@@ -323,5 +318,3 @@ export const flattenPdf = (path: string, output?: string) =>
 export const exportPdfToText = (path: string, output?: string) =>
   invoke<string>("export_pdf_to_text", { path, output });
 
-export const setActiveDocument = (path: string | null) =>
-  invoke<void>("set_active_document", { path });

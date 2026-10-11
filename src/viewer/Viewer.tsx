@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { useAppStore } from "../store/useAppStore";
 import { useNotesStore, PageTemplate, VirtualPage } from "../store/useNotesStore";
 
-import { evictPathFromThumbnailCache, freePathMemoryThumbnails, seedThumbnailsForEdit } from "../hooks/usePageThumbnails";
 import { PageStrip } from "./PageStrip";
 import { ScrollPageIndicator } from "./ScrollPageIndicator";
 import { ZoomFab } from "./ZoomFab";
@@ -19,8 +18,8 @@ import { buildLayout, visibleRange, slotAt, anchorY, fitWidthZoom, PT_TO_CSS, PA
 import { docOpen, type DocInfo } from "../render/renderClient";
 import { tileCache, tileKeyPrefix } from "../render/tileCache";
 import { DrawToolbar } from "./tools/DrawToolbar";
-import { TextLayer } from "./TextLayer";
-import { LinkLayer } from "./LinkLayer";
+import { TextLayer, evictTextPageCache } from "./TextLayer";
+import { LinkLayer, evictLinkPageCache } from "./LinkLayer";
 import { FindBar } from "./FindBar";
 import { CommentLayer, CommentEditor } from "./CommentLayer";
 import { FormLayer } from "./FormLayer";
@@ -57,13 +56,10 @@ const ZOOM_COMMIT_SETTLE_MS = 400;
 // flies past. Pages beyond the band show a cheap placeholder until you scroll to them.
 const MAX_LOADED_RADIUS = 3;
 
-// Keep zone: pages within ±this of the current page stay MOUNTED and FROZEN once loaded
-// — the canvas keeps its last frame, but no operation touches them (no decode, no IPC,
-// no redraw). Re-entering the ±MAX_LOADED_RADIUS band "syncs" them again, and PageCanvas
-// skips the decode entirely if the cached render is unchanged. This is what stops the
-// load/unload thrash when scrolling back and forth: leaving the band no longer destroys
-// the page, it just freezes it. Beyond the keep zone pages unmount and free their backing,
-// so worst-case pinned memory is (2·KEEP_RADIUS+1) frames at the current render scale.
+// Keep zone: pages within ±this of the current page stay MOUNTED once loaded — they keep
+// their preview, but request no tiles (no IPC) outside the ±MAX_LOADED_RADIUS band. This
+// stops load/unload thrash when scrolling back and forth. Beyond the keep zone pages
+// unmount; their tiles stay in the byte-bounded tile cache until evicted.
 const KEEP_RADIUS = 8;
 
 /** 0-based index of the current find hit among hits on `page`, or -1 if none. */
@@ -788,6 +784,19 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
 
   if (!viewerFile) return null;
 
+  // A path's rendered tiles are no longer needed (swapped away after an edit).
+  function dropDocTiles(path: string) {
+    tileCache.dropPrefix(tileKeyPrefix(path));
+  }
+
+  // The file at `path` was rewritten on disk: drop everything rendered from it.
+  // (Thumbnails need nothing: their cache key includes the file's mtime.)
+  function evictDocRenders(path: string) {
+    dropDocTiles(path);
+    evictTextPageCache(path);
+    evictLinkPageCache(path);
+  }
+
   // Visible part of slot i's page box, in that box's CSS px.
   const pageVisibleCss = (i: number) => {
     const boxTop = (layout.tops[i] ?? 0) + PAGE_GAP / 2;
@@ -901,13 +910,13 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
         const chosenPath = await showSaveDialog(vf.path);
         if (!chosenPath) { setSaveStatus("idle"); return; }
         await copyFile(vf.path, chosenPath);
-        evictPathFromThumbnailCache(chosenPath);
+        evictDocRenders(chosenPath);
         store.setTabFile(tabPath, { ...vf, path: chosenPath, name: chosenPath.split(/[\\/]/).pop() ?? chosenPath });
         store.setTabOriginal(tabPath, chosenPath);
         store.setTabDirty(tabPath, false);
       } else if (isDirty) {
         await copyFile(vf.path, origPath);
-        evictPathFromThumbnailCache(origPath);
+        evictDocRenders(origPath);
         store.setTabFile(tabPath, { ...vf, path: origPath, name: origPath.split(/[\\/]/).pop() ?? origPath });
         store.setTabDirty(tabPath, false);
       }
@@ -932,7 +941,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
         setOriginalViewerPath(dest); // the new file is its own document
         setIsViewerDirty(false);
         markSaved();
-        if (prevPath && prevPath !== dest) freePathMemoryThumbnails(prevPath);
+        if (prevPath && prevPath !== dest) dropDocTiles(prevPath);
         return;
       } catch (e) {
         // Couldn't place the file (e.g. no real path on Android) — fall back to
@@ -948,7 +957,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
     // Free the superseded document's in-memory bitmaps now — the viewer has
     // moved to `path`, so the old file's rendered pages just waste WebView heap.
     // (Undo re-renders them lazily; disk/session caches keep that cheap.)
-    if (prevPath && prevPath !== path) freePathMemoryThumbnails(prevPath);
+    if (prevPath && prevPath !== path) dropDocTiles(prevPath);
     if (autoSaveRef.current) {
       clearTimeout(autoSaveTimerRef.current);
       autoSaveTimerRef.current = window.setTimeout(triggerAutoSave, 1500);
@@ -967,21 +976,18 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
     window.getSelection()?.removeAllRanges();
   }
 
-  // Swap the viewer to an edited file IN PLACE: seed every unchanged page's raster
-  // from the old path so only the changed page(s) re-render, and keep scroll/zoom by
-  // NOT routing through handleApplied (which resets to page 1). PageCanvas holds each
-  // page's last frame until its new raster lands → no full-document flash.
+  // Swap the viewer to an edited file IN PLACE, keeping scroll/zoom by NOT routing
+  // through handleApplied (which resets to page 1). Only the visible pages' tiles
+  // re-render for the new path; the old path's tiles are freed.
   function swapInPlaceAfterEdit(
     vf: NonNullable<typeof viewerFile>,
     oldPath: string,
     newPath: string,
-    changedPages: Set<number>,
   ) {
-    seedThumbnailsForEdit(oldPath, newPath, changedPages);
     setUndoViewerFile(vf); // Ctrl+Z snapshot
     setViewerFile({ ...vf, path: newPath });
     setIsViewerDirty(true);
-    if (oldPath !== newPath) freePathMemoryThumbnails(oldPath);
+    if (oldPath !== newPath) dropDocTiles(oldPath);
     if (autoSaveRef.current) {
       clearTimeout(autoSaveTimerRef.current);
       autoSaveTimerRef.current = window.setTimeout(triggerAutoSave, 1500);
@@ -1011,7 +1017,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
           quad_points,
         });
       }
-      swapInPlaceAfterEdit(vf, oldPath, path, new Set(geom.map((g) => g.page)));
+      swapInPlaceAfterEdit(vf, oldPath, path);
     } catch { /* error surfaces via the dirty-state UI on next save */ }
   }
 
@@ -1030,7 +1036,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
     );
     try {
       const out = await redactPdf(vf.path, regions);
-      swapInPlaceAfterEdit(vf, vf.path, out, new Set(regions.map((r) => r.page)));
+      swapInPlaceAfterEdit(vf, vf.path, out);
     } catch { /* error surfaces via the dirty-state UI on next save */ }
   }
 
@@ -1065,7 +1071,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
       await flushComments();
       if (isViewerDirty) {
         await copyFile(viewerFile.path, originalViewerPath);
-        evictPathFromThumbnailCache(originalViewerPath);
+        evictDocRenders(originalViewerPath);
         setViewerFile({ ...viewerFile, path: originalViewerPath, name: originalViewerPath.split(/[\\/]/).pop() ?? originalViewerPath });
         setIsViewerDirty(false);
       }
@@ -1086,7 +1092,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
       // Land any pending comment write in the source before copying it.
       await flushComments();
       await copyFile(viewerFile.path, chosenPath);
-      evictPathFromThumbnailCache(chosenPath);
+      evictDocRenders(chosenPath);
       setViewerFile({ ...viewerFile, path: chosenPath, name: chosenPath.split(/[\\/]/).pop() ?? chosenPath });
       setOriginalViewerPath(chosenPath);
       setIsViewerDirty(false);
@@ -1151,7 +1157,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
         return;
       }
       await copyFile(savePath, originalViewerPath);
-      evictPathFromThumbnailCache(originalViewerPath);
+      evictDocRenders(originalViewerPath);
       // Don't clear strokes — they stay as overlay while thumbnails reload in the background
       setViewerFile({ ...viewerFile, path: originalViewerPath });
       setIsViewerDirty(false);
@@ -1211,7 +1217,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
         savePath = await bakeAnnotations(viewerFile.path, annotations, virtualPageData);
       }
       await copyFile(savePath, chosenPath);
-      evictPathFromThumbnailCache(chosenPath);
+      evictDocRenders(chosenPath);
       setViewerFile({ ...viewerFile, path: chosenPath });
       setOriginalViewerPath(chosenPath);
       setIsViewerDirty(false);
