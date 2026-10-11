@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PT_TO_CSS, TOP_PAD, PAGE_GAP, buildLayout, slotAt, visibleRange, anchorY, fitWidthZoom } from "./layout";
+import { PT_TO_CSS, TOP_PAD, PAGE_GAP, SIDE_PAD, buildLayout, slotAt, visibleRange, anchorY, fitWidthZoom, snapToDevice, pageBoxLeft } from "./layout";
 
 const LETTER = { w: 612, h: 792 };
 const LAND = { w: 792, h: 612 };
@@ -41,5 +41,18 @@ describe("anchorY", () => {
 describe("fitWidthZoom", () => {
   it("fits the widest page inside the side padding", () => {
     expect(fitWidthZoom([LETTER, LAND], 792 * PT_TO_CSS + 64)).toBeCloseTo(1);
+  });
+});
+
+describe("device-pixel snapping", () => {
+  it("snaps CSS coordinates onto the 1/dpr grid", () => {
+    expect(snapToDevice(10.3, 1)).toBe(10);
+    expect(snapToDevice(10.3, 2)).toBe(10.5);
+    expect(snapToDevice(10.2, 1.5) * 1.5).toBe(Math.round(10.2 * 1.5));
+  });
+  it("centres the page box on a device pixel, never left of the side padding", () => {
+    expect(pageBoxLeft(1001, 500, 1)).toBe(250); // 250.5 → 250 on a 1px grid
+    expect(pageBoxLeft(1001, 500, 2)).toBe(250.5);
+    expect(pageBoxLeft(400, 900, 1)).toBe(SIDE_PAD);
   });
 });

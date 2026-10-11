@@ -72,3 +72,13 @@ export function fitWidthZoom(sizes: PageSize[], containerW: number): number {
   const widest = Math.max(1, ...sizes.map((s) => s.w));
   return Math.max(0.01, (containerW - 2 * SIDE_PAD) / (widest * PT_TO_CSS));
 }
+
+/** Round a CSS coordinate onto the device-pixel grid (multiples of 1/dpr). */
+export function snapToDevice(v: number, dpr: number): number {
+  return Math.round(v * dpr) / dpr;
+}
+
+/** Left edge of a centred page box, on the device-pixel grid, never inside SIDE_PAD. */
+export function pageBoxLeft(containerW: number, boxW: number, dpr: number): number {
+  return Math.max(SIDE_PAD, Math.floor(((containerW - boxW) / 2) * dpr) / dpr);
+}

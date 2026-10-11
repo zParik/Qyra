@@ -41,4 +41,15 @@ describe("TileCache", () => {
   it("key includes the document version", () => {
     expect(tileKey("/a.pdf", "1", 1, 2, 0, 0)).not.toBe(tileKey("/a.pdf", "2", 1, 2, 0, 0));
   });
+
+  it("never evicts a canvas that is on screen", () => {
+    const cache = new TileCache(400); // room for one 10x10 tile
+    const shown = canvas(10, 10);
+    document.body.appendChild(shown);
+    cache.put("shown", shown);
+    cache.put("prefetched", canvas(10, 10));
+    expect(cache.get("shown")).toBe(shown);
+    expect(shown.width).toBe(10);
+    shown.remove();
+  });
 });

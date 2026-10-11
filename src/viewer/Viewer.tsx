@@ -14,7 +14,8 @@ import { triggerPrint } from "./tools/PrintPanel";
 import { DrawingCanvas } from "./DrawingCanvas";
 import { VirtualPageBackground } from "./VirtualPageBackground";
 import { PageView } from "./PageView";
-import { buildLayout, visibleRange, slotAt, anchorY, fitWidthZoom, PT_TO_CSS, PAGE_GAP, SIDE_PAD } from "../render/layout";
+import { buildLayout, visibleRange, slotAt, anchorY, fitWidthZoom, snapToDevice, pageBoxLeft, PT_TO_CSS, PAGE_GAP, SIDE_PAD } from "../render/layout";
+import { pagePx, renderScale } from "../render/tiles";
 import { docOpen, type DocInfo } from "../render/renderClient";
 import { tileCache, tileKeyPrefix } from "../render/tileCache";
 import { DrawToolbar } from "./tools/DrawToolbar";
@@ -797,10 +798,21 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
     evictLinkPageCache(path);
   }
 
+  // Slot i's page box in content CSS px: sized to whole device pixels and placed
+  // on the device-pixel grid, so tiles land 1:1 on screen.
+  const pageBox = (i: number) => {
+    const size = slotSizes[i] ?? { w: 612, h: 792 };
+    const w = pagePx(size, renderScale(zoom, dpr)).w / dpr;
+    return {
+      top: snapToDevice((layout.tops[i] ?? 0) + PAGE_GAP / 2, dpr),
+      left: pageBoxLeft(containerWidth, w, dpr),
+      w,
+    };
+  };
+
   // Visible part of slot i's page box, in that box's CSS px.
   const pageVisibleCss = (i: number) => {
-    const boxTop = (layout.tops[i] ?? 0) + PAGE_GAP / 2;
-    const boxLeft = Math.max(SIDE_PAD, (containerWidth - (layout.widths[i] ?? 0)) / 2);
+    const { top: boxTop, left: boxLeft } = pageBox(i);
     return {
       x0: centerScrollLeft - boxLeft,
       y0: centerScrollTop - boxTop,
@@ -2019,6 +2031,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
 
               if (slot.type === 'pdf') {
                 const page = slot.pdfPage;
+                const box = pageBox(slotIndex);
                 const isSelected = activeTool === "remove" && selectedPages.has(page);
                 const shouldRenderTextLayer = true; // all visible pages (virtual scroll limits active pages)
                 return (
@@ -2026,10 +2039,9 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
                     <div
                       style={{
                         position: "absolute",
-                        top: topPos + PAGE_GAP / 2,
+                        top: box.top,
                         left: 0,
                         right: 0,
-                        paddingLeft: SIDE_PAD,
                         paddingRight: SIDE_PAD,
                       }}
                     >
@@ -2039,7 +2051,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
                           ±MAX_LOADED_RADIUS band. Overlays keep using inset:0 of this box. */}
                       <div
                         data-page-index={page}
-                        style={{ width: `${layout.widths[slotIndex]}px`, margin: "0 auto" }}
+                        style={{ width: `${box.w}px`, marginLeft: `${box.left}px` }}
                         onClick={activeTool === "remove" ? () => handlePageToggle(page) : undefined}
                       >
                       <PageView

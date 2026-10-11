@@ -3,7 +3,7 @@
 // PERCENT of the page box, so tiles from a previous zoom keep lining up
 // (stretched) until their replacements land — no blank flash on zoom.
 import React, { useEffect, useRef, useState } from "react";
-import { PT_TO_CSS, type PageSize } from "../render/layout";
+import type { PageSize } from "../render/layout";
 import { pagePx, renderScale, tileRectPx, tilesInRect, type RectPx } from "../render/tiles";
 import { renderTile, thumbUrl } from "../render/renderClient";
 import { tileCache, tileKey } from "../render/tileCache";
@@ -27,22 +27,27 @@ type Props = {
 };
 
 export function PageView({ path, version, page, sizePt, zoom, dpr, visibleCss, onError, className, style, children }: Props) {
-  const cssW = sizePt.w * PT_TO_CSS * zoom;
-  const cssH = sizePt.h * PT_TO_CSS * zoom;
-  const tileLayer = useRef<HTMLDivElement>(null);
-  const [failed, setFailed] = useState(false);
   const scale = renderScale(zoom, dpr);
   const px = pagePx(sizePt, scale);
+  // The box is a whole number of DEVICE pixels, so each 512 px tile spans exactly
+  // 512/dpr CSS px and lands 1:1 on screen (no resampling, no seams).
+  const cssW = px.w / dpr;
+  const cssH = px.h / dpr;
+  const tileLayer = useRef<HTMLDivElement>(null);
+  const [failed, setFailed] = useState(false);
+  // Requests in flight, by tile key: a moving window aborts only tiles it no
+  // longer wants instead of restarting everything.
+  const inflight = useRef(new Map<string, AbortController>());
 
-  // Visible rect → device px; the wanted set adds one viewport of margin on
-  // every side so a short scroll finds its tiles already rendered.
+  // Prefetch half a viewport above and below (the scroll axis) — bounded, so at
+  // high zoom prefetch can't outgrow the tile cache and evict what is on screen.
   const toPx = (r: RectPx, m: number): RectPx => ({
-    x0: (r.x0 - m) * dpr,
+    x0: r.x0 * dpr,
     y0: (r.y0 - m) * dpr,
-    x1: (r.x1 + m) * dpr,
+    x1: r.x1 * dpr,
     y1: (r.y1 + m) * dpr,
   });
-  const margin = visibleCss ? Math.max(visibleCss.y1 - visibleCss.y0, visibleCss.x1 - visibleCss.x0) : 0;
+  const margin = visibleCss ? (visibleCss.y1 - visibleCss.y0) / 2 : 0;
   const wanted = visibleCss ? tilesInRect(px, toPx(visibleCss, margin)) : [];
   const visibleTiles = new Set(
     visibleCss ? tilesInRect(px, toPx(visibleCss, 0)).map((t) => `${t.tx},${t.ty}`) : [],
@@ -52,9 +57,15 @@ export function PageView({ path, version, page, sizePt, zoom, dpr, visibleCss, o
 
   useEffect(() => {
     const layer = tileLayer.current;
+    const keysNow = new Set(wanted.map((t) => tileKey(path, version, page, scale, t.tx, t.ty)));
+    // Abort requests for tiles that left the window (or belong to an old zoom).
+    for (const [key, ctl] of inflight.current) {
+      if (!keysNow.has(key)) {
+        ctl.abort();
+        inflight.current.delete(key);
+      }
+    }
     if (!layer || wanted.length === 0) return;
-    const ctl = new AbortController();
-    const keysNow = new Set<string>();
     const scaleTag = String(scale);
 
     const attach = (canvas: HTMLCanvasElement, key: string, r: RectPx) => {
@@ -86,13 +97,15 @@ export function PageView({ path, version, page, sizePt, zoom, dpr, visibleCss, o
     const timer = setTimeout(() => {
       for (const t of wanted) {
         const key = tileKey(path, version, page, scale, t.tx, t.ty);
-        keysNow.add(key);
         const r = tileRectPx(px, t);
         const hit = tileCache.get(key);
         if (hit) {
           attach(hit, key, r);
           continue;
         }
+        if (inflight.current.has(key)) continue; // already on its way
+        const ctl = new AbortController();
+        inflight.current.set(key, ctl);
         const priority = visibleTiles.has(`${t.tx},${t.ty}`) ? "visible" : "prefetch";
         renderTile({ path, page, scale, tx: t.tx, ty: t.ty, priority }, ctl.signal)
           .then((rgba) => {
@@ -103,8 +116,8 @@ export function PageView({ path, version, page, sizePt, zoom, dpr, visibleCss, o
             canvas
               .getContext("2d", { alpha: false })
               ?.putImageData(new ImageData(rgba.pixels, rgba.w, rgba.h), 0, 0);
-            tileCache.put(key, canvas);
             attach(canvas, key, r);
+            tileCache.put(key, canvas);
             sweepStale();
           })
           .catch(() => {
@@ -112,18 +125,27 @@ export function PageView({ path, version, page, sizePt, zoom, dpr, visibleCss, o
               setFailed(true);
               onError?.(page);
             }
+          })
+          .finally(() => {
+            if (inflight.current.get(key) === ctl) inflight.current.delete(key);
           });
       }
       sweepStale();
     }, SETTLE_MS);
 
-    return () => {
-      clearTimeout(timer);
-      ctl.abort();
-    };
+    return () => clearTimeout(timer);
     // wantedKey/scale/version capture everything the effect reads.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, version, page, scale, wantedKey]);
+
+  // Unmount: abort everything still in flight.
+  useEffect(() => {
+    const map = inflight.current;
+    return () => {
+      for (const ctl of map.values()) ctl.abort();
+      map.clear();
+    };
+  }, []);
 
   // Leaving the visible band: detach (not free) tiles; the cache owns them.
   const hidden = visibleCss === null;

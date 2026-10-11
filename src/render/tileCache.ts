@@ -33,8 +33,11 @@ export class TileCache {
     if (old) this.remove(key, old);
     this.map.set(key, canvas);
     this.total += cost(canvas);
-    for (const [k, c] of this.map) {
-      if (this.total <= this.budget || k === key) break;
+    // Evict least-recent first, but never a canvas that is on screen (attached):
+    // freeing it would blank visible content in favour of prefetch.
+    for (const [k, c] of Array.from(this.map)) {
+      if (this.total <= this.budget) break;
+      if (k === key || c.isConnected) continue;
       this.remove(k, c);
     }
   }
