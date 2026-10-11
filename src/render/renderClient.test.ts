@@ -4,6 +4,7 @@ const invoke = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invoke(...a) }));
 
 import { decodeRgba, renderTile, rgbaToCanvas, thumbUrl } from "./renderClient";
+import { bumpDocVersion } from "./docVersion";
 
 function wire(w: number, h: number): ArrayBuffer {
   const buf = new ArrayBuffer(8 + w * h * 4);
@@ -72,7 +73,13 @@ describe("renderTile", () => {
 describe("thumbUrl", () => {
   it("encodes path, page, width and version", () => {
     const u = thumbUrl("/home/z/my doc.pdf", 3, 256, "42");
-    expect(u).toMatch(/thumb\/3\?path=%2Fhome%2Fz%2Fmy%20doc\.pdf&w=256&v=42$/);
+    expect(u).toMatch(/thumb\/3\?path=%2Fhome%2Fz%2Fmy%20doc\.pdf&w=256&v=42\.0$/);
+  });
+
+  it("changes when the document is rewritten, even without a version", () => {
+    const before = thumbUrl("/t.pdf", 1, 256);
+    bumpDocVersion("/t.pdf");
+    expect(thumbUrl("/t.pdf", 1, 256)).not.toBe(before);
   });
 });
 

@@ -3,6 +3,7 @@ import { UI, MONO } from "../../lib/tokens";
 import { IconProps, IcStar, IcArchive, IcGrid, IcList, IcFile, IcChevron } from "../../components/Icons";
 import type { LibraryEntry, RecentFile } from "../../lib/schemas";
 import { thumbUrl } from "../../render/renderClient";
+import { useDocVersion } from "../../render/docVersion";
 import { formatRelativeTime, fileSwatch } from "./types";
 
 export function SectionHeader({ title, subtitle, right }: {
@@ -82,6 +83,7 @@ export function RecentCard({ file, onOpen, starred, archived, onToggleStar, onTo
 }) {
   const [hover, setHover] = useState(false);
   const [thumbFailed, setThumbFailed] = useState(false);
+  useDocVersion(file.path); // new thumbnail URL when Qyra rewrites the file
   const thumb = thumbFailed ? null : thumbUrl(file.path, 1, 256);
   const swatch = fileSwatch(file.name);
   const ext = file.name.split(".").pop()?.toUpperCase() ?? "PDF";

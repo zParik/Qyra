@@ -10,6 +10,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { LoadedFile } from "../store/useAppStore";
 import { thumbUrl } from "../render/renderClient";
+import { useDocVersion } from "../render/docVersion";
 
 import { UI, MONO } from "../lib/tokens";
 
@@ -23,15 +24,18 @@ interface PageGridProps {
 }
 
 // Memoized: parent passes path-based, stable handlers so only the card whose
-// `thumbnail`/`selected` actually changed re-renders — not every card on each
-// parent render (e.g. a thumbnail arriving, or a sibling being removed).
-const FileCard = memo(function FileCard({ file, thumbnail, onRemove, selectable, selected, onToggleSelect }: {
-  file: LoadedFile; thumbnail?: string;
+// `selected` changed (or whose file was rewritten) re-renders — not every card
+// on each parent render (e.g. a sibling being removed).
+const FileCard = memo(function FileCard({ file, onRemove, selectable, selected, onToggleSelect }: {
+  file: LoadedFile;
   onRemove: (path: string) => void; selectable?: boolean;
   selected?: boolean; onToggleSelect?: (path: string) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: file.path });
+  // Re-render (new thumbnail URL) when Qyra rewrites this file.
+  useDocVersion(file.path);
+  const thumbnail = thumbUrl(file.path, 1, 256);
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -167,7 +171,6 @@ export function PageGrid({ files, onRemove, onReorder, selectable, selected, onT
             <FileCard
               key={file.path}
               file={file}
-              thumbnail={thumbUrl(file.path, 1, 256)}
               onRemove={onRemove}
               selectable={selectable}
               selected={selected?.has(file.path)}

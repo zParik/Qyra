@@ -2,6 +2,7 @@
 // (8-byte LE header w,h + pixels) — no JPEG, no base64.
 import { invoke } from "@tauri-apps/api/core";
 import type { PageSize } from "./layout";
+import { getDocVersion } from "./docVersion";
 
 export type DocInfo = { pageCount: number; pages: PageSize[]; version: string };
 export type Rgba = { w: number; h: number; pixels: Uint8ClampedArray };
@@ -71,8 +72,13 @@ export function rgbaToCanvas(rgba: Rgba): HTMLCanvasElement {
 
 const isWindows = () => typeof navigator !== "undefined" && /win/i.test(navigator.platform);
 
-/** `<img src>` for a lossless page thumbnail served by the `qyra` URI scheme. */
+/**
+ * `<img src>` for a lossless page thumbnail served by the `qyra` URI scheme.
+ * The `v` param carries the file version and its rewrite counter, so the
+ * webview never serves a stale image after Qyra rewrites the file.
+ */
 export function thumbUrl(path: string, page: number, width: 128 | 256 | 512, version = ""): string {
   const base = isWindows() ? "http://qyra.localhost" : "qyra://localhost";
-  return `${base}/thumb/${page}?path=${encodeURIComponent(path)}&w=${width}&v=${encodeURIComponent(version)}`;
+  const v = `${version}.${getDocVersion(path)}`;
+  return `${base}/thumb/${page}?path=${encodeURIComponent(path)}&w=${width}&v=${encodeURIComponent(v)}`;
 }

@@ -16,7 +16,8 @@ import { VirtualPageBackground } from "./VirtualPageBackground";
 import { PageView } from "./PageView";
 import { buildLayout, visibleRange, slotAt, anchorY, fitWidthZoom, snapToDevice, pageBoxLeft, PT_TO_CSS, PAGE_GAP, SIDE_PAD } from "../render/layout";
 import { pagePx, renderScale } from "../render/tiles";
-import { docOpen, type DocInfo } from "../render/renderClient";
+import { useDocInfo } from "../render/useDocInfo";
+import { bumpDocVersion } from "../render/docVersion";
 import { tileCache, tileKeyPrefix } from "../render/tileCache";
 import { DrawToolbar } from "./tools/DrawToolbar";
 import { TextLayer, evictTextPageCache } from "./TextLayer";
@@ -111,7 +112,6 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
   // "Add page" inline UI: which insertion point is open (afterRealPage value)
   const [addPageAt, setAddPageAt] = useState<number | null>(null);
 
-  const [docInfo, setDocInfo] = useState<DocInfo | null>(null);
   const [zoom, setZoom] = useState(1.0);
   // Always-fresh mirror of `zoom` for the wheel handler, which accumulates a
   // gesture's zoom in a ref and commits to React state only once it settles.
@@ -358,6 +358,9 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
 
   const BUFFER_SLOTS = 2;   // small buffer to avoid gaps when scrolling
 
+  // Page sizes (every page, true size) + version; refetched when the file is rewritten.
+  const docInfo = useDocInfo(viewerFile?.path);
+
   // Per-slot sizes: PDF slots use their page's real size; virtual (notes)
   // pages use page 1's size.
   const slotSizes = useMemo(() => {
@@ -451,15 +454,6 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
     if (!viewerFile) navigate("/");
   }, [viewerFile]);
 
-  // Page sizes (every page, true size) + cache-busting version via MuPDF (Rust).
-  useEffect(() => {
-    if (!viewerFile?.path) return;
-    let cancelled = false;
-    docOpen(viewerFile.path)
-      .then((info) => { if (!cancelled) setDocInfo(info); })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [viewerFile?.path]);
 
   // Populate page count fast via Rust (reads only XRef + 2 objects — no full parse).
   // Falls back to PDF.js range requests if the fast path fails (e.g. XRef streams).
@@ -791,9 +785,9 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
   }
 
   // The file at `path` was rewritten on disk: drop everything rendered from it.
-  // (Thumbnails need nothing: their cache key includes the file's mtime.)
   function evictDocRenders(path: string) {
     dropDocTiles(path);
+    bumpDocVersion(path); // refetch page info + every thumbnail of this file
     evictTextPageCache(path);
     evictLinkPageCache(path);
   }
@@ -2062,7 +2056,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
                         zoom={zoom}
                         dpr={dpr}
                         visibleCss={
-                          isActive && scrollSettled && Math.abs(page - currentPage) <= MAX_LOADED_RADIUS
+                          docInfo && isActive && scrollSettled && Math.abs(page - currentPage) <= MAX_LOADED_RADIUS
                             ? pageVisibleCss(slotIndex)
                             : null
                         }
