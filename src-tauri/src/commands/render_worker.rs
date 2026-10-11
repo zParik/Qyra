@@ -42,6 +42,21 @@ const CACHE_CAP: usize = 6;
 /// and are unaffected.
 const MAX_RENDER_DIM: f32 = 2600.0;
 
+use crate::render::geometry::PageSizePt;
+
+/// Display lists kept (across documents). A list is the parsed page, so this
+/// bounds re-parse work, not pixels.
+const LIST_CAP: usize = 64;
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocInfo {
+    pub page_count: u32,
+    pub pages: Vec<PageSizePt>,
+    /// File mtime (ns) as a string — cache-busting version for the frontend.
+    pub version: String,
+}
+
 /// Work items handed to the worker thread. Each carries its own typed reply
 /// channel so results stay strongly typed across the boundary.
 enum Job {
@@ -70,6 +85,8 @@ enum Job {
         mtime: u64,
         reply: Sender<AppResult<f64>>,
     },
+    Info { path: String, mtime: u64, reply: Sender<AppResult<DocInfo>> },
+    List { path: String, mtime: u64, page: u32, reply: Sender<AppResult<Arc<mupdf::DisplayList>>> },
     /// Generic short read-only task against the cached document. The closure
     /// owns its own reply channel and receives the open result (or the open
     /// error) so failures still reach the caller. Only use for *fast* reads
@@ -147,6 +164,21 @@ impl RenderWorker {
         self.enqueue(Job::Text { path, mtime, page, reply })?;
         rx.recv()
             .map_err(|_| AppError::Other("render worker dropped reply".to_string()))?
+    }
+
+    pub fn doc_info(&self, path: String) -> AppResult<DocInfo> {
+        let mtime = file_mtime(&path);
+        let (reply, rx) = channel();
+        self.enqueue(Job::Info { path, mtime, reply })?;
+        rx.recv().map_err(|_| AppError::Other("render worker dropped reply".to_string()))?
+    }
+
+    /// Cached display list for 1-based `page` of `path`.
+    pub fn display_list(&self, path: String, page: u32) -> AppResult<Arc<mupdf::DisplayList>> {
+        let mtime = file_mtime(&path);
+        let (reply, rx) = channel();
+        self.enqueue(Job::List { path, mtime, page, reply })?;
+        rx.recv().map_err(|_| AppError::Other("render worker dropped reply".to_string()))?
     }
 
     pub fn links(&self, path: String, page: u32) -> AppResult<Vec<PageLink>> {
@@ -248,19 +280,45 @@ impl DocCache {
 
 fn worker_loop(rx: Receiver<Job>, active: ActiveDocument) {
     let mut cache = DocCache::new();
+    let mut lists: Vec<((String, u64, u32), Arc<mupdf::DisplayList>)> = Vec::new();
     while let Ok(job) = rx.recv() {
         match job {
             Job::Render { path, mtime, page, scale, check_active, reply } => {
                 let _ = reply.send(do_render(&mut cache, &active, &path, mtime, page, scale, check_active));
             }
             Job::Text { path, mtime, page, reply } => {
-                let _ = reply.send(do_text(&mut cache, &active, &path, mtime, page));
+                let _ = reply.send(do_text(&mut cache, &path, mtime, page));
             }
             Job::Links { path, mtime, page, reply } => {
                 let _ = reply.send(do_links(&mut cache, &path, mtime, page));
             }
             Job::Aspect { path, mtime, reply } => {
                 let _ = reply.send(do_aspect(&mut cache, &path, mtime));
+            }
+            Job::Info { path, mtime, reply } => {
+                let _ = reply.send(cache.with_doc(&path, mtime, |doc| {
+                    let pages = crate::render::raster::page_sizes(doc)?;
+                    Ok(DocInfo { page_count: pages.len() as u32, pages, version: mtime.to_string() })
+                }));
+            }
+            Job::List { path, mtime, page, reply } => {
+                let key = (path.clone(), mtime, page);
+                if let Some(pos) = lists.iter().position(|(k, _)| *k == key) {
+                    let hit = lists.remove(pos); // move to most-recent
+                    let _ = reply.send(Ok(hit.1.clone()));
+                    lists.push(hit);
+                    continue;
+                }
+                let built = cache.with_doc(&path, mtime, |doc| {
+                    Ok(Arc::new(crate::render::raster::build_display_list(doc, page as i32 - 1)?))
+                });
+                if let Ok(list) = &built {
+                    lists.push((key, list.clone()));
+                    if lists.len() > LIST_CAP {
+                        lists.remove(0);
+                    }
+                }
+                let _ = reply.send(built);
             }
             Job::Run { path, mtime, run } => match cache.ensure(&path, mtime) {
                 Ok(()) => {
@@ -395,15 +453,11 @@ pub fn rasterize_page(
 
 fn do_text(
     cache: &mut DocCache,
-    active: &ActiveDocument,
     path: &str,
     mtime: u64,
     page: u32,
 ) -> AppResult<Vec<TextLine>> {
     let _t = crate::utils::timing::Timer::start("get_text_page(worker)", format!("p{page}"));
-    if !active.is(path) {
-        return Err(cancelled());
-    }
     cache.with_doc(path, mtime, |doc| {
         let p = doc.load_page(page as i32 - 1)?;
         let b = p.bounds()?;
@@ -498,4 +552,41 @@ fn do_aspect(cache: &mut DocCache, path: &str, mtime: u64) -> AppResult<f64> {
 /// Encode raw JPEG bytes to base64 (kept here so render commands stay thin).
 pub fn b64(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture(name: &str) -> String {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../tests/fixtures/pdf/generated")
+            .join(name)
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    #[test]
+    fn doc_info_lists_every_page_size_and_a_version() {
+        let w = RenderWorker::new(ActiveDocument::new());
+        let info = w.doc_info(fixture("mixed-sizes.pdf")).unwrap();
+        assert_eq!(info.page_count, 3);
+        assert_eq!(info.pages[1].w, 792.0);
+        assert!(info.version.parse::<u64>().unwrap() > 0);
+    }
+
+    #[test]
+    fn display_list_is_cached_per_page() {
+        let w = RenderWorker::new(ActiveDocument::new());
+        let a = w.display_list(fixture("text.pdf"), 1).unwrap();
+        let b = w.display_list(fixture("text.pdf"), 1).unwrap();
+        assert!(Arc::ptr_eq(&a, &b));
+    }
+
+    #[test]
+    fn text_does_not_require_the_active_document() {
+        let w = RenderWorker::new(ActiveDocument::new()); // nothing active
+        let lines = w.text(fixture("text.pdf"), 1).unwrap();
+        assert!(!lines.is_empty());
+    }
 }

@@ -345,9 +345,27 @@ function orphaned() {
   return buildPdf(o, `/Root 1 0 R`);
 }
 
+// ── mixed-sizes.pdf — portrait Letter, landscape Letter, offset+rotated page ──
+function mixedSizes() {
+  const o = new Map();
+  o.set(1, enc(`<< /Type /Catalog /Pages 2 0 R >>`));
+  o.set(2, enc(`<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>`));
+  const res = `/Resources << /Font << /F1 9 0 R >> >>`;
+  o.set(3, enc(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ${res} /Contents 6 0 R >>`));
+  o.set(4, enc(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 792 612] ${res} /Contents 7 0 R >>`));
+  // Non-zero origin + /Rotate 90: rendered size is 300 wide x 200 tall.
+  o.set(5, enc(`<< /Type /Page /Parent 2 0 R /MediaBox [100 100 300 400] /Rotate 90 ${res} /Contents 8 0 R >>`));
+  o.set(6, streamObj("", textStream("Portrait page")));
+  o.set(7, streamObj("", textStream("Landscape page")));
+  o.set(8, streamObj("", textStream("Offset rotated page")));
+  o.set(9, enc(HELV));
+  return buildPdf(o, `/Root 1 0 R`);
+}
+
 const FIXTURES = {
   "simple.pdf": simple,
   "text.pdf": text,
+  "mixed-sizes.pdf": mixedSizes,
   "multipage.pdf": () => multipage(5),
   "outline.pdf": outline,
   "links.pdf": links,
