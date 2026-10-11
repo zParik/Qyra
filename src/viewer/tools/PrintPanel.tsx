@@ -1,13 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
+import { renderPageRgba, rgbaToCanvas } from "../../render/renderClient";
 
-/** Render every page of a PDF to image data-URLs via MuPDF Rust backend, then print via a hidden iframe. */
+/** Render every page of a PDF to lossless image data-URLs via MuPDF, then print via a hidden iframe. */
 export async function triggerPrint(path: string): Promise<void> {
   const pageCount = await invoke<number>("get_page_count", { path });
 
   const images: string[] = [];
   for (let i = 1; i <= pageCount; i++) {
-    const base64 = await invoke<string>("render_page", { path, page: i, scale: 2.0 });
-    images.push(`data:image/jpeg;base64,${base64}`);
+    const rgba = await renderPageRgba(path, i, 2.0);
+    if (rgba) images.push(rgbaToCanvas(rgba).toDataURL("image/png"));
   }
 
   const iframe = document.createElement("iframe");

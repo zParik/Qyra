@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { UI, MONO } from "../lib/tokens";
+import { FitPage } from "./FitPage";
 
 interface Props {
   path: string;
@@ -11,22 +11,6 @@ interface Props {
 
 export function PresentationMode({ path, pageCount, startPage = 1, onClose }: Props) {
   const [page, setPage] = useState(startPage);
-  const [imgUrl, setImgUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    invoke<string>("render_page", { path, page, scale: 1.5 })
-      .then((b64) => {
-        if (!cancelled) {
-          setImgUrl(`data:image/jpeg;base64,${b64}`);
-          setLoading(false);
-        }
-      })
-      .catch(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [path, page]);
 
   const next = useCallback(() => setPage((p) => Math.min(p + 1, pageCount)), [pageCount]);
   const prev = useCallback(() => setPage((p) => Math.max(p - 1, 1)), []);
@@ -72,27 +56,8 @@ export function PresentationMode({ path, pageCount, startPage = 1, onClose }: Pr
       }}
       onClick={handleClick}
     >
-      {/* Page image */}
-      {imgUrl && (
-        <img
-          src={imgUrl}
-          alt={`Page ${page}`}
-          draggable={false}
-          style={{
-            maxWidth: "100%",
-            maxHeight: "100vh",
-            objectFit: "contain",
-            display: "block",
-            opacity: loading ? 0.5 : 1,
-            transition: "opacity 80ms",
-          }}
-        />
-      )}
-      {loading && !imgUrl && (
-        <div style={{ color: "rgba(255,255,255,0.3)", fontFamily: MONO, fontSize: 12 }}>
-          Loading…
-        </div>
-      )}
+      {/* Page, fitted to the screen and rendered crisp at device pixels */}
+      <FitPage path={path} page={page} style={{ width: "100vw", height: "100vh" }} />
 
       {/* Page counter */}
       <div

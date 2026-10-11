@@ -57,6 +57,15 @@ export async function renderPageRgba(path: string, page: number, scale: number):
   return decodeRgba(await invoke<ArrayBuffer>("render_page_rgba", { path, page, scale }));
 }
 
+/** Draw decoded RGBA into a fresh canvas of the same size (OCR input, print). */
+export function rgbaToCanvas(rgba: Rgba): HTMLCanvasElement {
+  const canvas = document.createElement("canvas");
+  canvas.width = rgba.w;
+  canvas.height = rgba.h;
+  canvas.getContext("2d")?.putImageData(new ImageData(rgba.pixels, rgba.w, rgba.h), 0, 0);
+  return canvas;
+}
+
 const isWindows = () => typeof navigator !== "undefined" && /win/i.test(navigator.platform);
 
 /** `<img src>` for a lossless page thumbnail served by the `qyra` URI scheme. */

@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { makeSearchable, showSaveDialog, openFile, copyFile } from "../lib/tauri";
 
 import { ocrImage, getOcrWorker } from "../lib/ocrEngine";
+import { renderPageRgba, rgbaToCanvas } from "../render/renderClient";
 import type { OcrPage } from "../lib/tauri";
 
 import { UI, MONO } from "../lib/tokens";
@@ -74,21 +75,10 @@ export default function Ocr() {
           pct: 25 + ((i - 1) / totalPages) * 65,
         });
 
-                // Render at 2× scale for better OCR accuracy (~144 DPI for a 72 DPI PDF) using the Tauri backend
-        const base64 = await invoke<string>("render_page", { path: file.path, page: i, scale: 2.0 });
-        const img = new Image();
-        img.src = `data:image/jpeg;base64,${base64}`;
-        await new Promise((resolve, reject) => {
-          img.onload = resolve;
-          img.onerror = reject;
-        });
-
-        const canvas = document.createElement("canvas");
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) throw new Error("Canvas 2D context unavailable");
-        ctx.drawImage(img, 0, 0);
+        // Render at 2× scale for better OCR accuracy (~144 DPI) — lossless RGBA.
+        const rgba = await renderPageRgba(file.path, i, 2.0);
+        if (!rgba) throw new Error(`Page ${i} could not be rendered`);
+        const canvas = rgbaToCanvas(rgba);
 
         const res = await ocrImage(canvas, canvas.width, canvas.height);
 

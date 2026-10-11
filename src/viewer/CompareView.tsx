@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { MONO } from "../lib/tokens";
+import { FitPage } from "./FitPage";
 
 interface Props {
   pathA: string;
@@ -17,11 +18,6 @@ export function CompareView({ pathA, pathB, onClose }: Props) {
   const [page, setPage] = useState(1);
   const [pageCountA, setPageCountA] = useState(0);
   const [pageCountB, setPageCountB] = useState(0);
-  const [imgA, setImgA] = useState<string | null>(null);
-  const [imgB, setImgB] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [errA, setErrA] = useState<string | null>(null);
-  const [errB, setErrB] = useState<string | null>(null);
 
   // Load page counts once
   useEffect(() => {
@@ -38,32 +34,6 @@ export function CompareView({ pathA, pathB, onClose }: Props) {
   }, [pathA, pathB]);
 
   const maxPages = Math.max(pageCountA, pageCountB);
-
-  // Render both pages
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setErrA(null);
-    setErrB(null);
-
-    const renderA = page <= pageCountA
-      ? invoke<string>("render_page_uncached", { path: pathA, page, scale: 1.5 })
-          .then((b64) => { if (!cancelled) setImgA(`data:image/jpeg;base64,${b64}`); })
-          .catch((e) => { if (!cancelled) { setImgA(null); setErrA(String(e)); } })
-      : Promise.resolve().then(() => { if (!cancelled) setImgA(null); });
-
-    const renderB = page <= pageCountB
-      ? invoke<string>("render_page_uncached", { path: pathB, page, scale: 1.5 })
-          .then((b64) => { if (!cancelled) setImgB(`data:image/jpeg;base64,${b64}`); })
-          .catch((e) => { if (!cancelled) { setImgB(null); setErrB(String(e)); } })
-      : Promise.resolve().then(() => { if (!cancelled) setImgB(null); });
-
-    Promise.all([renderA, renderB]).finally(() => {
-      if (!cancelled) setLoading(false);
-    });
-
-    return () => { cancelled = true; };
-  }, [page, pathA, pathB, pageCountA, pageCountB]);
 
   const next = useCallback(() => setPage((p) => Math.min(p + 1, maxPages)), [maxPages]);
   const prev = useCallback(() => setPage((p) => Math.max(p - 1, 1)), []);
@@ -130,20 +100,8 @@ export function CompareView({ pathA, pathB, onClose }: Props) {
 
       {/* Side-by-side panes */}
       <div style={{ flex: 1, display: "flex", overflow: "hidden", gap: 1, background: "rgba(255,255,255,0.06)" }}>
-        <Pane
-          label={basename(pathA)}
-          img={imgA}
-          err={errA}
-          loading={loading && imgA === null}
-          overflow={page > pageCountA}
-        />
-        <Pane
-          label={basename(pathB)}
-          img={imgB}
-          err={errB}
-          loading={loading && imgB === null}
-          overflow={page > pageCountB}
-        />
+        <Pane label={basename(pathA)} path={pathA} page={page} overflow={page > pageCountA} />
+        <Pane label={basename(pathB)} path={pathB} page={page} overflow={page > pageCountB} />
       </div>
     </div>
   );
@@ -163,11 +121,10 @@ function btnStyle(disabled: boolean): React.CSSProperties {
   };
 }
 
-function Pane({ label, img, err, loading, overflow }: {
+function Pane({ label, path, page, overflow }: {
   label: string;
-  img: string | null;
-  err: string | null;
-  loading: boolean;
+  path: string;
+  page: number;
   overflow: boolean;
 }) {
   return (
@@ -209,18 +166,9 @@ function Pane({ label, img, err, loading, overflow }: {
           <span style={{ color: "rgba(255,255,255,0.35)", fontFamily: MONO, fontSize: 12 }}>
             (no page at this index)
           </span>
-        ) : err ? (
-          <span style={{ color: "#f87171", fontFamily: MONO, fontSize: 12 }}>{err}</span>
-        ) : img ? (
-          <img
-            src={img}
-            alt={label}
-            draggable={false}
-            style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", display: "block" }}
-          />
-        ) : loading ? (
-          <span style={{ color: "rgba(255,255,255,0.3)", fontFamily: MONO, fontSize: 12 }}>Loading…</span>
-        ) : null}
+        ) : (
+          <FitPage path={path} page={page} />
+        )}
       </div>
     </div>
   );
