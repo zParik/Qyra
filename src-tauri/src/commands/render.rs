@@ -535,3 +535,63 @@ pub async fn pdf_to_images(
 ) -> AppResult<Vec<String>> {
     Err(AppError::Other("pdf_to_images not supported on Android".to_string()))
 }
+
+// ── Tiled render pipeline ─────────────────────────────────────────────────────
+
+/// Page count, per-page sizes (pt) and a cache-busting version for `path`.
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+pub async fn doc_open(
+    service: tauri::State<'_, crate::render::service::RenderService>,
+    path: String,
+) -> AppResult<crate::commands::render_worker::DocInfo> {
+    let worker = service.worker().clone();
+    tokio::task::spawn_blocking(move || worker.doc_info(path))
+        .await
+        .map_err(|e| AppError::Other(e.to_string()))?
+}
+
+/// One 512 px tile as raw RGBA (8-byte LE w,h header). 0×0 = cancelled/outside.
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+pub async fn render_tile(
+    service: tauri::State<'_, crate::render::service::RenderService>,
+    req: crate::render::service::TileReq,
+) -> AppResult<tauri::ipc::Response> {
+    let service = service.inner().clone();
+    let img = tokio::task::spawn_blocking(move || service.tile(req))
+        .await
+        .map_err(|e| AppError::Other(e.to_string()))??;
+    Ok(tauri::ipc::Response::new(crate::render::raster::to_wire(img.as_ref())))
+}
+
+/// A whole page as raw RGBA (same wire format) — OCR and print.
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+pub async fn render_page_rgba(
+    service: tauri::State<'_, crate::render::service::RenderService>,
+    path: String,
+    page: u32,
+    scale: f64,
+) -> AppResult<tauri::ipc::Response> {
+    let service = service.inner().clone();
+    let img = tokio::task::spawn_blocking(move || {
+        service.page(
+            crate::render::service::internal_id(),
+            path,
+            page,
+            scale,
+            crate::render::scheduler::Priority::Visible,
+        )
+    })
+    .await
+    .map_err(|e| AppError::Other(e.to_string()))??;
+    Ok(tauri::ipc::Response::new(crate::render::raster::to_wire(img.as_ref())))
+}
+
+/// Drop queued tile jobs; a running one finishes and is discarded.
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+pub fn cancel_renders(service: tauri::State<'_, crate::render::service::RenderService>, ids: Vec<u64>) {
+    service.cancel(&ids);
+}

@@ -107,3 +107,37 @@ fn encode_png_produces_a_png() {
     let png = encode_png(&img).unwrap();
     assert_eq!(&png[0..8], b"\x89PNG\r\n\x1a\n");
 }
+
+use qyra_lib::commands::render::ActiveDocument;
+use qyra_lib::commands::render_worker::RenderWorker;
+use qyra_lib::render::scheduler::Priority;
+use qyra_lib::render::service::{RenderService, TileReq};
+
+fn service() -> RenderService {
+    RenderService::new(RenderWorker::new(ActiveDocument::new()), 2)
+}
+
+fn req(id: u64, path: &str, tx: u32, ty: u32) -> TileReq {
+    TileReq { id, path: path.to_string(), page: 1, scale: 2.0, tx, ty, priority: Priority::Visible }
+}
+
+#[test]
+fn service_renders_a_tile_matching_geometry() {
+    let path = fixture("text.pdf").to_string_lossy().into_owned();
+    let img = service().tile(req(1, &path, 1, 0)).unwrap().expect("tile in range");
+    // text.pdf is Letter: 1224 x 1584 at scale 2 → tile (1,0) is 512 wide.
+    assert_eq!((img.width, img.height), (512, 512));
+}
+
+#[test]
+fn service_returns_none_for_tile_outside_page() {
+    let path = fixture("text.pdf").to_string_lossy().into_owned();
+    assert!(service().tile(req(1, &path, 99, 0)).unwrap().is_none());
+}
+
+#[test]
+fn service_renders_whole_page() {
+    let path = fixture("text.pdf").to_string_lossy().into_owned();
+    let img = service().page(1, path, 1, 1.0, Priority::Visible).unwrap().unwrap();
+    assert_eq!((img.width, img.height), (612, 792));
+}

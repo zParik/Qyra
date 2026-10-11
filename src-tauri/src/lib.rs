@@ -269,6 +269,12 @@ pub fn run() {
     // can reuse the same cached documents without a tauri::State parameter.
     #[cfg(not(target_os = "android"))]
     commands::render_worker::set_global(render_worker.clone());
+    // Tile pool for the tiled render pipeline; shares the doc thread above.
+    #[cfg(not(target_os = "android"))]
+    let render_service = render::service::RenderService::new(
+        render_worker.clone(),
+        render::service::RenderService::default_threads(),
+    );
 
     let builder = tauri::Builder::default()
         .manage(commands::cache::SessionCacheState::new())
@@ -338,6 +344,8 @@ pub fn run() {
     // Register the dedicated MuPDF render worker (owns the open-document cache).
     #[cfg(not(target_os = "android"))]
     let builder = builder.manage(render_worker);
+    #[cfg(not(target_os = "android"))]
+    let builder = builder.manage(render_service);
 
     // Updater not applicable on Android (Play Store handles updates)
     #[cfg(not(target_os = "android"))]
@@ -369,6 +377,10 @@ pub fn run() {
             commands::render::render_thumbnail,
             commands::render::pdf_to_images,
             commands::render::get_page_links,
+            commands::render::doc_open,
+            commands::render::render_tile,
+            commands::render::render_page_rgba,
+            commands::render::cancel_renders,
             links::add_link,
             links::remove_link,
             create::images_to_pdf,
