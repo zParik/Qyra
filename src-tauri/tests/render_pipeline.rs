@@ -141,3 +141,18 @@ fn service_renders_whole_page() {
     let img = service().page(1, path, 1, 1.0, Priority::Visible).unwrap().unwrap();
     assert_eq!((img.width, img.height), (612, 792));
 }
+
+use qyra_lib::render::thumbs::{thumb_png, ThumbCache};
+
+#[test]
+fn thumbnail_is_png_of_requested_width_and_cached() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = ThumbCache::new(dir.path().to_path_buf(), 1 << 24);
+    let path = fixture("text.pdf").to_string_lossy().into_owned();
+    let svc = service();
+    let png = thumb_png(&svc, &cache, &path, 1, 256).unwrap();
+    let img = image::load_from_memory(&png).unwrap();
+    assert_eq!(img.width(), 256);
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1, "written to disk cache");
+    assert_eq!(thumb_png(&svc, &cache, &path, 1, 256).unwrap(), png, "cache hit is identical");
+}

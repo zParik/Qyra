@@ -3,3 +3,4 @@ pub mod geometry;
 pub mod raster;
 pub mod scheduler;
 pub mod service;
+pub mod thumbs;

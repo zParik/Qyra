@@ -309,6 +309,16 @@ pub fn run() {
             let thumb_store = commands::thumb_store::ThumbStore::new(app.handle())
                 .expect("failed to initialize thumb store");
             app.manage(thumb_store);
+            // Lossless page thumbnails for the `qyra` URI scheme (bounded LRU).
+            #[cfg(not(target_os = "android"))]
+            {
+                let dir = app
+                    .path()
+                    .app_cache_dir()
+                    .map(|d| d.join("thumbs-v2"))
+                    .unwrap_or_else(|_| std::env::temp_dir().join("qyra-thumbs-v2"));
+                app.manage(render::thumbs::ThumbCache::new(dir, 256 * 1024 * 1024));
+            }
             // Desktop: "Open with" passes the file path as a CLI arg.
             #[cfg(not(target_os = "android"))]
             {
@@ -346,6 +356,37 @@ pub fn run() {
     let builder = builder.manage(render_worker);
     #[cfg(not(target_os = "android"))]
     let builder = builder.manage(render_service);
+
+    // `qyra://localhost/thumb/<page>?path=..&w=..` (http://qyra.localhost on
+    // Windows) → PNG thumbnail. Rendering runs off the webview's thread.
+    #[cfg(not(target_os = "android"))]
+    let builder = builder.register_asynchronous_uri_scheme_protocol("qyra", |ctx, request, responder| {
+        let app = ctx.app_handle().clone();
+        let pq = request
+            .uri()
+            .path_and_query()
+            .map(|p| p.as_str().to_string())
+            .unwrap_or_default();
+        std::thread::spawn(move || {
+            let reply = |status: u16, ctype: &str, body: Vec<u8>| {
+                tauri::http::Response::builder()
+                    .status(status)
+                    .header(tauri::http::header::CONTENT_TYPE, ctype)
+                    .header(tauri::http::header::CACHE_CONTROL, "no-cache")
+                    .body(body)
+                    .unwrap()
+            };
+            let Some((path, page, width)) = render::thumbs::parse_thumb_uri(&pq) else {
+                return responder.respond(reply(400, "text/plain", b"bad thumbnail url".to_vec()));
+            };
+            let service = app.state::<render::service::RenderService>();
+            let cache = app.state::<render::thumbs::ThumbCache>();
+            match render::thumbs::thumb_png(&service, &cache, &path, page, width) {
+                Ok(png) => responder.respond(reply(200, "image/png", png)),
+                Err(e) => responder.respond(reply(500, "text/plain", e.to_string().into_bytes())),
+            }
+        });
+    });
 
     // Updater not applicable on Android (Play Store handles updates)
     #[cfg(not(target_os = "android"))]
