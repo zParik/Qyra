@@ -499,7 +499,7 @@ mod tests {
         // Row 0: [2, 10, 20]  → [10, 20]
         // Row 1: [2, 1, 2]    → [10+1, 20+2] = [11, 22]
         let data = [2u8, 10, 20, 2, 1, 2];
-        let out = apply_png_predictor(&data, 2).unwrap();
+        let out = apply_png_predictor(&data, 2, 1).unwrap();
         assert_eq!(out, vec![10, 20, 11, 22]);
     }
 

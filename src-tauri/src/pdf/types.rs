@@ -211,7 +211,7 @@ impl PdfStream {
         };
 
         match filter_name {
-            b"FlateDecode" | b"Fl" => self.decode_flate(),
+            b"FlateDecode" | b"Fl" => decode_flate(&self.raw_bytes, self.decode_parms(0)),
             b"DCTDecode" | b"DCT" => {
                 // JPEG — raw bytes are already the JPEG payload
                 Ok(self.raw_bytes.clone())
@@ -225,18 +225,12 @@ impl PdfStream {
 
     fn decode_chain(&self, filters: &[PdfObject]) -> Result<Vec<u8>, PdfError> {
         let mut data = self.raw_bytes.clone();
-        for filter in filters {
+        for (i, filter) in filters.iter().enumerate() {
             let name = filter
                 .as_name()
                 .ok_or_else(|| PdfError::ParseError("Filter chain element is not a Name".into()))?;
             data = match name {
-                b"FlateDecode" | b"Fl" => {
-                    let tmp = PdfStream {
-                        dict: self.dict.clone(),
-                        raw_bytes: data,
-                    };
-                    tmp.decode_flate()?
-                }
+                b"FlateDecode" | b"Fl" => decode_flate(&data, self.decode_parms(i))?,
                 b"DCTDecode" | b"DCT" => data,
                 b"Identity" => data,
                 other => {
@@ -249,41 +243,44 @@ impl PdfStream {
         Ok(data)
     }
 
-    fn decode_flate(&self) -> Result<Vec<u8>, PdfError> {
-        use flate2::read::ZlibDecoder;
-        use std::io::Read;
-
-        let mut decoder = ZlibDecoder::new(self.raw_bytes.as_slice());
-        let mut out = Vec::new();
-        decoder.read_to_end(&mut out).map_err(|e| {
-            PdfError::ParseError(format!("FlateDecode decompression failed: {}", e))
-        })?;
-
-        // Apply PNG predictor if present
-        if let Some(parms) = self.dict.get(b"DecodeParms") {
-            if let Some(dict) = parms.as_dict() {
-                if let Some(pred) = dict.get(b"Predictor").and_then(|p| p.as_integer()) {
-                    if pred >= 10 {
-                        let colors = dict
-                            .get(b"Colors")
-                            .and_then(|v| v.as_integer())
-                            .unwrap_or(1) as usize;
-                        let bpc = dict
-                            .get(b"BitsPerComponent")
-                            .and_then(|v| v.as_integer())
-                            .unwrap_or(8) as usize;
-                        let columns = dict
-                            .get(b"Columns")
-                            .and_then(|v| v.as_integer())
-                            .unwrap_or(1) as usize;
-                        let row_width = (colors * bpc * columns + 7) / 8;
-                        out = apply_png_predictor(&out, row_width)?;
-                    }
-                }
-            }
+    /// The `/DecodeParms` dict for the filter at `index`. A single dict applies
+    /// to every filter; an array holds one entry (dict or null) per filter.
+    fn decode_parms(&self, index: usize) -> Option<&PdfDict> {
+        match self.dict.get(b"DecodeParms")? {
+            PdfObject::Dictionary(d) => Some(d),
+            PdfObject::Array(arr) => arr.get(index)?.as_dict(),
+            _ => None,
         }
+    }
+}
 
-        Ok(out)
+fn decode_flate(raw: &[u8], parms: Option<&PdfDict>) -> Result<Vec<u8>, PdfError> {
+    use flate2::read::ZlibDecoder;
+    use std::io::Read;
+
+    let mut decoder = ZlibDecoder::new(raw);
+    let mut out = Vec::new();
+    decoder.read_to_end(&mut out).map_err(|e| {
+        PdfError::ParseError(format!("FlateDecode decompression failed: {}", e))
+    })?;
+
+    let Some(parms) = parms else { return Ok(out) };
+    let int = |key: &[u8], default: i64| parms.get(key).and_then(|v| v.as_integer()).unwrap_or(default);
+    match int(b"Predictor", 1) {
+        p if p <= 1 => Ok(out),
+        // TIFF predictor 2 is not implemented. Passing the still-predicted
+        // bytes on as "decoded" would corrupt the stream when rewritten.
+        2 => Err(PdfError::UnsupportedFilter("TIFF predictor 2".into())),
+        p if p >= 10 => {
+            let colors = int(b"Colors", 1).max(1) as usize;
+            let bpc = int(b"BitsPerComponent", 8).max(1) as usize;
+            let columns = int(b"Columns", 1).max(1) as usize;
+            let row_width = (colors * bpc * columns + 7) / 8;
+            // PNG filters reference the byte one whole PIXEL back (min 1 byte).
+            let bpp = ((colors * bpc + 7) / 8).max(1);
+            apply_png_predictor(&out, row_width, bpp)
+        }
+        p => Err(PdfError::UnsupportedFilter(format!("predictor {p}"))),
     }
 }
 
@@ -291,7 +288,10 @@ impl PdfStream {
 ///
 /// Each row starts with a 1-byte filter type:
 ///   0 = None, 1 = Sub, 2 = Up, 3 = Average, 4 = Paeth
-pub fn apply_png_predictor(data: &[u8], row_width: usize) -> Result<Vec<u8>, PdfError> {
+///
+/// `bpp` is the byte distance to the corresponding byte of the pixel to the
+/// left (`ceil(Colors * BitsPerComponent / 8)`, at least 1).
+pub fn apply_png_predictor(data: &[u8], row_width: usize, bpp: usize) -> Result<Vec<u8>, PdfError> {
     if row_width == 0 {
         return Ok(data.to_vec());
     }
@@ -317,7 +317,7 @@ pub fn apply_png_predictor(data: &[u8], row_width: usize) -> Result<Vec<u8>, Pdf
             1 => {
                 // Sub
                 for i in 0..row_width {
-                    let left = if i >= 1 { cur[i - 1] } else { 0 };
+                    let left = if i >= bpp { cur[i - bpp] } else { 0 };
                     cur[i] = raw[i].wrapping_add(left);
                 }
             }
@@ -330,7 +330,7 @@ pub fn apply_png_predictor(data: &[u8], row_width: usize) -> Result<Vec<u8>, Pdf
             3 => {
                 // Average
                 for i in 0..row_width {
-                    let left = if i >= 1 { cur[i - 1] as u16 } else { 0 };
+                    let left = if i >= bpp { cur[i - bpp] as u16 } else { 0 };
                     let up = prev_row[i] as u16;
                     cur[i] = raw[i].wrapping_add(((left + up) / 2) as u8);
                 }
@@ -338,9 +338,9 @@ pub fn apply_png_predictor(data: &[u8], row_width: usize) -> Result<Vec<u8>, Pdf
             4 => {
                 // Paeth
                 for i in 0..row_width {
-                    let a = if i >= 1 { cur[i - 1] } else { 0 };
+                    let a = if i >= bpp { cur[i - bpp] } else { 0 };
                     let b = prev_row[i];
-                    let c = if i >= 1 { prev_row[i - 1] } else { 0 };
+                    let c = if i >= bpp { prev_row[i - bpp] } else { 0 };
                     cur[i] = raw[i].wrapping_add(paeth(a, b, c));
                 }
             }
@@ -406,5 +406,83 @@ impl XrefTable {
                 self.trailer.0.push((k, v));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pdf::writer::object_stream::flate_compress;
+
+    fn parms(colors: i64, bpc: i64, columns: i64, predictor: i64) -> PdfDict {
+        let mut d = PdfDict::new();
+        d.set(b"Predictor", PdfObject::Integer(predictor));
+        d.set(b"Colors", PdfObject::Integer(colors));
+        d.set(b"BitsPerComponent", PdfObject::Integer(bpc));
+        d.set(b"Columns", PdfObject::Integer(columns));
+        d
+    }
+
+    fn flate_stream(filtered: &[u8], decode_parms: PdfObject, filter: PdfObject) -> PdfStream {
+        let mut dict = PdfDict::new();
+        dict.set(b"Filter", filter);
+        dict.set(b"DecodeParms", decode_parms);
+        PdfStream { dict, raw_bytes: flate_compress(filtered) }
+    }
+
+    #[test]
+    fn png_sub_predictor_steps_back_one_pixel_for_rgb() {
+        // One RGB row of two pixels, Sub filter: each byte adds the byte one
+        // PIXEL (3 bytes) to its left, not the previous byte.
+        let filtered = [1u8, 10, 20, 30, 1, 2, 3];
+        let s = flate_stream(
+            &filtered,
+            PdfObject::Dictionary(parms(3, 8, 2, 15)),
+            PdfObject::Name(b"FlateDecode".to_vec()),
+        );
+        assert_eq!(s.decode().unwrap(), vec![10, 20, 30, 11, 22, 33]);
+    }
+
+    #[test]
+    fn png_paeth_predictor_uses_left_pixel_for_rgb() {
+        // Row 0 (None): two flat RGB pixels. Row 1 (Paeth): a jump of 100 in the
+        // first byte only. With a flat row above, Paeth predicts from the left
+        // NEIGHBOUR PIXEL, so byte 3 repeats byte 0 (110) while bytes 1-2 and
+        // 4-5 stay 10. A one-byte step would smear 110 into byte 1 instead.
+        let filtered = [0u8, 10, 10, 10, 10, 10, 10, 4, 100, 0, 0, 0, 0, 0];
+        let s = flate_stream(
+            &filtered,
+            PdfObject::Dictionary(parms(3, 8, 2, 15)),
+            PdfObject::Name(b"FlateDecode".to_vec()),
+        );
+        assert_eq!(
+            s.decode().unwrap(),
+            vec![10, 10, 10, 10, 10, 10, 110, 10, 10, 110, 10, 10]
+        );
+    }
+
+    #[test]
+    fn decode_parms_array_form_applies_predictor() {
+        // `/Filter [/FlateDecode] /DecodeParms [<<...>>]` is the array spelling
+        // of the same thing; the predictor must still be undone.
+        let filtered = [2u8, 10, 20, 2, 1, 2];
+        let s = flate_stream(
+            &filtered,
+            PdfObject::Array(vec![PdfObject::Dictionary(parms(1, 8, 2, 12))]),
+            PdfObject::Array(vec![PdfObject::Name(b"FlateDecode".to_vec())]),
+        );
+        assert_eq!(s.decode().unwrap(), vec![10, 20, 11, 22]);
+    }
+
+    #[test]
+    fn tiff_predictor_is_rejected_not_passed_through() {
+        // Predictor 2 (TIFF) is not implemented. Returning the still-predicted
+        // bytes as if decoded would corrupt the stream once rewritten.
+        let s = flate_stream(
+            &[1u8, 2, 3],
+            PdfObject::Dictionary(parms(1, 8, 3, 2)),
+            PdfObject::Name(b"FlateDecode".to_vec()),
+        );
+        assert!(s.decode().is_err());
     }
 }
