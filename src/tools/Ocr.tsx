@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ToolLayout } from "../components/ToolLayout";
 import { DropZone } from "../components/DropZone";
 import { useAppStore } from "../store/useAppStore";
@@ -31,6 +31,10 @@ function formatBytes(bytes: number): string {
 export default function Ocr() {
   const files = useAppStore((s) => s.files);
   const clearFiles = useAppStore((s) => s.clearFiles);
+  const reset = useAppStore((s) => s.reset);
+  // Start empty: the file list is shared with the other tool pages, so files
+  // added in Merge or Images to PDF showed up (and were OCR'd) here.
+  useEffect(() => { clearFiles(); reset(); }, [clearFiles, reset]);
   const file = files[0];
 
   const [status, setStatus] = useState<Status>("idle");
