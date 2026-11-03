@@ -436,17 +436,12 @@ fn transform_object(
 ///
 /// Capped to half the cores (min 2, max 8) so a compression never pins every
 /// core, and at most that many full-resolution images decode at once (memory).
-/// Phones: at most 2 workers (tighter memory + thermal headroom). Worker threads
-/// run at below-normal priority so they yield to the UI/audio.
+/// Worker threads run at below-normal priority so they yield to the UI/audio.
 fn build_compress_pool() -> Option<rayon::ThreadPool> {
     let cores = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(2);
-    let workers = if cfg!(target_os = "android") {
-        cores.saturating_sub(1).clamp(1, 2)
-    } else {
-        (cores / 2).clamp(2, 8).min(cores.max(1))
-    };
+    let workers = (cores / 2).clamp(2, 8).min(cores.max(1));
     rayon::ThreadPoolBuilder::new()
         .num_threads(workers)
         .thread_name(|i| format!("qyra-compress-{i}"))

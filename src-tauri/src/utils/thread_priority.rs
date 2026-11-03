@@ -15,10 +15,7 @@ pub fn lower_current_thread_priority() {
     }
 }
 
-// unix covers Linux, macOS AND Android (bionic has setpriority; libc is a dep on
-// all three). Phones especially need this so the compressor yields instead of
-// cooking the CPU / tripping thermal throttling. Used by the compressor pool
-// and the render tile pool.
+// Used by the compressor pool, the render tile pool and the rayon global pool.
 #[cfg(unix)]
 pub fn lower_current_thread_priority() {
     // setpriority(PRIO_PROCESS, 0, ..) applies to the calling thread on Linux.

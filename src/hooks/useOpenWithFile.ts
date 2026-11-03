@@ -31,24 +31,14 @@ export function useOpenWithFile() {
       openPath(event.payload);
     }).then((fn) => { cleanup = fn; });
 
-    // Poll once on mount — fixes cold-start race where Rust emits before React
-    // listener is registered.
+    // The file Qyra was launched with ("Open with"). Rust holds it until asked,
+    // so it cannot be lost to a listener that is not registered yet.
     invoke<string | null>("get_pending_open").then((path) => {
       if (path) openPath(path);
     }).catch(() => {});
 
-    // Warm-start foreground fix: when app is already resumed and onNewIntent fires,
-    // MainActivity evals this DOM event so we re-drain the marker immediately.
-    const onPendingOpen = () => {
-      invoke<string | null>("get_pending_open").then((path) => {
-        if (path) openPath(path);
-      }).catch(() => {});
-    };
-    document.addEventListener("qyra-pending-open", onPendingOpen);
-
     return () => {
       cleanup?.();
-      document.removeEventListener("qyra-pending-open", onPendingOpen);
     };
   }, [openPath]);
 }

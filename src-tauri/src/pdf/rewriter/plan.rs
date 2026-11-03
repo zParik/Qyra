@@ -27,11 +27,7 @@ pub type PlanMap = HashMap<ObjectId, ImagePlan>;
 
 /// Largest source image (in pixels) we'll fully decode into RAM. A W×H image
 /// costs ~W·H·4 bytes decoded before it can be downsampled, so this caps peak
-/// memory. Phones get a tight budget to stay clear of the OOM killer; desktops
-/// get a generous one. Images over budget are left untouched.
-#[cfg(target_os = "android")]
-const MAX_SOURCE_PIXELS: u64 = 16_000_000; // ~64 MB RGBA, ~4000×4000
-#[cfg(not(target_os = "android"))]
+/// memory. Images over budget are left untouched.
 const MAX_SOURCE_PIXELS: u64 = 120_000_000;
 
 /// Walk every image XObject and produce its `ImagePlan`.

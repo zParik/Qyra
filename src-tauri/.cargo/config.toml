@@ -1,9 +1,6 @@
-# Cross-compilation settings
-
 [env]
-# yeslogic-fontconfig-sys (pulled in by printpdf → font-kit) tries to use
-# pkg-config to find libfontconfig during cross-compilation to Android, which
-# fails because fontconfig is a desktop-only library.
-# Setting this makes the crate use dlopen at runtime instead — on Android the
-# dlopen will simply fail gracefully, and MuPDF falls back to its bundled fonts.
+# yeslogic-fontconfig-sys (pulled in by MuPDF's system-fonts → font-kit) loads
+# fontconfig with dlopen at runtime instead of linking it, so builds need no
+# fontconfig development package. Without fontconfig MuPDF falls back to its
+# bundled fonts.
 RUST_FONTCONFIG_DLOPEN = "1"

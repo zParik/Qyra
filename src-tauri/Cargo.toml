@@ -35,12 +35,11 @@ lopdf = "0.40"
 rand = "0.10"
 # zlib-rs backend: a pure-Rust deflate implementation that is markedly faster
 # than the default miniz_oxide, with no C/cmake build dependency (keeps the
-# Windows + Android builds simple). The native compressor recompresses every
+# Windows build simple). The native compressor recompresses every
 # Flate stream, so this speeds the hot path 2-3x. Output stays standard zlib.
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 image = { version = "0.25", features = ["png", "jpeg", "webp"] }
-# Memory-map PDF inputs so huge files are not read into the heap (no OOM at read,
-# especially on Android). Pure-Rust, supports Windows/unix/Android.
+# Memory-map PDF inputs so huge files are not read into the heap (no OOM at read).
 memmap2 = "0.9"
 tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread", "macros"] }
 rayon = "1"
@@ -52,21 +51,10 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 # HTML, EPUB, image files) and its JavaScript engine are left out.
 # tesseract stays for OCR.
 mupdf = { version = "0.6", default-features = false, features = ["system-fonts", "tesseract"] }
-
-# Updater only makes sense on desktop (Play Store handles app-store updates on Android).
-# mupdf-sys 0.6.0 ships wrapper/context.c which #includes "androidfonts.c" on Android
-# but forgets to ship that file. The CI workflow drops a stub androidfonts.c into the
-# fetched crate before `cargo build` so the C side links.
-[target.'cfg(not(target_os = "android"))'.dependencies]
 tauri-plugin-updater = "2"
 
-[target.'cfg(target_os = "android")'.dependencies]
-jni = { version = "0.21", default-features = false }
-ndk-context = "0.1"
-libc = "0.2"
-
-# libc on unix desktop for setpriority() in the compressor's thread scheduling.
-[target.'cfg(all(unix, not(target_os = "android")))'.dependencies]
+# libc on unix for setpriority() in the worker thread scheduling.
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 # ── Build profiles ────────────────────────────────────────────────────────────

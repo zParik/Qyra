@@ -9,7 +9,6 @@ pub struct OutlineNode {
 
 // ── Desktop: use MuPDF (handles all dest formats, encodings, named dests) ─────
 
-#[cfg(not(target_os = "android"))]
 fn convert_outlines(outlines: Vec<mupdf::Outline>) -> Vec<OutlineNode> {
     outlines
         .into_iter()
@@ -25,7 +24,6 @@ fn convert_outlines(outlines: Vec<mupdf::Outline>) -> Vec<OutlineNode> {
         .collect()
 }
 
-#[cfg(not(target_os = "android"))]
 fn outlines_of(doc: &mupdf::Document) -> AppResult<Vec<OutlineNode>> {
     let outlines = doc.outlines().map_err(|e| AppError::Pdf(e.to_string()))?;
     Ok(convert_outlines(outlines))
@@ -33,7 +31,6 @@ fn outlines_of(doc: &mupdf::Document) -> AppResult<Vec<OutlineNode>> {
 
 /// Read the outline tree, reusing the render worker's open-document cache when
 /// the app is running. Falls back to opening directly (e.g. in tests).
-#[cfg(not(target_os = "android"))]
 fn read_outline(path: String) -> AppResult<Vec<OutlineNode>> {
     match crate::commands::render_worker::global() {
         Some(worker) => worker.with(path, outlines_of),
@@ -45,31 +42,20 @@ fn read_outline(path: String) -> AppResult<Vec<OutlineNode>> {
 }
 
 #[tauri::command]
-#[cfg(not(target_os = "android"))]
 pub async fn get_outline(path: String) -> AppResult<Vec<OutlineNode>> {
     tokio::task::spawn_blocking(move || read_outline(path))
         .await
         .map_err(|e| AppError::Other(e.to_string()))?
 }
 
-// ── Android stub ───────────────────────────────────────────────────────────────
-
-#[tauri::command]
-#[cfg(target_os = "android")]
-pub async fn get_outline(_path: String) -> AppResult<Vec<OutlineNode>> {
-    Ok(vec![])
-}
-
 // ── Auto-outline detection from font-size jumps ────────────────────────────────
 
-#[cfg(not(target_os = "android"))]
 struct HeadingCandidate {
     text: String,
     height: f32,
     page: u32,
 }
 
-#[cfg(not(target_os = "android"))]
 fn detect_headings(path: &str, max_pages: usize) -> AppResult<Vec<HeadingCandidate>> {
     let doc = mupdf::Document::open(path).map_err(|e| AppError::Pdf(e.to_string()))?;
     let page_count = doc.page_count().map_err(|e| AppError::Pdf(e.to_string()))? as usize;
@@ -121,7 +107,6 @@ fn detect_headings(path: &str, max_pages: usize) -> AppResult<Vec<HeadingCandida
     Ok(filter_headings(all_heights, candidates))
 }
 
-#[cfg(not(target_os = "android"))]
 fn filter_headings(
     mut all_heights: Vec<f32>,
     candidates: Vec<HeadingCandidate>,
@@ -138,7 +123,6 @@ fn filter_headings(
         .collect()
 }
 
-#[cfg(not(target_os = "android"))]
 fn bucket_into_tiers(candidates: &[HeadingCandidate]) -> Vec<OutlineNode> {
     if candidates.is_empty() { return Vec::new(); }
 
@@ -199,7 +183,6 @@ fn bucket_into_tiers(candidates: &[HeadingCandidate]) -> Vec<OutlineNode> {
 }
 
 #[tauri::command]
-#[cfg(not(target_os = "android"))]
 pub async fn detect_outline(path: String, max_pages: Option<usize>) -> AppResult<Vec<OutlineNode>> {
     let cap = max_pages.unwrap_or(500).max(1);
     tokio::task::spawn_blocking(move || -> AppResult<Vec<OutlineNode>> {
@@ -208,10 +191,4 @@ pub async fn detect_outline(path: String, max_pages: Option<usize>) -> AppResult
     })
     .await
     .map_err(|e| AppError::Other(e.to_string()))?
-}
-
-#[tauri::command]
-#[cfg(target_os = "android")]
-pub async fn detect_outline(_path: String, _max_pages: Option<usize>) -> AppResult<Vec<OutlineNode>> {
-    Ok(vec![])
 }

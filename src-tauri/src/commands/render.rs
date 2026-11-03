@@ -30,7 +30,6 @@ pub struct SearchHit {
 /// Returns coordinates normalised to [0, 1] relative to page dimensions.
 /// `page` is 1-indexed.
 #[tauri::command]
-#[cfg(not(target_os = "android"))]
 pub async fn get_text_page(
     worker: tauri::State<'_, crate::commands::render_worker::RenderWorker>,
     path: String,
@@ -42,20 +41,10 @@ pub async fn get_text_page(
         .map_err(|e| AppError::Other(e.to_string()))?
 }
 
-#[tauri::command]
-#[cfg(target_os = "android")]
-pub async fn get_text_page(
-    _path: String,
-    _page: u32,
-) -> AppResult<Vec<TextLine>> {
-    Ok(vec![])
-}
-
 /// Full-document text search via MuPDF (case-insensitive).
 /// Returns one entry per page that contains the query, with match count.
 /// Runs all pages in a single spawn_blocking — no repeated document opens.
 #[tauri::command]
-#[cfg(not(target_os = "android"))]
 pub async fn search_pdf(path: String, query: String) -> AppResult<Vec<SearchHit>> {
     tokio::task::spawn_blocking(move || -> AppResult<Vec<SearchHit>> {
         let doc = mupdf::Document::open(&path)?;
@@ -93,17 +82,10 @@ pub async fn search_pdf(path: String, query: String) -> AppResult<Vec<SearchHit>
     .map_err(|e| AppError::Other(e.to_string()))?
 }
 
-#[tauri::command]
-#[cfg(target_os = "android")]
-pub async fn search_pdf(_path: String, _query: String) -> AppResult<Vec<SearchHit>> {
-    Ok(vec![])
-}
-
 /// Extract link annotations from a PDF page via MuPDF.
 /// Returns normalized [0, 1] coordinates and the URI string for each link.
 /// `page` is 1-indexed.
 #[tauri::command]
-#[cfg(not(target_os = "android"))]
 pub async fn get_page_links(
     worker: tauri::State<'_, crate::commands::render_worker::RenderWorker>,
     path: String,
@@ -113,12 +95,6 @@ pub async fn get_page_links(
     tokio::task::spawn_blocking(move || worker.links(path, page))
         .await
         .map_err(|e| AppError::Other(e.to_string()))?
-}
-
-#[tauri::command]
-#[cfg(target_os = "android")]
-pub async fn get_page_links(_path: String, _page: u32) -> AppResult<Vec<PageLink>> {
-    Ok(vec![])
 }
 
 #[derive(Serialize)]
@@ -133,7 +109,6 @@ pub struct PageLink {
 
 /// Export every page of a PDF as an image file using MuPDF.
 #[tauri::command]
-#[cfg(not(target_os = "android"))]
 pub async fn pdf_to_images(
     path: String,
     format: Option<String>,
@@ -167,22 +142,10 @@ pub async fn pdf_to_images(
     .map_err(|e| AppError::Other(e.to_string()))?
 }
 
-#[tauri::command]
-#[cfg(target_os = "android")]
-pub async fn pdf_to_images(
-    _path: String,
-    _format: Option<String>,
-    _dpi: Option<u32>,
-    _output_dir: Option<String>,
-) -> AppResult<Vec<String>> {
-    Err(AppError::Other("pdf_to_images not supported on Android".to_string()))
-}
-
 // ── Tiled render pipeline ─────────────────────────────────────────────────────
 
 /// Page count, per-page sizes (pt) and a cache-busting version for `path`.
 #[tauri::command]
-#[cfg(not(target_os = "android"))]
 pub async fn doc_open(
     service: tauri::State<'_, crate::render::service::RenderService>,
     path: String,
@@ -195,7 +158,6 @@ pub async fn doc_open(
 
 /// One 512 px tile as raw RGBA (8-byte LE w,h header). 0×0 = cancelled/outside.
 #[tauri::command]
-#[cfg(not(target_os = "android"))]
 pub async fn render_tile(
     service: tauri::State<'_, crate::render::service::RenderService>,
     req: crate::render::service::TileReq,
@@ -207,7 +169,6 @@ pub async fn render_tile(
 
 /// A whole page as raw RGBA (same wire format) — OCR and print.
 #[tauri::command]
-#[cfg(not(target_os = "android"))]
 pub async fn render_page_rgba(
     service: tauri::State<'_, crate::render::service::RenderService>,
     path: String,
@@ -228,14 +189,12 @@ pub async fn render_page_rgba(
 
 /// Drop queued tile jobs; a running one finishes and is discarded.
 #[tauri::command]
-#[cfg(not(target_os = "android"))]
 pub fn cancel_renders(service: tauri::State<'_, crate::render::service::RenderService>, ids: Vec<u64>) {
     service.cancel(&ids);
 }
 
 /// Write one page to an image file at `dpi` — lossless PNG or JPEG (q92), no size cap.
 #[tauri::command]
-#[cfg(not(target_os = "android"))]
 pub async fn export_page_image(path: String, page: u32, dpi: u32, format: String, out: String) -> AppResult<()> {
     tokio::task::spawn_blocking(move || {
         let doc = mupdf::Document::open(&path)?;

@@ -28,7 +28,6 @@ fn file_size(path: &str) -> u64 {
     std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
 }
 
-#[cfg(not(target_os = "android"))]
 fn rasterize_pages(path: &str, dpi: u32) -> AppResult<(String, usize)> {
     use lopdf::content::{Content, Operation};
     use lopdf::{dictionary, Dictionary, Object, Stream};
@@ -134,11 +133,6 @@ fn rasterize_pages(path: &str, dpi: u32) -> AppResult<(String, usize)> {
     let out = temp_output_path(path, "repaired");
     doc.save(&out)?;
     Ok((out, page_count))
-}
-
-#[cfg(target_os = "android")]
-fn rasterize_pages(_path: &str, _dpi: u32) -> AppResult<(String, usize)> {
-    Err(AppError::Other("rasterize repair unavailable on Android".into()))
 }
 
 #[tauri::command]

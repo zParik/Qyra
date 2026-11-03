@@ -1,4 +1,3 @@
-pub mod android_pdf;
 pub mod merge;
 pub mod split;
 pub mod compress;
@@ -6,7 +5,6 @@ pub mod rotate;
 pub mod remove;
 pub mod reorder;
 pub mod render;
-#[cfg(not(target_os = "android"))]
 pub mod render_worker;
 pub mod lopdf_cache;
 pub mod create;
@@ -26,16 +24,11 @@ pub mod watermark;
 pub mod outline;
 pub mod forms;
 pub mod pdf_annotations;
-#[cfg(not(target_os = "android"))]
-pub mod redact;
-#[cfg(target_os = "android")]
-#[path = "redact_android_stub.rs"]
 pub mod redact;
 pub mod crop;
 pub mod flatten;
 pub mod export_text;
 pub mod tabs;
-pub mod folder_pick;
 pub mod repair;
 pub mod anonymize;
 pub mod form_data;

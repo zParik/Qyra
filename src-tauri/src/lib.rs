@@ -10,210 +10,18 @@ pub use error::{AppError, AppResult};
 
 use commands::*;
 use std::sync::Mutex;
-use tauri::{Emitter, Manager};
+use tauri::Manager;
 
-/// Android: drain the pending-open marker file left by MainActivity when the
-/// user opened a PDF via ACTION_VIEW / ACTION_SEND / ACTION_EDIT.
-/// Reads the absolute path, deletes the marker, emits "open-pdf" to the frontend.
-#[cfg(target_os = "android")]
-fn drain_pending_open<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    use std::path::PathBuf;
-    let Ok(files_dir) = app.path().app_local_data_dir() else { return };
-    // app_local_data_dir() on Android resolves to /data/data/<pkg>/files via the Tauri path API.
-    // MainActivity writes the marker into Android `filesDir`, which is the same location.
-    let candidates: Vec<PathBuf> = vec![
-        files_dir.join(".pending_open.txt"),
-        // Fallback in case the Tauri path API resolves to a parent dir
-        files_dir.parent().map(|p| p.join("files/.pending_open.txt")).unwrap_or_default(),
-    ];
-    for marker in candidates {
-        if !marker.exists() { continue; }
-        let Ok(contents) = std::fs::read_to_string(&marker) else { continue };
-        let path = contents.trim().to_string();
-        let _ = std::fs::remove_file(&marker);
-        if !path.is_empty() {
-            let _ = app.emit("open-pdf", path);
-        }
-        return;
-    }
-}
+/// The file passed on the command line ("Open with"), held until the frontend
+/// asks for it. An event emitted at startup is lost if the webview's listener
+/// is not registered yet.
+struct PendingOpen(Mutex<Option<String>>);
 
-/// Android: Tauri command — called by the frontend on mount to retrieve any
-/// PDF path staged by MainActivity (handles both cold-start timing race and
-/// the case where the app was already in the foreground when ACTION_VIEW fired).
-#[cfg(target_os = "android")]
 #[tauri::command]
-fn get_pending_open(app: tauri::AppHandle) -> Option<String> {
-    use std::path::PathBuf;
-    let Ok(files_dir) = app.path().app_local_data_dir() else { return None };
-    let candidates: Vec<PathBuf> = vec![
-        files_dir.join(".pending_open.txt"),
-        files_dir.parent().map(|p| p.join("files/.pending_open.txt")).unwrap_or_default(),
-    ];
-    for marker in candidates {
-        if !marker.exists() { continue; }
-        let Ok(contents) = std::fs::read_to_string(&marker) else { continue };
-        let path = contents.trim().to_string();
-        let _ = std::fs::remove_file(&marker);
-        if !path.is_empty() { return Some(path); }
-        return None;
-    }
-    None
+fn get_pending_open(pending: tauri::State<'_, PendingOpen>) -> Option<String> {
+    pending.0.lock().ok()?.take()
 }
 
-#[cfg(not(target_os = "android"))]
-#[tauri::command]
-fn get_pending_open() -> Option<String> { None }
-
-/// Android: drain the SAF folder-picker marker left by MainActivity when the
-/// user grants access to a folder via the system tree picker. Each marker
-/// line is `<treeUri>\t<childUri>\t<displayName>` for one PDF inside the
-/// tree. We group lines by treeUri (currently always one) and emit a
-/// `folder-picked` Tauri event with `{ tree_uri, children: [{ uri, name }] }`.
-#[cfg(target_os = "android")]
-fn drain_pending_folder<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    use serde::Serialize;
-    use std::path::PathBuf;
-
-    #[derive(Serialize, Clone)]
-    struct FolderChild { uri: String, name: String }
-    #[derive(Serialize, Clone)]
-    struct FolderPicked { tree_uri: String, children: Vec<FolderChild> }
-
-    let Ok(files_dir) = app.path().app_local_data_dir() else { return };
-    let candidates: Vec<PathBuf> = vec![
-        files_dir.join(".pending_folder.txt"),
-        files_dir.parent().map(|p| p.join("files/.pending_folder.txt")).unwrap_or_default(),
-    ];
-    for marker in candidates {
-        if !marker.exists() { continue; }
-        let Ok(contents) = std::fs::read_to_string(&marker) else { continue };
-        let _ = std::fs::remove_file(&marker);
-
-        let mut tree_uri = String::new();
-        let mut children: Vec<FolderChild> = Vec::new();
-        for line in contents.lines() {
-            let mut parts = line.splitn(3, '\t');
-            let Some(tree) = parts.next() else { continue };
-            let Some(uri) = parts.next() else { continue };
-            let name = parts.next().unwrap_or("").to_string();
-            if tree_uri.is_empty() { tree_uri = tree.to_string(); }
-            children.push(FolderChild { uri: uri.to_string(), name });
-        }
-        if !children.is_empty() {
-            let _ = app.emit("folder-picked", FolderPicked { tree_uri, children });
-        }
-        return;
-    }
-}
-
-/// Android: initialize ndk_context so our commands (files.rs / render.rs /
-/// page_count.rs) that call `ndk_context::android_context()` don't panic.
-///
-/// Tauri 2 does NOT auto-initialize ndk-context — it has its own JNI bridge.
-/// We reach into the live JVM via JNI_GetCreatedJavaVMs, walk the
-/// ActivityThread reflection chain to find the Application instance, and feed
-/// both into ndk-context's static. Runs ONCE on startup.
-#[cfg(target_os = "android")]
-pub fn init_ndk_context() -> Result<(), String> {
-    use jni::{sys::JNI_OK, JavaVM};
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    // JNI_GetCreatedJavaVMs lives in libart.so on Android but is NOT in the NDK
-    // libs the linker sees at build time, so we cannot link it statically (the
-    // jni crate's `invocation` feature tries to link libjvm which does not
-    // exist on Android, causing dlopen of our .so to fail at app startup).
-    // Resolve it at runtime via dlsym(RTLD_DEFAULT, ...) instead.
-    type GetCreatedFn = unsafe extern "C" fn(
-        *mut *mut jni::sys::JavaVM,
-        jni::sys::jsize,
-        *mut jni::sys::jsize,
-    ) -> jni::sys::jint;
-
-    static INITIALIZED: AtomicBool = AtomicBool::new(false);
-    if INITIALIZED.load(Ordering::Acquire) {
-        return Ok(());
-    }
-
-    let result: Result<(), String> = (|| unsafe {
-        // On Android Q+ apps live in an isolated linker namespace; RTLD_DEFAULT
-        // does NOT see libart.so where JNI_GetCreatedJavaVMs actually lives.
-        // dlopen the candidates explicitly and dlsym from the resulting handles.
-        let sym_name = b"JNI_GetCreatedJavaVMs\0".as_ptr() as *const _;
-        let mut sym_ptr = libc::dlsym(libc::RTLD_DEFAULT, sym_name);
-        if sym_ptr.is_null() {
-            for lib in [b"libart.so\0".as_ref(), b"libnativehelper.so\0".as_ref(), b"libdvm.so\0".as_ref()] {
-                let handle = libc::dlopen(lib.as_ptr() as *const _, libc::RTLD_NOW | libc::RTLD_GLOBAL);
-                if handle.is_null() { continue; }
-                let s = libc::dlsym(handle, sym_name);
-                if !s.is_null() {
-                    sym_ptr = s;
-                    eprintln!("[qyra] init_ndk_context: resolved JNI_GetCreatedJavaVMs via {:?}", std::ffi::CStr::from_ptr(lib.as_ptr() as *const _));
-                    break;
-                }
-            }
-        }
-        if sym_ptr.is_null() {
-            return Err("dlsym(JNI_GetCreatedJavaVMs) returned null after probing libart.so/libnativehelper.so/libdvm.so".to_string());
-        }
-        let get_created: GetCreatedFn = std::mem::transmute(sym_ptr);
-
-        let mut raw_vm: *mut jni::sys::JavaVM = std::ptr::null_mut();
-        let mut count: jni::sys::jsize = 0;
-        let r = get_created(&mut raw_vm, 1, &mut count);
-        if r != JNI_OK as i32 || count == 0 || raw_vm.is_null() {
-            return Err(format!("no live JVM (result={r} count={count})"));
-        }
-
-        let java_vm = JavaVM::from_raw(raw_vm).map_err(|e| format!("JavaVM::from_raw: {e}"))?;
-        let mut env = java_vm.attach_current_thread().map_err(|e| format!("attach: {e}"))?;
-
-        let at = env
-            .call_static_method(
-                "android/app/ActivityThread",
-                "currentActivityThread",
-                "()Landroid/app/ActivityThread;",
-                &[],
-            )
-            .map_err(|e| format!("currentActivityThread: {e}"))?
-            .l()
-            .map_err(|e| format!("currentActivityThread.l: {e}"))?;
-        if at.is_null() {
-            return Err("currentActivityThread returned null".to_string());
-        }
-
-        let app = env
-            .call_method(&at, "getApplication", "()Landroid/app/Application;", &[])
-            .map_err(|e| format!("getApplication: {e}"))?
-            .l()
-            .map_err(|e| format!("getApplication.l: {e}"))?;
-        if app.is_null() {
-            return Err("getApplication returned null (called too early?)".to_string());
-        }
-
-        let global = env.new_global_ref(&app).map_err(|e| format!("new_global_ref: {e}"))?;
-        let activity_ptr = global.as_raw();
-
-        let vm_ptr = java_vm.get_java_vm_pointer();
-        drop(env);
-
-        std::mem::forget(global);
-        ndk_context::initialize_android_context(vm_ptr as *mut _, activity_ptr as *mut _);
-        std::mem::forget(java_vm);
-        Ok(())
-    })();
-
-    match &result {
-        Ok(()) => {
-            INITIALIZED.store(true, Ordering::Release);
-            eprintln!("[qyra] init_ndk_context: OK");
-        }
-        Err(e) => eprintln!("[qyra] init_ndk_context FAILED: {e}"),
-    }
-    result
-}
-
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // MuPDF rendering at high scales (3.0+) on large pages can exceed the
     // default 2MB Windows thread stack. Bump the minimum stack for any thread
@@ -248,15 +56,12 @@ pub fn run() {
         .build_global();
 
     // The MuPDF doc thread: owns open documents, serves page sizes, display
-    // lists, text and links. Desktop only — Android renders via JNI PdfRenderer.
-    #[cfg(not(target_os = "android"))]
+    // lists, text and links.
     let render_worker = commands::render_worker::RenderWorker::new();
     // Publish a global handle so plain command fns (get_page_count, get_outline)
     // can reuse the same cached documents without a tauri::State parameter.
-    #[cfg(not(target_os = "android"))]
     commands::render_worker::set_global(render_worker.clone());
     // Tile pool for the tiled render pipeline; shares the doc thread above.
-    #[cfg(not(target_os = "android"))]
     let render_service = render::service::RenderService::new(
         render_worker.clone(),
         render::service::RenderService::default_threads(),
@@ -265,7 +70,6 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .manage(commands::crash::CrashLogDir::new())
         .setup(|app| {
-            #[cfg(not(target_os = "android"))]
             if let Some(dir) = commands::crash::install_panic_hook(app.handle()) {
                 if let Ok(mut guard) = app
                     .state::<commands::crash::CrashLogDir>()
@@ -273,12 +77,6 @@ pub fn run() {
                     .lock()
                 {
                     *guard = Some(dir);
-                }
-            }
-            #[cfg(target_os = "android")]
-            {
-                if let Err(e) = init_ndk_context() {
-                    eprintln!("[qyra] startup init_ndk_context failed: {e} (will retry lazily)");
                 }
             }
 
@@ -290,7 +88,6 @@ pub fn run() {
                 });
             app.manage(commands::library::LibraryDb(Mutex::new(conn)));
             // Lossless page thumbnails for the `qyra` URI scheme (bounded LRU).
-            #[cfg(not(target_os = "android"))]
             {
                 // The old data-URL thumbnail store grew without bound; free it.
                 if let Ok(cache) = app.path().app_cache_dir() {
@@ -303,47 +100,18 @@ pub fn run() {
                     .unwrap_or_else(|_| std::env::temp_dir().join("qyra-thumbs-v2"));
                 app.manage(render::thumbs::ThumbCache::new(dir, 256 * 1024 * 1024));
             }
-            // Desktop: "Open with" passes the file path as a CLI arg.
-            #[cfg(not(target_os = "android"))]
-            {
-                let file_path = std::env::args()
-                    .skip(1)
-                    .find(|a| !a.starts_with('-'));
-                if let Some(path) = file_path {
-                    let handle = app.handle().clone();
-                    std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_millis(800));
-                        handle.emit("open-pdf", path).ok();
-                    });
-                }
-            }
-
-            // Android: MainActivity copies the incoming intent's URI into
-            // filesDir/imports/ and writes the absolute path into
-            // filesDir/.pending_open.txt. We poll that marker on startup and
-            // again whenever the activity resumes (handled below in RunEvent::Resumed).
-            #[cfg(target_os = "android")]
-            {
-                let handle = app.handle().clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(800));
-                    drain_pending_open(&handle);
-                    drain_pending_folder(&handle);
-                });
-            }
-
+            // "Open with" passes the file path as a CLI arg.
+            let file_path = std::env::args().skip(1).find(|a| !a.starts_with('-'));
+            app.manage(PendingOpen(Mutex::new(file_path)));
             Ok(())
         });
 
     // Register the dedicated MuPDF render worker (owns the open-document cache).
-    #[cfg(not(target_os = "android"))]
     let builder = builder.manage(render_worker);
-    #[cfg(not(target_os = "android"))]
     let builder = builder.manage(render_service);
 
     // `qyra://localhost/thumb/<page>?path=..&w=..` (http://qyra.localhost on
     // Windows) → PNG thumbnail. Rendering runs off the webview's thread.
-    #[cfg(not(target_os = "android"))]
     let builder = builder.register_asynchronous_uri_scheme_protocol("qyra", |ctx, request, responder| {
         let app = ctx.app_handle().clone();
         let pq = request
@@ -373,8 +141,6 @@ pub fn run() {
         });
     });
 
-    // Updater not applicable on Android (Play Store handles updates)
-    #[cfg(not(target_os = "android"))]
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
 
     builder
@@ -421,9 +187,6 @@ pub fn run() {
             files::open_file,
             files::show_in_folder,
             files::write_bytes,
-            files::get_content_uri_display_name,
-            files::share_file,
-            files::save_to_saf_tree,
             annotate::bake_annotations,
             comments::load_comments,
             comments::save_comments,
@@ -456,7 +219,6 @@ pub fn run() {
             tabs::save_tab_ui_state,
             tabs::get_tab_ui_state,
             tabs::clear_tab_session,
-            folder_pick::request_saf_folder_picker,
             repair::repair_pdf,
             anonymize::anonymize_pdf,
             form_data::export_form_xfdf,
@@ -468,11 +230,5 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
-        .run(|_app_handle, _event| {
-            #[cfg(target_os = "android")]
-            if matches!(_event, tauri::RunEvent::Resumed) {
-                drain_pending_open(_app_handle);
-                drain_pending_folder(_app_handle);
-            }
-        });
+        .run(|_app_handle, _event| {});
 }
