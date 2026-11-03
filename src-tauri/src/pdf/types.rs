@@ -432,11 +432,18 @@ impl XrefTable {
         XrefTable::default()
     }
 
-    /// Merge another table into this one; entries already present are NOT overwritten.
+    /// Merge another table into this one; objects already present are NOT overwritten.
     /// (Used when following /Prev chains — later updates have already been loaded first.)
+    ///
+    /// Matched by object number alone: an update that frees or reuses an
+    /// object bumps its generation, and keying by (number, generation) kept
+    /// the old generation alive beside the new one.
     pub fn merge_older(&mut self, older: XrefTable) {
+        let newer: std::collections::HashSet<u32> = self.entries.keys().map(|(num, _)| *num).collect();
         for (id, entry) in older.entries {
-            self.entries.entry(id).or_insert(entry);
+            if !newer.contains(&id.0) {
+                self.entries.insert(id, entry);
+            }
         }
         // Merge trailer keys that we don't already have
         for (k, v) in older.trailer.0 {
@@ -451,6 +458,18 @@ impl XrefTable {
 mod tests {
     use super::*;
     use crate::pdf::writer::object_stream::flate_compress;
+
+    #[test]
+    fn newer_xref_generation_hides_the_older_one() {
+        let mut newer = XrefTable::new();
+        newer.entries.insert((5, 1), XrefEntry::Free);
+        let mut older = XrefTable::new();
+        older.entries.insert((5, 0), XrefEntry::InUse { offset: 10 });
+        older.entries.insert((6, 0), XrefEntry::InUse { offset: 20 });
+        newer.merge_older(older);
+        assert!(!newer.entries.contains_key(&(5, 0)), "freed object came back");
+        assert!(newer.entries.contains_key(&(6, 0)));
+    }
 
     fn parms(colors: i64, bpc: i64, columns: i64, predictor: i64) -> PdfDict {
         let mut d = PdfDict::new();
