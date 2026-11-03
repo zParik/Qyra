@@ -189,10 +189,10 @@ export default function Ocr() {
           {status === "error" && error && (
             <div style={{
               padding: "10px 12px",
-              background: "rgba(239,68,68,0.08)",
-              border: "1px solid rgba(239,68,68,0.25)",
+              background: "var(--bad-soft)",
+              border: "1px solid var(--bad-line)",
               borderRadius: 4,
-              fontFamily: UI, fontSize: "var(--fs-label)", color: "#ef4444",
+              fontFamily: UI, fontSize: "var(--fs-label)", color: "var(--bad)",
               lineHeight: 1.5,
             }}>
               {error}

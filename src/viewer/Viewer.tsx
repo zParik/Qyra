@@ -1692,7 +1692,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
           {addPageAt !== null && activeTool === "draw" && (
             <div
               className="fixed inset-0 z-30 flex items-center justify-center"
-              style={{ background: "rgba(0,0,0,0.3)" }}
+              style={{ background: "oklch(0.15 0.03 265 / 0.45)" }}
               onClick={() => setAddPageAt(null)}
             >
               <div
@@ -1997,7 +1997,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
                       />
                       <div
                         className="absolute top-2 right-2 text-xs px-1.5 py-0.5 rounded pointer-events-none"
-                        style={{ background: "rgba(0,0,0,0.12)", color: "#888", textTransform: "capitalize" }}
+                        style={{ background: "var(--bg3)", color: "var(--fg2)", textTransform: "capitalize" }}
                       >
                         {vp.template}
                       </div>

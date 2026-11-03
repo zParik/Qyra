@@ -740,12 +740,6 @@
   .outline-row:hover { background: var(--bg3); }
   .outline-row:focus-visible { box-shadow: inset 0 0 0 2px var(--rose); }
   .outline-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .hud {
-    display: inline-flex; align-items: center; gap: var(--space-2);
-    padding: var(--space-1) var(--space-3); border-radius: var(--radius-pill);
-    background: var(--fg0); color: var(--bg0); font-size: var(--fs-label); font-weight: 600; font-variant-numeric: tabular-nums;
-    box-shadow: var(--shadow-pop);
-  }
 
   /* ── Tool pages: shell on top, wood head, one reading column ── */
   .tool-shell { display: flex; flex-direction: column; height: 100%; overflow: hidden; background: var(--bg0); color: var(--fg0); }

@@ -105,8 +105,8 @@ export function CompressPanel({ file, onApplied }: CompressPanelProps) {
         <div
           className="rounded-md p-2.5 text-xs"
           style={{
-            background: "rgba(96, 165, 250, 0.10)",
-            border: "1px solid rgba(96, 165, 250, 0.30)",
+            background: "var(--indigo-soft)",
+            border: "1px solid var(--indigo-line)",
             color: "var(--viewer-text)",
           }}
         >

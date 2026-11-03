@@ -79,7 +79,7 @@ export function DrawPanel() {
                   onClick={() => removeVirtualPage(docPath, vp.id)}
                   className="shrink-0"
                   title="Remove this page"
-                  style={{ color: "#ef4444" }}
+                  style={{ color: "var(--bad)" }}
                 >
                   <IconX className="w-3.5 h-3.5" />
                 </button>

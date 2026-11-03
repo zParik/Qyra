@@ -140,7 +140,7 @@ function AddPageDropdown({ docPath, onClose }: { docPath: string; onClose: () =>
                    vp.afterRealPage >= 9999 ? ' (after end)' :
                    ` (after p.${vp.afterRealPage})`}
                 </span>
-                <button onClick={() => removeVirtualPage(docPath, vp.id)} title="Remove" style={{ color: "#ef4444" }}>
+                <button onClick={() => removeVirtualPage(docPath, vp.id)} title="Remove" style={{ color: "var(--bad)" }}>
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
@@ -346,7 +346,7 @@ export function DrawToolbar({
               style={{
                 background: "transparent",
                 border: "1px solid transparent",
-                color: pageCount <= 1 ? "var(--viewer-text-muted)" : "#ef4444",
+                color: pageCount <= 1 ? "var(--viewer-text-muted)" : "var(--bad)",
                 opacity: pageCount <= 1 ? 0.4 : 1,
                 cursor: pageCount <= 1 ? "not-allowed" : "pointer",
               }}
@@ -524,7 +524,7 @@ export function DrawToolbar({
             className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs shrink-0 transition-colors"
             style={{
               background: "transparent", border: "1px solid transparent",
-              color: strokeCount === 0 ? "var(--viewer-text-muted)" : "#ef4444",
+              color: strokeCount === 0 ? "var(--viewer-text-muted)" : "var(--bad)",
               opacity: strokeCount === 0 ? 0.4 : 1,
               cursor: strokeCount === 0 ? "not-allowed" : "pointer",
             }}

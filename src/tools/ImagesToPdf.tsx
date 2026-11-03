@@ -135,7 +135,7 @@ export default function ImagesToPdf() {
                   onClick={() => removeFile(file.path)}
                   style={{
                     position: "absolute", top: 4, right: 4,
-                    background: "rgba(0,0,0,0.35)", border: "none", borderRadius: 3,
+                    background: "var(--fg0)", border: "none", borderRadius: "var(--radius-1)",
                     width: 18, height: 18, cursor: "pointer",
                     display: "flex", alignItems: "center", justifyContent: "center",
                     color: "rgba(255,255,255,0.85)",

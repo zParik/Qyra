@@ -181,13 +181,13 @@ export function ExportImagesPanel({ file }: ExportImagesPanelProps) {
           className="w-full text-sm px-2 py-1.5 rounded-lg"
           style={{
             background: "var(--viewer-input-bg, var(--viewer-bg))",
-            border: `1px solid ${pageInputError ? "var(--viewer-error, #c00)" : "var(--viewer-border)"}`,
+            border: `1px solid ${pageInputError ? "var(--bad)" : "var(--viewer-border)"}`,
             color: "var(--viewer-text)",
             outline: "none",
           }}
         />
         {pageInputError ? (
-          <p className="text-xs mt-1" style={{ color: "var(--viewer-error, #c00)" }}>
+          <p className="text-xs mt-1" style={{ color: "var(--bad)" }}>
             Invalid range — use e.g. "1-3, 5, 8-10"
           </p>
         ) : resolvedPages && pageInput.trim() !== "" ? (
@@ -267,7 +267,7 @@ export function ExportImagesPanel({ file }: ExportImagesPanelProps) {
       {error && (
         <div
           className="text-xs p-2 rounded"
-          style={{ background: "var(--viewer-error-bg, #fee)", color: "var(--viewer-error, #c00)" }}
+          style={{ background: "var(--bad-soft)", color: "var(--bad)" }}
         >
           {error}
         </div>
