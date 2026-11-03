@@ -63,13 +63,30 @@ pub fn resolve_colorspace(
     cs: &PdfObject,
     resolve: &mut dyn FnMut(ObjectId) -> Option<PdfObject>,
 ) -> ResolvedColorSpace {
+    resolve_cs(cs, resolve, 0)
+}
+
+/// References, /Alternate and Indexed bases followed before giving up. Real
+/// colour spaces need two or three; a cyclic one (a space that refers to
+/// itself) would otherwise recurse until the stack overflows. Giving up means
+/// Unsupported, which leaves the image untouched.
+const MAX_CS_DEPTH: u32 = 8;
+
+fn resolve_cs(
+    cs: &PdfObject,
+    resolve: &mut dyn FnMut(ObjectId) -> Option<PdfObject>,
+    depth: u32,
+) -> ResolvedColorSpace {
+    if depth > MAX_CS_DEPTH {
+        return ResolvedColorSpace::Unsupported;
+    }
     match cs {
         PdfObject::Reference(id) => match resolve(*id) {
-            Some(obj) => resolve_colorspace(&obj, resolve),
+            Some(obj) => resolve_cs(&obj, resolve, depth + 1),
             None => ResolvedColorSpace::Unsupported,
         },
         PdfObject::Name(n) => name_to_cs(n),
-        PdfObject::Array(arr) => resolve_array_cs(arr, resolve),
+        PdfObject::Array(arr) => resolve_array_cs(arr, resolve, depth),
         _ => ResolvedColorSpace::Unsupported,
     }
 }
@@ -86,6 +103,7 @@ fn name_to_cs(n: &[u8]) -> ResolvedColorSpace {
 fn resolve_array_cs(
     arr: &[PdfObject],
     resolve: &mut dyn FnMut(ObjectId) -> Option<PdfObject>,
+    depth: u32,
 ) -> ResolvedColorSpace {
     let head = match arr.first().and_then(|o| match o {
         PdfObject::Name(n) => Some(n.as_slice()),
@@ -108,7 +126,7 @@ fn resolve_array_cs(
             if let Some(d) = dict {
                 if let Some(alt) = d.get(b"Alternate") {
                     let alt = alt.clone();
-                    let r = resolve_colorspace(&alt, resolve);
+                    let r = resolve_cs(&alt, resolve, depth + 1);
                     if r.is_supported() {
                         return r;
                     }
@@ -125,7 +143,7 @@ fn resolve_array_cs(
         }
         b"CalGray" => ResolvedColorSpace::Gray,
         b"CalRGB" => ResolvedColorSpace::Rgb,
-        b"Indexed" | b"I" => resolve_indexed(arr, resolve),
+        b"Indexed" | b"I" => resolve_indexed(arr, resolve, depth),
         // Separation/DeviceN/Lab/Pattern: decoding needs a tint transform or
         // PostScript function evaluator — leave the image untouched.
         _ => ResolvedColorSpace::Unsupported,
@@ -135,12 +153,13 @@ fn resolve_array_cs(
 fn resolve_indexed(
     arr: &[PdfObject],
     resolve: &mut dyn FnMut(ObjectId) -> Option<PdfObject>,
+    depth: u32,
 ) -> ResolvedColorSpace {
     // [/Indexed base hival lookup]
     if arr.len() < 4 {
         return ResolvedColorSpace::Unsupported;
     }
-    let base = resolve_colorspace(&arr[1], resolve);
+    let base = resolve_cs(&arr[1], resolve, depth + 1);
     if !base.is_supported() || matches!(base, ResolvedColorSpace::Indexed { .. }) {
         return ResolvedColorSpace::Unsupported;
     }
@@ -371,6 +390,23 @@ fn index_lookup(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cyclic_colour_spaces_resolve_to_unsupported_instead_of_recursing() {
+        let id: ObjectId = (9, 0);
+        // 9 0 obj 9 0 R endobj
+        let mut self_ref = |_: ObjectId| -> Option<PdfObject> { Some(PdfObject::Reference(id)) };
+        assert!(!resolve_colorspace(&PdfObject::Reference(id), &mut self_ref).is_supported());
+        // 9 0 obj [/Indexed 9 0 R 1 <000000FFFFFF>] endobj
+        let indexed = PdfObject::Array(vec![
+            PdfObject::Name(b"Indexed".to_vec()),
+            PdfObject::Reference(id),
+            PdfObject::Integer(1),
+            PdfObject::HexString(vec![0, 0, 0, 255, 255, 255]),
+        ]);
+        let mut cyc = |_: ObjectId| -> Option<PdfObject> { Some(indexed.clone()) };
+        assert!(!resolve_colorspace(&PdfObject::Reference(id), &mut cyc).is_supported());
+    }
 
     #[test]
     fn name_spaces() {
