@@ -76,4 +76,35 @@ test.describe("viewer", () => {
       )
       .toBe(true);
   });
+
+  test("selecting page text raises the markup popup", async ({ page, mockTauri }) => {
+    const chars = "Hello Qyra".split("").map((c, i) => ({ c, x0: 0.1 + i * 0.02, y0: 0.1, x1: 0.12 + i * 0.02, y1: 0.12 }));
+    await mockTauri({
+      get_setting: "1",
+      get_tab_session: [[{ path: "/x/a.pdf", name: "a.pdf" }], 0],
+      doc_open: { pageCount: 1, pages: [{ w: 612, h: 792 }], version: "1" },
+      get_page_count: 1,
+      get_file_size: 1000,
+      get_text_page: [{ chars, x0: 0.1, y0: 0.1, x1: 0.32, y1: 0.12 }],
+      load_comments: "[]",
+      get_form_fields: [],
+      get_page_links: [],
+      get_outline: [],
+      get_tab_ui_state: [1, 1],
+      render_tile: null,
+    });
+    await page.goto("/view");
+    const layer = page.locator(".textLayer").first();
+    await expect(layer).toContainText("Hello");
+    await layer.evaluate((el) => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const sel = window.getSelection()!;
+      sel.removeAllRanges();
+      sel.addRange(range);
+      document.dispatchEvent(new PointerEvent("pointerup", { button: 0 }));
+    });
+    await expect(page.getByTitle("Highlight")).toBeVisible();
+  });
 });
+

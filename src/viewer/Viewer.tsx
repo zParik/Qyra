@@ -1815,7 +1815,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
           )}
 
           {/* Virtual scroll container — only renders the visible window of slots */}
-          <div ref={contentWrapperRef} style={{ position: "relative", height: totalH }}>
+          <div ref={contentWrapperRef} data-viewer-pages="" style={{ position: "relative", height: totalH }}>
 
             {/* Add-page bar before first page (draw mode) */}
             {activeTool === "draw" && pageSlots.length > 0 && (
