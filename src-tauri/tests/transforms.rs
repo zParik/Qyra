@@ -77,3 +77,21 @@ async fn export_form_xfdf_contains_field_name() {
     let xml = std::fs::read_to_string(&out).expect("read xfdf");
     assert!(xml.contains("full_name"), "xfdf should reference the field, got: {xml}");
 }
+
+#[tokio::test]
+async fn redact_on_a_page_with_annotations_does_not_crash() {
+    // mupdf-rs 0.6 hands out annotations without taking a reference; dropping
+    // them double-frees. Run a few times: a use-after-free does not always
+    // fault on the first pass.
+    for _ in 0..5 {
+        let (_d, out) = temp_output("redacted-annots.pdf");
+        redact_pdf(
+            fixture_str("annotated.pdf"),
+            vec![RedactRegion { page: 1, x0: 0.0, y0: 0.0, x1: 1.0, y1: 1.0 }],
+            Some(out.clone()),
+        )
+        .await
+        .expect("redact");
+        assert_eq!(page_count(&out), 1);
+    }
+}

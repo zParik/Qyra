@@ -106,20 +106,19 @@ pub async fn redact_pdf(
             // but doing it explicitly first guarantees no leaked Contents
             // strings, popup text, or appearance streams survive on those
             // annotations.
+            //
+            // mupdf-rs 0.6's AnnotationIter hands out annotations without
+            // taking a reference, so dropping one frees MuPDF's own: every
+            // annotation is mem::forget'ed (same rule as raster.rs), deleted
+            // ones included.
             let existing: Vec<_> = page.annotations().collect();
             for annot in existing {
-                if let Ok(at) = annot.r#type() {
-                    // never touch annots we're about to create — they don't
-                    // exist yet, so all existing ones are pre-redaction.
-                    if at == PdfAnnotationType::Redact {
-                        continue;
-                    }
-                }
                 // We don't have a direct rect getter exposed for arbitrary
                 // annots in mupdf-rs 0.6, but mupdf's `redact` will strip
                 // intersecting annots automatically. To be defensive, we
                 // delete every non-essential annotation type that commonly
                 // carries text payload, when ANY region is on this page.
+                // (Existing Redact annotations are never among them.)
                 if let Ok(at) = annot.r#type() {
                     let should_drop = matches!(
                         at,
@@ -138,6 +137,7 @@ pub async fn redact_pdf(
                         let _ = page.delete_annotation(&annot);
                     }
                 }
+                std::mem::forget(annot);
             }
 
             // Phase 2: create Redact annotations for each region.
