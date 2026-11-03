@@ -158,7 +158,7 @@ export function CommentPanel({ docPath, onPageSelect, isCommentMode, onToggleMod
               marginTop: 8,
               padding: "6px 12px",
               background: isCommentMode ? "var(--accent-soft)" : "var(--accent)",
-              color: isCommentMode ? "var(--accent)" : "#fff",
+              color: isCommentMode ? "var(--rose)" : "var(--rose-ink)",
               border: "none",
               borderRadius: 6,
               fontFamily: UI,

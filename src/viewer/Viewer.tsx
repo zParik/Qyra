@@ -4,8 +4,6 @@ import { useAppStore } from "../store/useAppStore";
 import { useNotesStore, PageTemplate, VirtualPage } from "../store/useNotesStore";
 
 import { PageStrip } from "./PageStrip";
-import { ScrollPageIndicator } from "./ScrollPageIndicator";
-import { ZoomFab } from "./ZoomFab";
 import { ToolSidebar, ViewerTool } from "./ToolSidebar";
 import { invoke } from "@tauri-apps/api/core";
 import { copyFile, showSaveDialog, bakeAnnotations, saveCompressedCopy, addPdfAnnotation, redactPdf } from "../lib/tauri";
@@ -1682,16 +1680,6 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
           style={{ background: "var(--viewer-canvas)", paddingBottom: "env(safe-area-inset-bottom, 0px)", position: "relative", scrollbarGutter: "stable" }}
           onScroll={handleScroll}
         >
-          <ScrollPageIndicator
-            scrollContainerRef={scrollContainerRef}
-            currentPage={currentPage}
-            pageCount={pageCount}
-          />
-          <ZoomFab
-            zoom={zoom}
-            onAdjust={adjustZoom}
-            onReset={() => setZoom(1.0)}
-          />
           {/* "Add page" template picker — fixed overlay, unaffected by virtual scroll */}
           {addPageAt !== null && activeTool === "draw" && (
             <div

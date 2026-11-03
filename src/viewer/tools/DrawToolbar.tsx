@@ -332,7 +332,7 @@ export function DrawToolbar({
                 onClick={handleDeletePage}
                 disabled={isDeleting}
                 className="px-2 py-1.5 rounded-lg text-xs font-semibold"
-                style={{ background: "#ef4444", border: "1px solid #dc2626", color: "#fff" }}
+                style={{ background: "var(--bad)", border: "1px solid var(--bad-hover)", color: "var(--paper-0)" }}
               >
                 {isDeleting ? "Deleting…" : "Delete"}
               </button>
@@ -512,7 +512,7 @@ export function DrawToolbar({
             </button>
             <button onClick={() => { clearStrokes(docPath); setConfirmClear(false); }}
               className="px-2 py-1.5 rounded-lg text-xs font-semibold"
-              style={{ background: "#ef4444", border: "1px solid #dc2626", color: "#fff" }}>
+              style={{ background: "var(--bad)", border: "1px solid var(--bad-hover)", color: "var(--paper-0)" }}>
               Clear all
             </button>
           </div>
@@ -558,7 +558,7 @@ export function DrawToolbar({
             <span>Add Page</span>
             {virtualPageCount > 0 && (
               <span className="tabular-nums text-xs px-1 py-0.5 rounded-full"
-                style={{ background: "var(--action)", color: "#fff", fontSize: "0.6rem" }}>
+                style={{ background: "var(--rose)", color: "var(--rose-ink)", fontSize: "var(--fs-label)" }}>
                 {virtualPageCount}
               </span>
             )}

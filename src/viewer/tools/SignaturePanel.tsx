@@ -224,7 +224,7 @@ export function SignaturePanel({ onSignatureCreated, onClose }: SignaturePanelPr
         borderRadius: 12,
         padding: 20,
         width: 380,
-        boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+        boxShadow: "var(--shadow-dialog)",
       }}
     >
       {/* Header */}

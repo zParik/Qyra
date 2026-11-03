@@ -775,7 +775,7 @@
   .dropzone-text { font-weight: 500; }
   .progress { display: flex; flex-direction: column; gap: var(--space-2); }
   .progress-row { display: flex; justify-content: space-between; font-size: var(--fs-label); color: var(--fg1); }
-  .progress-track { height: 6px; border-radius: 3px; overflow: hidden; background: var(--bg4); }
+  .progress-track { height: 6px; border-radius: var(--radius-1); overflow: hidden; background: var(--bg4); }
   .progress-fill { height: 100%; border-radius: 3px; background: var(--rose); transition: width var(--dur-2) var(--ease-out); }
   .spinner-row { display: flex; align-items: center; gap: var(--space-2); color: var(--fg1); }
   .result { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--ok-line); border-radius: var(--radius-3); background: var(--ok-soft); }
@@ -1088,7 +1088,7 @@
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
   background: var(--fg3);
-  border-radius: 5px;
+  border-radius: var(--radius-pill);
   border: 2px solid var(--bg0);
   min-height: 48px;
   transition: background var(--dur-1);
@@ -1099,7 +1099,7 @@
 
 .viewer-scrollbar::-webkit-scrollbar { width: 10px; height: 10px; }
 .viewer-scrollbar::-webkit-scrollbar-track { background: var(--canvas); }
-.viewer-scrollbar::-webkit-scrollbar-thumb { background: var(--fg3); border: 2px solid var(--canvas); border-radius: 5px; }
+.viewer-scrollbar::-webkit-scrollbar-thumb { background: var(--fg3); border: 2px solid var(--canvas); border-radius: var(--radius-pill); }
 .viewer-scrollbar::-webkit-scrollbar-thumb:hover { background: var(--fg2); }
 .viewer-scrollbar::-webkit-scrollbar-corner { background: var(--canvas); }
 .viewer-scrollbar { scrollbar-color: var(--fg3) var(--canvas); }
