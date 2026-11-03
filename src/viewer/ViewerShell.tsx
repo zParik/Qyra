@@ -9,6 +9,7 @@ import { ErrorBoundary } from "react-error-boundary";
 import { ViewerErrorFallback } from "../components/ErrorFallback";
 import { ShortcutsModal } from "../components/ShortcutsModal";
 import { loadSetting, Settings } from "../lib/settings";
+import { sessionToSave } from "./session";
 
 export default function ViewerShell() {
   const navigate = useNavigate();
@@ -67,23 +68,15 @@ export default function ViewerShell() {
 
   // Persist session whenever tabs or active index change (skip home-only sessions)
   useEffect(() => {
-    const savable = openTabs.filter((t) => t.type !== "home");
-    if (savable.length === 0) return;
-    invoke("save_tab_session", {
-      tabs: savable.map((t) => ({ path: t.path, name: t.name })),
-      activeIndex: activeTabIndex,
-    }).catch(console.error);
+    const session = sessionToSave(openTabs, activeTabIndex);
+    if (session) invoke("save_tab_session", session).catch(console.error);
   }, [openTabs, activeTabIndex]);
 
   // Persist session on page unload
   useEffect(() => {
     const handler = () => {
-      const savable = openTabs.filter((t) => t.type !== "home");
-      if (savable.length === 0) return;
-      invoke("save_tab_session", {
-        tabs: savable.map((t) => ({ path: t.path, name: t.name })),
-        activeIndex: activeTabIndex,
-      });
+      const session = sessionToSave(openTabs, activeTabIndex);
+      if (session) invoke("save_tab_session", session);
     };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
