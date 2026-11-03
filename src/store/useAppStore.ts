@@ -170,6 +170,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       const tab = s.openTabs[index];
       const newTabs = s.openTabs.filter((_, i) => i !== index);
       let newActive = s.activeTabIndex;
+      // A tab to the left closing shifts the active one down a place.
+      if (index < newActive) newActive--;
       if (newActive >= newTabs.length) newActive = newTabs.length - 1;
       const tabFiles = { ...s.tabFiles };
       const tabUndo = { ...s.tabUndo };

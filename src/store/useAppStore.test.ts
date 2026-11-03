@@ -37,6 +37,15 @@ describe("multi-file actions", () => {
   });
 });
 
+describe("closeTab", () => {
+  it("keeps the same tab active when a tab to its left closes", () => {
+    for (const p of ["a.pdf", "b.pdf", "c.pdf", "d.pdf"]) get().openTab(tab(p));
+    get().activateTab(2); // c
+    get().closeTab(0); // a
+    expect(get().openTabs[get().activeTabIndex]?.path).toBe("c.pdf");
+  });
+});
+
 describe("openDocument", () => {
   const home = (path: string) => ({ path, name: "Library", type: "home" as const });
 
