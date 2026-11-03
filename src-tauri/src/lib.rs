@@ -223,17 +223,28 @@ pub fn run() {
         std::env::set_var("RUST_MIN_STACK", "8388608"); // 8 MiB
     }
 
-    // Hard-cap the rayon GLOBAL thread pool to half the cores (2..=8) before any
-    // parallel work runs. The Native compressor uses its own per-call capped
-    // pool, but this guarantees NO rayon path — now or later — can pin every
-    // logical CPU. Best-effort: ignore the error if already initialized.
-    let rayon_threads = (std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(2)
-        / 2)
-        .clamp(2, 8);
+    // Tauri's default async runtime starts one worker per logical core (28 on a
+    // desktop CPU), yet commands only await IPC replies and hand heavy work to
+    // spawn_blocking, whose pool is separate and grows on demand. Two workers
+    // are plenty. The runtime must outlive the app, so it is leaked.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_name("qyra-async")
+        .enable_all()
+        .build()
+        .expect("failed to build the async runtime");
+    tauri::async_runtime::set(runtime.handle().clone());
+    std::mem::forget(runtime);
+
+    // Cap the rayon GLOBAL pool to 2 below-normal-priority threads before any
+    // parallel work runs. Its only user is lopdf's parallel object parse, which
+    // with 8 threads pinned 8 cores for seconds on every large file opened.
+    // The compressor uses its own per-call pool. Best-effort: ignore the error
+    // if already initialized.
     let _ = rayon::ThreadPoolBuilder::new()
-        .num_threads(rayon_threads)
+        .num_threads(2)
+        .thread_name(|i| format!("qyra-rayon-{i}"))
+        .start_handler(|_| crate::utils::thread_priority::lower_current_thread_priority())
         .build_global();
 
     // The MuPDF doc thread: owns open documents, serves page sizes, display
