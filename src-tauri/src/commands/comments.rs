@@ -698,7 +698,15 @@ fn sync_text_annots(doc: &mut Document, comments: &mut [Comment]) {
 #[tauri::command]
 pub async fn load_comments(path: String) -> AppResult<String> {
     tokio::task::spawn_blocking(move || -> AppResult<String> {
-        let doc = Document::load(&path)?;
+        // Most files have no comments: answer from MuPDF's lazy object tree
+        // instead of a whole-file lopdf parse. (No worker in tests: always parse.)
+        if let Some(w) = crate::commands::render_worker::global() {
+            if matches!(w.features(path.clone()), Ok(f) if !f.comments) {
+                return Ok("[]".to_string());
+            }
+        }
+        // Read-only: share the cached parse instead of a fresh full one.
+        let doc = crate::commands::lopdf_cache::load(&path)?;
 
         let sidecar = read_sidecar(&doc);
         let mut by_id: HashMap<String, Comment> = sidecar

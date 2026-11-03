@@ -307,7 +307,9 @@ fn collect_fields(
 }
 
 fn get_form_fields_sync(path: &str) -> AppResult<Vec<FormField>> {
-    let doc = Document::load(path)?;
+    // Read-only: share one parse per file version. The viewer asks once per
+    // visible page, which used to run a full parse of the file for each.
+    let doc = crate::commands::lopdf_cache::load(path)?;
 
     let catalog_id = doc
         .trailer
@@ -365,7 +367,16 @@ fn get_form_fields_sync(path: &str) -> AppResult<Vec<FormField>> {
 
 #[tauri::command]
 pub async fn get_form_fields(path: String) -> AppResult<Vec<FormField>> {
-    tokio::task::spawn_blocking(move || get_form_fields_sync(&path))
+    tokio::task::spawn_blocking(move || {
+        // Most files have no form: answer from MuPDF's lazy object tree instead
+        // of a whole-file lopdf parse. (No worker in tests: always parse.)
+        if let Some(w) = crate::commands::render_worker::global() {
+            if matches!(w.features(path.clone()), Ok(f) if !f.form_fields) {
+                return Ok(vec![]);
+            }
+        }
+        get_form_fields_sync(&path)
+    })
         .await
         .map_err(|e| AppError::Other(e.to_string()))?
 }

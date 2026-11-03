@@ -29,6 +29,7 @@ use crate::error::{AppError, AppResult};
 const CACHE_CAP: usize = 6;
 
 use crate::render::geometry::PageSizePt;
+use mupdf::pdf::PdfDocument;
 
 /// Display lists kept (across documents). A list is the parsed page, so this
 /// bounds re-parse work, not pixels.
@@ -41,6 +42,18 @@ pub struct DocInfo {
     pub pages: Vec<PageSizePt>,
     /// File mtime (ns) as a string — cache-busting version for the frontend.
     pub version: String,
+}
+
+/// What a document carries that only a full lopdf parse can read. Read-only
+/// commands check this first and skip that parse (seconds of CPU and hundreds
+/// of MB on a large file) when there is nothing to read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DocFeatures {
+    /// The AcroForm has at least one field.
+    pub form_fields: bool,
+    /// A page has a Text annotation, or the file has embedded files (where the
+    /// comments sidecar lives).
+    pub comments: bool,
 }
 
 /// Work items handed to the worker thread. Each carries its own typed reply
@@ -59,6 +72,7 @@ enum Job {
         reply: Sender<AppResult<Vec<PageLink>>>,
     },
     Info { path: String, mtime: u64, reply: Sender<AppResult<DocInfo>> },
+    Features { path: String, mtime: u64, reply: Sender<AppResult<DocFeatures>> },
     List { path: String, mtime: u64, page: u32, reply: Sender<AppResult<Arc<mupdf::DisplayList>>> },
     /// Generic short read-only task against the cached document. The closure
     /// owns its own reply channel and receives the open result (or the open
@@ -137,6 +151,13 @@ impl RenderWorker {
         rx.recv().map_err(|_| AppError::Other("render worker dropped reply".to_string()))?
     }
 
+    pub fn features(&self, path: String) -> AppResult<DocFeatures> {
+        let mtime = file_mtime(&path);
+        let (reply, rx) = channel();
+        self.enqueue(Job::Features { path, mtime, reply })?;
+        rx.recv().map_err(|_| AppError::Other("render worker dropped reply".to_string()))?
+    }
+
     /// Cached display list for 1-based `page` of `path`.
     pub fn display_list(&self, path: String, page: u32) -> AppResult<Arc<mupdf::DisplayList>> {
         let mtime = file_mtime(&path);
@@ -186,9 +207,9 @@ fn file_mtime(path: &str) -> u64 {
 }
 
 /// Per-thread document cache. Lives entirely inside the worker thread, so the
-/// non-`Send` `mupdf::Document` values never cross a thread boundary.
+/// non-`Send` MuPDF documents never cross a thread boundary.
 struct DocCache {
-    docs: HashMap<String, (u64, mupdf::Document)>,
+    docs: HashMap<String, (u64, PdfDocument)>,
     order: Vec<String>,
 }
 
@@ -204,7 +225,7 @@ impl DocCache {
         if fresh {
             return Ok(());
         }
-        let doc = mupdf::Document::open(path)?;
+        let doc = PdfDocument::open(path)?;
         if self.docs.insert(path.to_string(), (mtime, doc)).is_none() {
             self.order.push(path.to_string());
         }
@@ -226,7 +247,7 @@ impl DocCache {
         &mut self,
         path: &str,
         mtime: u64,
-        f: impl FnOnce(&mupdf::Document) -> AppResult<R>,
+        f: impl FnOnce(&PdfDocument) -> AppResult<R>,
     ) -> AppResult<R> {
         self.ensure(path, mtime)?;
         let (_, doc) = self.docs.get(path).expect("ensure inserted the doc");
@@ -237,6 +258,8 @@ impl DocCache {
 fn worker_loop(rx: Receiver<Job>) {
     let mut cache = DocCache::new();
     let mut lists: Vec<((String, u64, u32), Arc<mupdf::DisplayList>)> = Vec::new();
+    // The viewer asks once per visible page; walk each file version once.
+    let mut features: HashMap<(String, u64), DocFeatures> = HashMap::new();
     while let Ok(job) = rx.recv() {
         match job {
             Job::Text { path, mtime, page, reply } => {
@@ -250,6 +273,21 @@ fn worker_loop(rx: Receiver<Job>) {
                     let pages = crate::render::raster::page_sizes(doc)?;
                     Ok(DocInfo { page_count: pages.len() as u32, pages, version: mtime.to_string() })
                 }));
+            }
+            Job::Features { path, mtime, reply } => {
+                let key = (path.clone(), mtime);
+                if let Some(f) = features.get(&key) {
+                    let _ = reply.send(Ok(*f));
+                    continue;
+                }
+                let found = cache.with_doc(&path, mtime, scan_features);
+                if let Ok(f) = found {
+                    if features.len() >= 32 {
+                        features.clear();
+                    }
+                    features.insert(key, f);
+                }
+                let _ = reply.send(found);
             }
             Job::List { path, mtime, page, reply } => {
                 let key = (path.clone(), mtime, page);
@@ -273,12 +311,42 @@ fn worker_loop(rx: Receiver<Job>) {
             Job::Run { path, mtime, run } => match cache.ensure(&path, mtime) {
                 Ok(()) => {
                     let (_, doc) = cache.docs.get(&path).expect("ensure inserted the doc");
-                    run(Ok(doc));
+                    run(Ok(&**doc));
                 }
                 Err(e) => run(Err(e)),
             },
         }
     }
+}
+
+/// Walk the object tree MuPDF loads lazily: the catalog, and each page's
+/// /Annots array. No page content is parsed.
+fn scan_features(doc: &PdfDocument) -> AppResult<DocFeatures> {
+    let catalog = doc.catalog()?;
+    let form_fields = match catalog.get_dict("AcroForm")? {
+        Some(form) => matches!(form.get_dict("Fields")?, Some(f) if f.len()? > 0),
+        None => false,
+    };
+    let embedded = match catalog.get_dict("Names")? {
+        Some(names) => names.get_dict("EmbeddedFiles")?.is_some(),
+        None => false,
+    };
+    let mut comments = embedded;
+    if !comments {
+        'pages: for i in 0..doc.page_count()? {
+            let Some(annots) = doc.find_page(i)?.get_dict("Annots")? else { continue };
+            for j in 0..annots.len()? as i32 {
+                let Some(annot) = annots.get_array(j)? else { continue };
+                if let Some(sub) = annot.get_dict("Subtype")? {
+                    if sub.as_name()? == b"Text" {
+                        comments = true;
+                        break 'pages;
+                    }
+                }
+            }
+        }
+    }
+    Ok(DocFeatures { form_fields, comments })
 }
 
 fn do_text(
@@ -393,6 +461,20 @@ mod tests {
         let a = w.display_list(fixture("text.pdf"), 1).unwrap();
         let b = w.display_list(fixture("text.pdf"), 1).unwrap();
         assert!(Arc::ptr_eq(&a, &b));
+    }
+
+    #[test]
+    fn features_report_form_fields_only_for_a_form() {
+        let w = RenderWorker::new();
+        assert!(w.features(fixture("acroform.pdf")).unwrap().form_fields);
+        assert!(!w.features(fixture("text.pdf")).unwrap().form_fields);
+    }
+
+    #[test]
+    fn features_report_comments_only_when_a_text_annotation_exists() {
+        let w = RenderWorker::new();
+        assert!(w.features(fixture("annotated.pdf")).unwrap().comments);
+        assert!(!w.features(fixture("text.pdf")).unwrap().comments);
     }
 
     #[test]
