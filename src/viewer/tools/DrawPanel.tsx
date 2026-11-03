@@ -1,5 +1,4 @@
 import { useNotesStore, PageTemplate, VirtualPage } from "../../store/useNotesStore";
-import { useAppStore } from "../../store/useAppStore";
 import { IconX } from "../icons";
 
 const EMPTY_VIRTUAL_PAGES: VirtualPage[] = [];
@@ -11,9 +10,8 @@ const TEMPLATES: { id: PageTemplate; label: string; preview: string }[] = [
   { id: 'dotted', label: 'Dotted', preview: '⠿' },
 ];
 
-export function DrawPanel() {
-  const viewerFile = useAppStore((s) => s.viewerFile);
-  const docPath = viewerFile?.path ?? "";
+/** `docPath` is the key of the tab's drawings in useNotesStore. */
+export function DrawPanel({ docPath }: { docPath: string }) {
 
   const virtualPages   = useNotesStore((s) => s.virtualPages[docPath] ?? EMPTY_VIRTUAL_PAGES);
   const addVirtualPage = useNotesStore((s) => s.addVirtualPage);

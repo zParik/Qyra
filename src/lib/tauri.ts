@@ -213,6 +213,8 @@ export interface FormField {
   rect: [number, number, number, number];
   options: string[];
   flags: number;
+  /** A checkbox or radio button's "on" state name. */
+  on_state: string | null;
 }
 
 export interface FieldValue {
@@ -225,6 +227,20 @@ export const getFormFields = (path: string) =>
 
 export const fillForm = (path: string, fields: FieldValue[], flatten: boolean, output?: string) =>
   invoke<string>("fill_form", { path, fields, flatten, output });
+
+/** A signature image to draw into a page. Positions are normalised to the
+ *  page as shown; `x`/`y` is the image's centre. */
+export interface ImageStamp {
+  page: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  dataUrl: string;
+}
+
+export const stampImages = (path: string, stamps: ImageStamp[], output?: string) =>
+  invoke<string>("stamp_images", { path, stamps, output });
 
 // --- Standard PDF annotations ---
 

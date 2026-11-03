@@ -165,13 +165,14 @@ interface DrawToolbarProps {
   pageCount: number;
   onApplied: (path: string) => void;
   filePath: string;
+  /** Key of this tab's drawings in useNotesStore. */
+  docPath: string;
 }
 
 export function DrawToolbar({
   onExitDraw, onSave, onSaveAs,
-  currentPage, pageCount, onApplied, filePath,
+  currentPage, pageCount, onApplied, filePath, docPath,
 }: DrawToolbarProps) {
-  const docPath = filePath;
 
   const drawColor     = useNotesStore((s) => s.drawColor);
   const drawThickness = useNotesStore((s) => s.drawThickness);

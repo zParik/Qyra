@@ -52,6 +52,8 @@ export type ViewerTool =
 
 interface ToolSidebarProps {
   file: LoadedFile;
+  /** Key of this tab's drawings in useNotesStore. */
+  drawKey: string;
   onApplied: (path: string) => void;
   activeTool: ViewerTool | null;
   onToolChange: (tool: ViewerTool | null) => void;
@@ -128,7 +130,7 @@ const FAMILY_OF: Partial<Record<ViewerTool, Family>> = Object.fromEntries(
 
 type SidebarTab = "tools" | "outline" | "comments";
 
-function ToolSidebarImpl({ file, onApplied, activeTool, onToolChange, selectedPages, onSelectedPagesChange, splitAfter, onSplitAfterChange, onPageSelect, currentPage, forceCommentsTab, redactRegions, onClearRedactRegions, redactMode, onRedactModeChange }: ToolSidebarProps) {
+function ToolSidebarImpl({ file, drawKey, onApplied, activeTool, onToolChange, selectedPages, onSelectedPagesChange, splitAfter, onSplitAfterChange, onPageSelect, currentPage, forceCommentsTab, redactRegions, onClearRedactRegions, redactMode, onRedactModeChange }: ToolSidebarProps) {
   const setActiveTool = onToolChange;
   const [tab, setTab] = useState<SidebarTab>("tools");
 
@@ -169,7 +171,7 @@ function ToolSidebarImpl({ file, onApplied, activeTool, onToolChange, selectedPa
     links: <LinksPanel file={file} onApplied={onApplied} currentPage={currentPage} />,
     "header-footer": <HeaderFooterPanel file={file} onApplied={onApplied} />,
     "export-text": <ExportTextPanel file={file} />,
-    draw: <DrawPanel />,
+    draw: <DrawPanel docPath={drawKey} />,
     stamps: <StampsPanel filePath={file.path} currentPage={currentPage} onApplied={onApplied} />,
     redact: (
       <RedactPanel

@@ -9,7 +9,8 @@ import { useNotesStore, PageTemplate, VirtualPage } from "../store/useNotesStore
 import { PageStrip } from "./PageStrip";
 import { ToolSidebar, ViewerTool } from "./ToolSidebar";
 import { invoke } from "@tauri-apps/api/core";
-import { copyFile, showSaveDialog, bakeAnnotations, saveCompressedCopy, addPdfAnnotation, redactPdf } from "../lib/tauri";
+import { copyFile, showSaveDialog, saveCompressedCopy, addPdfAnnotation, redactPdf } from "../lib/tauri";
+import { writeOverlays } from "./writeOverlays";
 import { loadSetting, Settings } from "../lib/settings";
 import { triggerPrint } from "./tools/PrintPanel";
 import { DrawingCanvas } from "./DrawingCanvas";
@@ -114,7 +115,10 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
 
   const undoStroke = useNotesStore((s) => s.undoStroke);
-  const virtualPages = useNotesStore((s) => s.virtualPages[viewerFile?.path ?? ""] ?? EMPTY_VIRTUAL_PAGES);
+  // Drawings belong to the tab, not the working file: every edit moves the
+  // tab to a new temp file, and keying them by path lost them on each one.
+  const virtualPages = useNotesStore((s) => s.virtualPages[tabPath] ?? EMPTY_VIRTUAL_PAGES);
+  const strokeCount = useNotesStore((s) => s.strokes[tabPath]?.length ?? 0);
   const addVirtualPage = useNotesStore((s) => s.addVirtualPage);
 
   // "Add page" inline UI: which insertion point is open (afterRealPage value)
@@ -181,7 +185,18 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
   }, [signatures]);
 
   // Form filling
-  const { fieldValues, setFieldValue, saveFormFields: _saveFormFields, isDirty: _isFormDirty } = useFormFilling();
+  const { fieldValues, setFieldValue, dropFields } = useFormFilling();
+
+  // Form values, signatures and drawings stay in overlays until a save
+  // writes them into the file (commitOverlays). Any of them makes the tab
+  // unsaved: drawing used to leave it marked saved, and closing lost it.
+  const overlayCount = strokeCount + virtualPages.length + signatures.length + Object.keys(fieldValues).length;
+  useEffect(() => {
+    if (overlayCount > 0) useAppStore.getState().setTabDirty(tabPath, true);
+  }, [overlayCount, tabPath]);
+  // Saves can run from a timer (auto-save) scheduled by an older render.
+  const overlaysRef = useRef({ fieldValues, signatures });
+  overlaysRef.current = { fieldValues, signatures };
 
   // Comments (loads on mount, auto-saves on change). The comments themselves
   // are read by CommentLayer/sidebar via useCommentsStore. Save paths must
@@ -732,7 +747,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
         e.preventDefault();
         // In draw mode, Ctrl+Z undoes the last stroke
         if (activeTool === "draw" && viewerFile) {
-          undoStroke(viewerFile.path);
+          undoStroke(tabPath);
           return;
         }
         if (undoViewerFile) {
@@ -747,8 +762,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
       }
       if (mod && !e.shiftKey && e.key === "s") {
         e.preventDefault();
-        if (activeTool === "draw") handleSaveAnnotations();
-        else handleSave();
+        handleSave();
         return;
       }
       if (mod && e.shiftKey && (e.key === "s" || e.key === "S")) {
@@ -957,13 +971,13 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
       if (!origPath) {
         const chosenPath = await showSaveDialog(vf.path);
         if (!chosenPath) { setSaveStatus("idle"); return; }
-        await copyFile(vf.path, chosenPath);
+        await copyFile(await commitOverlays(vf.path), chosenPath);
         evictDocRenders(chosenPath);
         store.setTabFile(tabPath, { ...vf, path: chosenPath, name: chosenPath.split(/[\\/]/).pop() ?? chosenPath });
         store.setTabOriginal(tabPath, chosenPath);
         store.setTabDirty(tabPath, false);
       } else if (isDirty) {
-        await copyFile(vf.path, origPath);
+        await copyFile(await commitOverlays(vf.path), origPath);
         evictDocRenders(origPath);
         store.setTabFile(tabPath, { ...vf, path: origPath, name: origPath.split(/[\\/]/).pop() ?? origPath });
         store.setTabDirty(tabPath, false);
@@ -1111,6 +1125,8 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
     if (!viewerFile) return;
     if (!originalViewerPath) return handleSaveAs();
     if (!isViewerDirty && !hasUnsavedComments()) { markSaved(); return; }
+    if (isViewerDirty && await loadSetting(Settings.confirmBeforeOverwrite)
+        && !confirm(`Overwrite "${viewerFile.name}" with your changes?`)) return;
     setSaveError(null);
     setSaveStatus("saving");
     try {
@@ -1118,7 +1134,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
       // and wait, or "Saved ✓" lies while it is still in flight.
       await flushComments();
       if (isViewerDirty) {
-        await copyFile(viewerFile.path, originalViewerPath);
+        await copyFile(await commitOverlays(viewerFile.path), originalViewerPath);
         evictDocRenders(originalViewerPath);
         setViewerFile({ ...viewerFile, path: originalViewerPath, name: originalViewerPath.split(/[\\/]/).pop() ?? originalViewerPath });
         setIsViewerDirty(false);
@@ -1139,7 +1155,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
     try {
       // Land any pending comment write in the source before copying it.
       await flushComments();
-      await copyFile(viewerFile.path, chosenPath);
+      await copyFile(await commitOverlays(viewerFile.path), chosenPath);
       evictDocRenders(chosenPath);
       setViewerFile({ ...viewerFile, path: chosenPath, name: chosenPath.split(/[\\/]/).pop() ?? chosenPath });
       setOriginalViewerPath(chosenPath);
@@ -1151,129 +1167,33 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
     }
   }
 
-  async function handleSaveAnnotations() {
-    if (!viewerFile) return;
-    if (!originalViewerPath) return handleSaveAsAnnotations();
-    setSaveError(null);
-    setSaveStatus("saving");
-
-    const allStrokes = useNotesStore.getState().strokes[viewerFile.path] ?? [];
-    const docVirtualPages = useNotesStore.getState().virtualPages[viewerFile.path] ?? [];
-
-    const byPage = new Map<number, typeof allStrokes>();
-    const byVirtualId = new Map<string, typeof allStrokes>();
-    for (const s of allStrokes) {
-      if (s.pageSlotId.startsWith('pdf-')) {
-        const page = parseInt(s.pageSlotId.slice(4), 10);
-        if (isNaN(page)) continue;
-        if (!byPage.has(page)) byPage.set(page, []);
-        byPage.get(page)!.push(s);
-      } else {
-        if (!byVirtualId.has(s.pageSlotId)) byVirtualId.set(s.pageSlotId, []);
-        byVirtualId.get(s.pageSlotId)!.push(s);
-      }
+  /**
+   * Write the overlay edits (form values, signatures, drawings and added
+   * pages) into a copy of `path` and clear them; returns the file to save.
+   * Strokes used to stay on screen after being baked, so the next save baked
+   * them a second time.
+   */
+  async function commitOverlays(path: string): Promise<string> {
+    const notes = useNotesStore.getState();
+    const written = {
+      ...overlaysRef.current,
+      strokes: notes.strokes[tabPath] ?? [],
+      virtualPages: notes.virtualPages[tabPath] ?? [],
+    };
+    const out = await writeOverlays(path, written);
+    if (out !== path) {
+      // Drop only what was written: edits made while the save ran stay.
+      dropFields(written.fieldValues);
+      const sigIds = new Set(written.signatures.map((s) => s.id));
+      setSignatures((prev) => prev.filter((s) => !sigIds.has(s.id)));
+      const strokeIds = new Set(written.strokes.map((s) => s.id));
+      const pageIds = new Set(written.virtualPages.map((p) => p.id));
+      useNotesStore.setState((st) => ({
+        strokes: { ...st.strokes, [tabPath]: (st.strokes[tabPath] ?? []).filter((s) => !strokeIds.has(s.id)) },
+        virtualPages: { ...st.virtualPages, [tabPath]: (st.virtualPages[tabPath] ?? []).filter((p) => !pageIds.has(p.id)) },
+      }));
     }
-
-    const toStroke = (s: typeof allStrokes[0]) => ({
-      tool: s.tool,
-      color: s.color,
-      thickness: s.baseThickness,
-      points: s.points.map(([x, y]) => [x, y] as [number, number]),
-    });
-
-    try {
-      // Pending comment writes must land in the file before it gets baked
-      // and copied over the original.
-      await flushComments();
-      let savePath = viewerFile.path;
-      if (byPage.size > 0 || docVirtualPages.length > 0) {
-        const annotations = Array.from(byPage.entries()).map(([page, strokes]) => ({
-          page,
-          strokes: strokes.map(toStroke),
-        }));
-        const virtualPageData = docVirtualPages.map(vp => ({
-          id: vp.id,
-          template: vp.template,
-          afterRealPage: vp.afterRealPage,
-          strokes: (byVirtualId.get(vp.id) ?? []).filter(s => s.tool !== 'eraser').map(toStroke),
-        }));
-        savePath = await bakeAnnotations(viewerFile.path, annotations, virtualPageData);
-      }
-      const needConfirm = await loadSetting(Settings.confirmBeforeOverwrite);
-      if (needConfirm && !confirm(`Overwrite "${viewerFile.name}" with your changes?`)) {
-        setSaveStatus("idle");
-        return;
-      }
-      await copyFile(savePath, originalViewerPath);
-      evictDocRenders(originalViewerPath);
-      // Don't clear strokes — they stay as overlay while thumbnails reload in the background
-      setViewerFile({ ...viewerFile, path: originalViewerPath });
-      setIsViewerDirty(false);
-      markSaved();
-    } catch (e) {
-      setSaveStatus("error");
-      setSaveError(friendlySaveError(e));
-    }
-  }
-
-  async function handleSaveAsAnnotations() {
-    if (!viewerFile) return;
-    setSaveError(null);
-    const chosenPath = await showSaveDialog(viewerFile.path);
-    if (!chosenPath) return;
-    setSaveStatus("saving");
-
-    const allStrokes = useNotesStore.getState().strokes[viewerFile.path] ?? [];
-    const docVirtualPages = useNotesStore.getState().virtualPages[viewerFile.path] ?? [];
-
-    const byPage = new Map<number, typeof allStrokes>();
-    const byVirtualId = new Map<string, typeof allStrokes>();
-    for (const s of allStrokes) {
-      if (s.pageSlotId.startsWith('pdf-')) {
-        const page = parseInt(s.pageSlotId.slice(4), 10);
-        if (isNaN(page)) continue;
-        if (!byPage.has(page)) byPage.set(page, []);
-        byPage.get(page)!.push(s);
-      } else {
-        if (!byVirtualId.has(s.pageSlotId)) byVirtualId.set(s.pageSlotId, []);
-        byVirtualId.get(s.pageSlotId)!.push(s);
-      }
-    }
-
-    const toStroke = (s: typeof allStrokes[0]) => ({
-      tool: s.tool,
-      color: s.color,
-      thickness: s.baseThickness,
-      points: s.points.map(([x, y]) => [x, y] as [number, number]),
-    });
-
-    try {
-      // Pending comment writes must land in the file before bake/copy.
-      await flushComments();
-      let savePath = viewerFile.path;
-      if (byPage.size > 0 || docVirtualPages.length > 0) {
-        const annotations = Array.from(byPage.entries()).map(([page, strokes]) => ({
-          page,
-          strokes: strokes.map(toStroke),
-        }));
-        const virtualPageData = docVirtualPages.map(vp => ({
-          id: vp.id,
-          template: vp.template,
-          afterRealPage: vp.afterRealPage,
-          strokes: (byVirtualId.get(vp.id) ?? []).filter(s => s.tool !== 'eraser').map(toStroke),
-        }));
-        savePath = await bakeAnnotations(viewerFile.path, annotations, virtualPageData);
-      }
-      await copyFile(savePath, chosenPath);
-      evictDocRenders(chosenPath);
-      setViewerFile({ ...viewerFile, path: chosenPath });
-      setOriginalViewerPath(chosenPath);
-      setIsViewerDirty(false);
-      markSaved();
-    } catch (e) {
-      setSaveStatus("error");
-      setSaveError(friendlySaveError(e));
-    }
+    return out;
   }
 
   return (
@@ -1449,7 +1369,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
             Auto-save
           </button>
           <button
-            onClick={activeTool === "draw" ? handleSaveAnnotations : handleSave}
+            onClick={handleSave}
             disabled={saveStatus === "saving"}
             className={isViewerDirty ? "btn-primary" : "btn-secondary"}
             title="Save (Ctrl+S)"
@@ -1457,7 +1377,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
             Save
           </button>
           <button
-            onClick={activeTool === "draw" ? handleSaveAsAnnotations : handleSaveAs}
+            onClick={handleSaveAs}
             className="btn-ghost"
             title="Save as… (Ctrl+Shift+S)"
           >
@@ -1526,12 +1446,13 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
       {activeTool === "draw" && (
         <DrawToolbar
           onExitDraw={() => handleToolChange(null)}
-          onSave={handleSaveAnnotations}
-          onSaveAs={handleSaveAsAnnotations}
+          onSave={handleSave}
+          onSaveAs={handleSaveAs}
           currentPage={currentPage}
           pageCount={pageCount}
           onApplied={handleApplied}
           filePath={viewerFile.path}
+          docPath={tabPath}
         />
       )}
 
@@ -1715,7 +1636,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
                           template: tmpl.id,
                           afterRealPage: addPageAt,
                         };
-                        addVirtualPage(viewerFile.path, vp);
+                        addVirtualPage(tabPath, vp);
                         setAddPageAt(null);
                       }}
                       className="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm"
@@ -1901,7 +1822,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
                         />
                         <DrawingCanvas
                           pageSlotId={slot.slotId}
-                          docPath={viewerFile.path}
+                          docPath={tabPath}
                           isDrawingMode={activeTool === "draw"}
                         />
                         <CommentLayer
@@ -1986,7 +1907,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
                       <VirtualPageBackground template={vp.template} width={baseW} height={baseH} />
                       <DrawingCanvas
                         pageSlotId={slot.slotId}
-                        docPath={viewerFile.path}
+                        docPath={tabPath}
                         isDrawingMode={activeTool === "draw"}
                       />
                       <div
@@ -2011,6 +1932,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
         >
           <ToolSidebar
             file={viewerFile}
+            drawKey={tabPath}
             onApplied={stableApplied}
             activeTool={activeTool}
             onToolChange={stableToolChange}
