@@ -32,33 +32,39 @@ export default function ViewerShell() {
   const homeVisible = activeTab?.type === "home" && !onToolRoute;
 
   // Load persisted session on first mount (only if no tabs already open),
-  // gated on the reopen-tabs-on-launch preference.
+  // gated on the reopen-tabs-on-launch preference. Then open the file Qyra
+  // was launched with ("Open with"; Rust holds it until asked). Opening it
+  // first let the restore add its tabs after and switch away from it.
   useEffect(() => {
-    if (openTabs.length > 0) return;
     let alive = true;
-    loadSetting(Settings.reopenTabsOnLaunch).then((reopen) => {
-      if (!alive) return;
-      if (!reopen) {
-        openTab({ type: "home", path: "__home__0", name: "Library" });
+    const home = () => openTab({ type: "home", path: "__home__0", name: "Library" });
+    async function restore() {
+      if (useAppStore.getState().openTabs.length > 0) return;
+      if (!(await loadSetting(Settings.reopenTabsOnLaunch))) {
+        if (alive) home();
         return;
       }
-      invoke<[TabEntry[], number]>("get_tab_session").then(([tabs, active]) => {
-        if (!alive) return;
-        if (tabs.length === 0) {
-          openTab({ type: "home", path: "__home__0", name: "Library" });
-          return;
-        }
-        tabs.forEach((t) =>
-          openTab(
-            t.path.startsWith("__home__")
-              ? { type: "home", path: t.path, name: t.name }
-              : { type: "pdf", path: t.path, name: t.name }
-          )
-        );
-        activateTab(active);
-      }).catch(() => {
-        openTab({ type: "home", path: "__home__0", name: "Library" });
-      });
+      const session = await invoke<[TabEntry[], number]>("get_tab_session").catch(() => null);
+      if (!alive) return;
+      const [tabs, active] = Array.isArray(session) ? session : [[], 0];
+      if (!Array.isArray(tabs) || tabs.length === 0) return home();
+      tabs.forEach((t) =>
+        openTab(
+          t.path.startsWith("__home__")
+            ? { type: "home", path: t.path, name: t.name }
+            : { type: "pdf", path: t.path, name: t.name }
+        )
+      );
+      activateTab(active);
+    }
+    restore().catch(() => {
+      if (alive && useAppStore.getState().openTabs.length === 0) home();
+    }).finally(async () => {
+      if (!alive) return;
+      const path = await invoke<string | null>("get_pending_open").catch(() => null);
+      if (!path || !alive) return;
+      openDocument(path, path.split(/[\\/]/).pop() ?? path);
+      navigate("/view");
     });
     return () => { alive = false; };
   }, []);
