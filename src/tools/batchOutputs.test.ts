@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { batchOutputs } from "./BatchOps";
+import { batchOutputs } from "./batchOutputs";
 
 describe("batchOutputs", () => {
   it("numbers inputs that share a file name in the output folder", () => {
