@@ -37,6 +37,33 @@ describe("multi-file actions", () => {
   });
 });
 
+describe("openDocument", () => {
+  const home = (path: string) => ({ path, name: "Library", type: "home" as const });
+
+  it("focuses an already-open document instead of duplicating it, keeping its edits", () => {
+    get().openTab(tab("a.pdf"));
+    get().setTabDirty("a.pdf", true);
+    get().openTab(home("__home__1"));
+    get().openDocument("a.pdf", "a.pdf");
+    expect(get().openTabs.map((t) => t.path)).toEqual(["a.pdf"]);
+    expect(get().openTabs[get().activeTabIndex]?.path).toBe("a.pdf");
+    expect(get().tabDirty["a.pdf"]).toBe(true);
+  });
+
+  it("opens a new document in place of the Library tab it was opened from", () => {
+    get().openTab(home("__home__0"));
+    get().openDocument("b.pdf", "b.pdf");
+    expect(get().openTabs.map((t) => t.path)).toEqual(["b.pdf"]);
+  });
+
+  it("opens a new tab when a document is in front", () => {
+    get().openTab(tab("a.pdf"));
+    get().openDocument("b.pdf", "b.pdf");
+    expect(get().openTabs.map((t) => t.path)).toEqual(["a.pdf", "b.pdf"]);
+    expect(get().activeTabIndex).toBe(1);
+  });
+});
+
 describe("showLibrary", () => {
   const home = (path: string) => ({ path, name: "Library", type: "home" as const });
 

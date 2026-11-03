@@ -18,11 +18,8 @@ export default function ViewerShell() {
   const openTab = useAppStore((s) => s.openTab);
   const closeTab = useAppStore((s) => s.closeTab);
   const activateTab = useAppStore((s) => s.activateTab);
-  const replaceTab = useAppStore((s) => s.replaceTab);
+  const openDocument = useAppStore((s) => s.openDocument);
   const reopenClosedTab = useAppStore((s) => s.reopenClosedTab);
-  const setTabOriginal = useAppStore((s) => s.setTabOriginal);
-  const setTabDirty = useAppStore((s) => s.setTabDirty);
-  const setTabUndo = useAppStore((s) => s.setTabUndo);
   const tabDirty = useAppStore((s) => s.tabDirty);
   const [showShortcuts, setShowShortcuts] = useState(false);
 
@@ -109,15 +106,8 @@ export default function ViewerShell() {
 
   // Called by the singleton Home when user opens a PDF from a home tab
   const handleHomePdfOpen = useCallback((path: string, name: string) => {
-    setTabOriginal(path, path);
-    setTabDirty(path, false);
-    setTabUndo(path, null);
-    if (activeTabIndex >= 0 && openTabs[activeTabIndex]?.type === "home") {
-      replaceTab(activeTabIndex, { type: "pdf", path, name });
-    } else {
-      openTab({ type: "pdf", path, name });
-    }
-  }, [activeTabIndex, openTabs, replaceTab, openTab, setTabOriginal, setTabDirty, setTabUndo]);
+    openDocument(path, name);
+  }, [openDocument]);
 
   // Keyboard shortcuts
   useEffect(() => {

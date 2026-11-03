@@ -9,18 +9,7 @@ export function useOpenWithFile() {
 
   const openPath = useCallback((path: string) => {
     const name = path.split(/[\\/]/).pop() ?? path;
-    const s = useAppStore.getState();
-    const activeTab = s.openTabs[s.activeTabIndex];
-
-    s.setTabOriginal(path, path);
-    s.setTabDirty(path, false);
-    s.setTabUndo(path, null);
-
-    if (activeTab?.type === "home") {
-      s.replaceTab(s.activeTabIndex, { type: "pdf", path, name });
-    } else {
-      s.openTab({ type: "pdf", path, name });
-    }
+    useAppStore.getState().openDocument(path, name);
     navigate("/view");
   }, [navigate]);
 
