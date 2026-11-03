@@ -56,3 +56,30 @@ fn removing_page_numbers_restores_the_original_contents() {
     qyra_lib::commands::page_numbers::remove_page_numbers(out, Some(back.clone())).expect("remove");
     assert_eq!(contents_tags(&back, b"PageNumOverlay"), contents_tags(&fixture_str("scanned.pdf"), b"PageNumOverlay"));
 }
+
+#[test]
+fn page_numbers_keep_resources_inherited_from_the_page_tree() {
+    // scanned.pdf with the page's /Resources (its image) moved to the Pages node.
+    let mut doc = common::load_lopdf(&fixture_str("scanned.pdf"));
+    let pid = doc.get_pages()[&1];
+    let res = doc.get_dictionary_mut(pid).unwrap().remove(b"Resources").unwrap();
+    let root = doc.catalog().unwrap().get(b"Pages").unwrap().as_reference().unwrap();
+    doc.get_dictionary_mut(root).unwrap().set("Resources", res);
+    let (_d, src) = temp_output("inherited.pdf");
+    doc.save(&src).unwrap();
+
+    let (_d2, out) = temp_output("inherited-numbered.pdf");
+    add_page_numbers_core(src, None, Some(out.clone()), |_| {}).expect("number");
+
+    let doc = common::load_lopdf(&out);
+    let pid = doc.get_pages()[&1];
+    let res = match doc.get_dictionary(pid).unwrap().get(b"Resources").unwrap() {
+        lopdf::Object::Reference(r) => doc.get_dictionary(*r).unwrap().clone(),
+        o => o.as_dict().unwrap().clone(),
+    };
+    let xobj = match res.get(b"XObject").expect("the scan's image resources were lost") {
+        lopdf::Object::Reference(r) => doc.get_dictionary(*r).unwrap().clone(),
+        o => o.as_dict().unwrap().clone(),
+    };
+    assert!(xobj.get(b"Im0").is_ok());
+}

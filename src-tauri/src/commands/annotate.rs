@@ -471,6 +471,7 @@ pub fn bake_annotations(
 
     let _t = crate::utils::timing::Timer::start("bake_annotations", String::new());
     let mut doc = Document::load(&path)?;
+    crate::utils::own_inherited_resources(&mut doc);
 
     // Build page_map: page number (1-indexed) -> ObjectId
     let page_map: std::collections::HashMap<u32, ObjectId> =

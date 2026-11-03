@@ -145,6 +145,7 @@ pub fn make_searchable_core(
 
         let _t = crate::utils::timing::Timer::start("make_searchable", format!("{} pages", pages.len()));
         let mut doc = Document::load(&path)?;
+        crate::utils::own_inherited_resources(&mut doc);
 
         // Collect page IDs in document order (BTreeMap is sorted by 1-based page number)
         let page_ids: Vec<lopdf::ObjectId> = doc.get_pages().into_values().collect();

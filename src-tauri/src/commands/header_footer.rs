@@ -138,6 +138,7 @@ pub fn header_footer_core(
 
         let _t = crate::utils::timing::Timer::start("add_header_footer", String::new());
         let mut doc = Document::load(&path)?;
+        crate::utils::own_inherited_resources(&mut doc);
         let font_id = doc.add_object(dictionary! {
             "Type" => "Font",
             "Subtype" => "Type1",

@@ -96,3 +96,39 @@ pub fn put_overlay_on_top(
     }
     Ok(())
 }
+
+/// Give every page that inherits its /Resources from the page tree a copy of
+/// its own.
+///
+/// Commands that add a font or image to a page's resources otherwise found
+/// none on the page and created an empty /Resources there, which hides the
+/// inherited fonts and images (a scan's page image disappeared). A copy rather
+/// than a shared reference, so adding to one page leaves the others alone.
+pub fn own_inherited_resources(doc: &mut lopdf::Document) {
+    use lopdf::Object;
+    for page_id in doc.get_pages().into_values() {
+        let Ok(page) = doc.get_dictionary(page_id) else { continue };
+        if page.has(b"Resources") {
+            continue;
+        }
+        // Walk up /Parent (bounded: the tree may be cyclic in broken files).
+        let mut node = page.get(b"Parent").ok().and_then(|p| p.as_reference().ok());
+        let mut inherited = None;
+        for _ in 0..64 {
+            let Some(id) = node else { break };
+            let Ok(dict) = doc.get_dictionary(id) else { break };
+            if let Ok(res) = dict.get(b"Resources") {
+                inherited = match res {
+                    Object::Reference(r) => doc.get_dictionary(*r).ok().cloned(),
+                    Object::Dictionary(d) => Some(d.clone()),
+                    _ => None,
+                };
+                break;
+            }
+            node = dict.get(b"Parent").ok().and_then(|p| p.as_reference().ok());
+        }
+        if let (Some(res), Ok(page)) = (inherited, doc.get_dictionary_mut(page_id)) {
+            page.set("Resources", Object::Dictionary(res));
+        }
+    }
+}

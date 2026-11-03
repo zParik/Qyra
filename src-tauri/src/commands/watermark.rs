@@ -44,6 +44,7 @@ pub fn watermark_core(
         let out = output.unwrap_or_else(|| temp_output_path(&path, "watermarked"));
         let _t = crate::utils::timing::Timer::start("add_watermark", String::new());
         let mut doc = Document::load(&path)?;
+        crate::utils::own_inherited_resources(&mut doc);
 
         let font_size = options.font_size.unwrap_or(48.0).max(4.0);
         let opacity = options.opacity.unwrap_or(0.25).clamp(0.0, 1.0);
