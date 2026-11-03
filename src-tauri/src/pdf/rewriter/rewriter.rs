@@ -174,8 +174,14 @@ impl Rewriter {
                                     .copied()
                                     .unwrap_or(data_ref.len() as u64) as usize
                             };
-                            let slice = &data_ref[offset as usize..end];
+                            let Some(slice) = data_ref.get(offset as usize..end) else {
+                                return (id, Err(lost(id, format!("offset {offset} is past the end of the file"))));
+                            };
                             match parse_indirect_object(slice, 0) {
+                                // A broken xref can point at another object.
+                                Ok((parsed, _)) if parsed.0 != id.0 => {
+                                    return (id, Err(lost(id, format!("xref offset holds object {} instead", parsed.0))))
+                                }
                                 Ok((_, o)) => o,
                                 Err(e) => return (id, Err(lost(id, e.to_string()))),
                             }
@@ -487,6 +493,37 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("out.pdf");
         Rewriter::new(0).run(Bytes::Owned(pdf), &out, |_, _, _| {}, &AtomicBool::new(false))
+    }
+
+    #[test]
+    fn an_xref_offset_past_the_end_of_the_file_is_an_error_not_a_panic() {
+        let pdf = pdf_with(&[(1, CATALOG), (2, PAGES), (3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>")]);
+        let text = String::from_utf8(pdf).unwrap();
+        // Point obj 3 far past the end (a truncated download).
+        let off3 = text.find("3 0 obj").unwrap();
+        let pdf = text.replacen(&format!("{off3:010} 00000 n "), "0099999999 00000 n ", 1).into_bytes();
+        assert!(compress(pdf).is_err());
+    }
+
+    #[test]
+    fn an_xref_entry_pointing_at_another_object_is_not_written_as_it() {
+        let pdf = pdf_with(&[(1, CATALOG), (2, PAGES), (3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>")]);
+        let text = String::from_utf8(pdf).unwrap();
+        // Obj 3's entry points at obj 1 (the catalog).
+        let (off1, off3) = (text.find("1 0 obj").unwrap(), text.find("3 0 obj").unwrap());
+        let pdf = text.replacen(&format!("{off3:010} 00000 n "), &format!("{off1:010} 00000 n "), 1).into_bytes();
+        assert!(compress(pdf).is_err(), "page 3 is lost; writing the catalog in its place would be wrong");
+    }
+
+    #[test]
+    fn a_negative_stream_length_does_not_panic() {
+        let pdf = pdf_with(&[
+            (1, CATALOG),
+            (2, PAGES),
+            (3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>"),
+            (4, "<< /Length -1 >>\nstream\nq Q\nendstream"),
+        ]);
+        let _ = compress(pdf);
     }
 
     #[test]

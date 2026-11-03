@@ -264,10 +264,10 @@ fn consume_stream_body(
     let declared_length = dict
         .get(b"Length")
         .and_then(|v| v.as_integer())
-        .map(|n| n as usize);
+        .and_then(|n| usize::try_from(n).ok());
 
     let raw_bytes = if let Some(len) = declared_length {
-        let end = stream_start + len;
+        let end = stream_start.saturating_add(len);
         if end <= data.len() {
             // Verify the next bytes after length are endstream.
             // Skip CR/LF in-place — no allocation needed.

@@ -275,9 +275,18 @@ fn decode_flate(raw: &[u8], parms: Option<&PdfDict>) -> Result<Vec<u8>, PdfError
             let colors = int(b"Colors", 1).max(1) as usize;
             let bpc = int(b"BitsPerComponent", 8).max(1) as usize;
             let columns = int(b"Columns", 1).max(1) as usize;
-            let row_width = (colors * bpc * columns + 7) / 8;
+            // Sizes come from the file: overflow or a row wider than the data
+            // is malformed, and must not size an allocation.
+            let bits = colors
+                .checked_mul(bpc)
+                .and_then(|b| b.checked_mul(columns))
+                .ok_or_else(|| PdfError::ParseError("PNG predictor row size overflows".into()))?;
+            let row_width = bits.div_ceil(8);
+            if !out.is_empty() && row_width >= out.len() {
+                return Err(PdfError::ParseError("PNG predictor row wider than its data".into()));
+            }
             // PNG filters reference the byte one whole PIXEL back (min 1 byte).
-            let bpp = ((colors * bpc + 7) / 8).max(1);
+            let bpp = ((colors * bpc).div_ceil(8)).max(1);
             apply_png_predictor(&out, row_width, bpp)
         }
         p => Err(PdfError::UnsupportedFilter(format!("predictor {p}"))),
@@ -292,7 +301,7 @@ fn decode_flate(raw: &[u8], parms: Option<&PdfDict>) -> Result<Vec<u8>, PdfError
 /// `bpp` is the byte distance to the corresponding byte of the pixel to the
 /// left (`ceil(Colors * BitsPerComponent / 8)`, at least 1).
 pub fn apply_png_predictor(data: &[u8], row_width: usize, bpp: usize) -> Result<Vec<u8>, PdfError> {
-    if row_width == 0 {
+    if row_width == 0 || data.is_empty() {
         return Ok(data.to_vec());
     }
     let stride = row_width + 1; // +1 for the predictor byte
@@ -428,6 +437,12 @@ mod tests {
         dict.set(b"Filter", filter);
         dict.set(b"DecodeParms", decode_parms);
         PdfStream { dict, raw_bytes: flate_compress(filtered) }
+    }
+
+    #[test]
+    fn a_huge_predictor_row_on_empty_data_does_not_allocate_it() {
+        let s = flate_stream(b"", PdfObject::Dictionary(parms(1, 8, 4_000_000_000_000, 12)), PdfObject::Name(b"FlateDecode".to_vec()));
+        let _ = s.decode();
     }
 
     #[test]
