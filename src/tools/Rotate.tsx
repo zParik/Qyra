@@ -42,7 +42,7 @@ export default function Rotate() {
   }
 
   return (
-    <ToolLayout title="Rotate Pages" description="Rotate all or specific pages by 90°, 180°, or 270°">
+    <ToolLayout title="Rotate pages" description="Rotate all or specific pages by 90°, 180°, or 270°">
       {files.length === 0 ? (
         <DropZone multiple={false} />
       ) : (
@@ -112,7 +112,7 @@ export default function Rotate() {
             onClick={handleRotate}
             className="btn-primary w-full"
           >
-            Rotate Pages
+            Rotate pages
           </button>
         </div>
       )}

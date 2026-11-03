@@ -153,12 +153,14 @@ function TabTag({
   );
 }
 
-export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile, onActivateTab }: {
+export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile, onActivateTab, suspendActive = false }: {
   onOpenFile: () => void;
   onCloseTab: (index: number) => void;
   onOpenExternalFile: (path: string, name: string) => void;
   /** Called after a tab is activated by click or keyboard. */
   onActivateTab?: () => void;
+  /** True while something other than a tab (a tool page) fills the shell: no tag reads active. */
+  suspendActive?: boolean;
 }) {
   const openTabs = useAppStore((s) => s.openTabs);
   const activeTabIndex = useAppStore((s) => s.activeTabIndex);
@@ -246,7 +248,7 @@ export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile, onActivateT
                 key={tab.path}
                 id={tab.path}
                 label={tab.name}
-                active={i === activeTabIndex}
+                active={!suspendActive && i === activeTabIndex}
                 dirty={tabDirty[tab.path] ?? false}
                 isPdfPath={tab.type !== "home"}
                 onActivate={() => { activateTab(i); onActivateTab?.(); }}

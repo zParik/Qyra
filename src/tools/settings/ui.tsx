@@ -1,7 +1,7 @@
 export function SectionTitle({ children, note }: { children: React.ReactNode; note?: string }) {
   return (
     <header className="settings-head">
-      <h2 className="t-title" style={{ margin: 0 }}>{children}</h2>
+      <h2 className="settings-h2">{children}</h2>
       {note && <p className="settings-note">{note}</p>}
     </header>
   );

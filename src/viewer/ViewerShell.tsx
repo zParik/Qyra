@@ -175,6 +175,7 @@ export default function ViewerShell() {
         onCloseTab={handleCloseTab}
         onOpenExternalFile={(path, name) => { openTab({ type: "pdf", path, name }); if (onToolRoute) navigate("/view"); }}
         onActivateTab={handleActivateTab}
+        suspendActive={onToolRoute}
       />
       <ShortcutsModal open={showShortcuts} onOpenChange={setShowShortcuts} />
       <div style={{ position: "relative", flex: 1, overflow: "hidden" }}>
