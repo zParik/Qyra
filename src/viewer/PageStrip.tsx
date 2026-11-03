@@ -1,4 +1,4 @@
-import { Fragment, useRef, useEffect, useCallback, useState } from "react";
+import { Fragment, memo, useRef, useEffect, useCallback, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { thumbUrl } from "../render/renderClient";
 import { IcFile } from "../components/Icons";
@@ -27,7 +27,7 @@ const OVERSCAN = Math.ceil(400 / SLOT_HEIGHT);
  * one ringed in rose. Also hosts remove-mode selection, the split marker and
  * drag reorder.
  */
-export function PageStrip({
+function PageStripImpl({
   path,
   version,
   pageCount,
@@ -182,3 +182,6 @@ export function PageStrip({
     </div>
   );
 }
+
+// Memoized: the viewer re-renders while scrolling; this only needs to when its props change.
+export const PageStrip = memo(PageStripImpl);

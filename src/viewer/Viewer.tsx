@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useGoToLibrary } from "../hooks/useGoToLibrary";
+import { useStableCallback } from "./hooks/useStableCallback";
 import { useAppStore } from "../store/useAppStore";
 import { useNotesStore, PageTemplate, VirtualPage } from "../store/useNotesStore";
 
@@ -62,6 +63,13 @@ const MAX_LOADED_RADIUS = 3;
 // stops load/unload thrash when scrolling back and forth. Beyond the keep zone pages
 // unmount; their tiles stay in the byte-bounded tile cache until evicted.
 const KEEP_RADIUS = 8;
+
+// Scroll distance (CSS px) between scroll-state updates while scrolling.
+const SCROLL_STATE_STEP = 96;
+
+// Scrolling faster than this (viewport heights per second) defers new tiles and
+// the overlay layers until the scroll pauses; reading-speed scrolling does not.
+const FAST_SCROLL_VIEWPORTS_PER_S = 1;
 
 /** 0-based index of the current find hit among hits on `page`, or -1 if none. */
 function findActiveMatchOrdinalOnPage(
@@ -330,6 +338,8 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
   // suppressScrollRef and never trip this.
   const [scrollSettled, setScrollSettled] = useState(true);
   const scrollSamplesRef = useRef<{ t: number; y: number }[]>([]);
+  // Scroll position at the last settle; page tile windows use it during a fast scroll.
+  const settledScrollRef = useRef({ top: 0, left: 0 });
   const scrollSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => {
     if (scrollSettleTimerRef.current) clearTimeout(scrollSettleTimerRef.current);
@@ -781,6 +791,25 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
     if (!isActive && viewerFile?.path) tileCache.dropPrefix(tileKeyPrefix(viewerFile.path));
   }, [isActive, viewerFile?.path]);
 
+  // Stable identities for the memoized page strip and tools sidebar, so the
+  // scroll-driven re-renders of the viewer do not re-render them too.
+  const stableScrollToPage = useStableCallback((page: number) => scrollToPage(page));
+  const stablePageToggle = useStableCallback((page: number) => handlePageToggle(page));
+  const stableApplied = useStableCallback((path: string, opts?: { saveAsNew?: boolean }) => handleApplied(path, opts));
+  const stableToolChange = useStableCallback((tool: ViewerTool | null) => handleToolChange(tool));
+  const stableClearRedactRegions = useStableCallback(() => setRedactRegions([]));
+  const stableReorder = useStableCallback(async (fromPage: number, dropBeforePage: number) => {
+    if (!viewerFile) return;
+    const pages = Array.from({ length: pageCount }, (_, i) => i + 1);
+    const moved = pages.filter(p => p !== fromPage);
+    const insertIdx = moved.findIndex(p => p === dropBeforePage);
+    moved.splice(insertIdx === -1 ? moved.length : insertIdx, 0, fromPage);
+    try {
+      const out = await invoke<string>("reorder_pages", { path: viewerFile.path, order: moved });
+      handleApplied(out);
+    } catch { /* ignore */ }
+  });
+
   if (!viewerFile) return null;
 
   // A path's rendered tiles are no longer needed (swapped away after an edit).
@@ -808,14 +837,19 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
     };
   };
 
-  // Visible part of slot i's page box, in that box's CSS px.
+  // Visible part of slot i's page box, in that box's CSS px. While a fast scroll
+  // is under way this uses the position where scrolling last settled: tiles
+  // already on screen stay put and no new ones are requested until it settles,
+  // so a fast scroll costs only the page previews.
+  if (scrollSettled) settledScrollRef.current = { top: centerScrollTop, left: centerScrollLeft };
   const pageVisibleCss = (i: number) => {
     const { top: boxTop, left: boxLeft } = pageBox(i);
+    const { top, left } = settledScrollRef.current;
     return {
-      x0: centerScrollLeft - boxLeft,
-      y0: centerScrollTop - boxTop,
-      x1: centerScrollLeft - boxLeft + containerWidth,
-      y1: centerScrollTop - boxTop + containerH,
+      x0: left - boxLeft,
+      y0: top - boxTop,
+      x1: left - boxLeft + containerWidth,
+      y1: top - boxTop + containerH,
     };
   };
 
@@ -829,26 +863,36 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
     if (!container) return;
     if (suppressScrollRef.current) return;
     const st = container.scrollTop;
-    setCenterScrollTop(st);
-    setCenterScrollLeft(container.scrollLeft);
+    const sl = container.scrollLeft;
+    // Every scroll-state update re-renders the viewer and each mounted page, and
+    // a scroll fires one event per frame. The virtual window (BUFFER_SLOTS) and
+    // the tile band (half a viewport of prefetch) both reach far past
+    // SCROLL_STATE_STEP, so updating only every step loses nothing on screen;
+    // the settle timer below commits the exact position.
+    if (Math.abs(st - centerScrollTop) >= SCROLL_STATE_STEP || Math.abs(sl - centerScrollLeft) >= SCROLL_STATE_STEP) {
+      setCenterScrollTop(st);
+      setCenterScrollLeft(sl);
+    }
 
-    // Fling detection: distance covered in the last ~150ms exceeding a viewport-height
-    // means the user is flying past pages, not reading — strip the overlay layers.
+    // Fast-scroll detection: moving faster than FAST_SCROLL_VIEWPORTS_PER_S means
+    // the user is flying past pages, not reading — defer tiles and overlay layers.
     const now = performance.now();
     const samples = scrollSamplesRef.current;
     samples.push({ t: now, y: st });
     while (samples.length > 0 && now - samples[0]!.t > 150) samples.shift();
     const dist = Math.abs(st - samples[0]!.y);
-    const h = containerHeight || 600;
-    // >1 viewport in 150ms = flinging. Settled comes back ONLY via the quiet timer
+    const fastDist = (containerHeight || 600) * FAST_SCROLL_VIEWPORTS_PER_S * 0.15; // in 150 ms
+    // Settled comes back ONLY via the quiet timer
     // below — an early speed-based re-entry flapped during fling deceleration, firing
     // band decodes + layer mounts for every intermediate position (multi-GB transient)
     // and cancelling first decodes mid-flight (stuck spinners).
-    if (dist > h && scrollSettled) setScrollSettled(false);
+    if (dist > fastDist && scrollSettled) setScrollSettled(false);
     if (scrollSettleTimerRef.current) clearTimeout(scrollSettleTimerRef.current);
     scrollSettleTimerRef.current = setTimeout(() => {
       scrollSettleTimerRef.current = null;
       scrollSamplesRef.current = [];
+      setCenterScrollTop(container.scrollTop);
+      setCenterScrollLeft(container.scrollLeft);
       setScrollSettled(true);
     }, 180);
 
@@ -1608,23 +1652,13 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
             version={docInfo?.version}
             pageCount={pageCount}
             currentPage={currentPage}
-            onPageSelect={scrollToPage}
+            onPageSelect={stableScrollToPage}
             selectionMode={activeTool === "remove"}
             selectedPages={selectedPages}
-            onPageToggle={handlePageToggle}
+            onPageToggle={stablePageToggle}
             splitAfter={activeTool === "split" ? splitAfter : undefined}
             onSplitAfterChange={activeTool === "split" ? setSplitAfter : undefined}
-            onReorder={async (fromPage, dropBeforePage) => {
-              if (!viewerFile) return;
-              const pages = Array.from({ length: pageCount }, (_, i) => i + 1);
-              const moved = pages.filter(p => p !== fromPage);
-              const insertIdx = moved.findIndex(p => p === dropBeforePage);
-              moved.splice(insertIdx === -1 ? moved.length : insertIdx, 0, fromPage);
-              try {
-                const out = await invoke<string>("reorder_pages", { path: viewerFile.path, order: moved });
-                handleApplied(out);
-              } catch { /* ignore */ }
-            }}
+            onReorder={stableReorder}
           />
         </div>
 
@@ -1813,7 +1847,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
                         zoom={zoom}
                         dpr={dpr}
                         visibleCss={
-                          docInfo && isActive && scrollSettled && Math.abs(page - currentPage) <= MAX_LOADED_RADIUS
+                          docInfo && isActive && Math.abs(page - currentPage) <= MAX_LOADED_RADIUS
                             ? pageVisibleCss(slotIndex)
                             : null
                         }
@@ -1967,18 +2001,18 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
         >
           <ToolSidebar
             file={viewerFile}
-            onApplied={handleApplied}
+            onApplied={stableApplied}
             activeTool={activeTool}
-            onToolChange={handleToolChange}
+            onToolChange={stableToolChange}
             selectedPages={selectedPages}
             onSelectedPagesChange={setSelectedPages}
             splitAfter={splitAfter}
             onSplitAfterChange={setSplitAfter}
-            onPageSelect={scrollToPage}
+            onPageSelect={stableScrollToPage}
             currentPage={currentPage}
             forceCommentsTab={isCommentMode}
             redactRegions={redactRegions}
-            onClearRedactRegions={() => setRedactRegions([])}
+            onClearRedactRegions={stableClearRedactRegions}
             redactMode={redactMode}
             onRedactModeChange={setRedactMode}
           />

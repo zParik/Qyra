@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState, type CSSProperties } from "react";
+import { lazy, memo, Suspense, useEffect, useRef, useState, type CSSProperties } from "react";
 
 import { LoadedFile } from "../store/useAppStore";
 import { triggerPrint } from "./tools/PrintPanel";
@@ -128,7 +128,7 @@ const FAMILY_OF: Partial<Record<ViewerTool, Family>> = Object.fromEntries(
 
 type SidebarTab = "tools" | "outline" | "comments";
 
-export function ToolSidebar({ file, onApplied, activeTool, onToolChange, selectedPages, onSelectedPagesChange, splitAfter, onSplitAfterChange, onPageSelect, currentPage, forceCommentsTab, redactRegions, onClearRedactRegions, redactMode, onRedactModeChange }: ToolSidebarProps) {
+function ToolSidebarImpl({ file, onApplied, activeTool, onToolChange, selectedPages, onSelectedPagesChange, splitAfter, onSplitAfterChange, onPageSelect, currentPage, forceCommentsTab, redactRegions, onClearRedactRegions, redactMode, onRedactModeChange }: ToolSidebarProps) {
   const setActiveTool = onToolChange;
   const [tab, setTab] = useState<SidebarTab>("tools");
 
@@ -640,3 +640,6 @@ function OutlineRow({ node, onPageSelect, depth }: { node: OutlineNode; onPageSe
     </div>
   );
 }
+
+// Memoized: the viewer re-renders while scrolling; this only needs to when its props change.
+export const ToolSidebar = memo(ToolSidebarImpl);
