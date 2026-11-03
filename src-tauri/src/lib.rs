@@ -10,7 +10,7 @@ pub use error::{AppError, AppResult};
 
 use commands::*;
 use std::sync::Mutex;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 /// The file passed on the command line ("Open with"), held until the frontend
 /// asks for it. An event emitted at startup is lost if the webview's listener
@@ -20,6 +20,18 @@ struct PendingOpen(Mutex<Option<String>>);
 #[tauri::command]
 fn get_pending_open(pending: tauri::State<'_, PendingOpen>) -> Option<String> {
     pending.0.lock().ok()?.take()
+}
+
+/// The file named on a command line: its first argument that is not a flag,
+/// made absolute against `cwd`. `std::env::args` panics on an argument that
+/// is not UTF-8; such a path cannot reach the webview anyway, so it is skipped.
+fn file_arg(args: impl IntoIterator<Item = std::ffi::OsString>, cwd: &std::path::Path) -> Option<String> {
+    let arg = args
+        .into_iter()
+        .skip(1)
+        .filter_map(|a| a.into_string().ok())
+        .find(|a| !a.starts_with('-'))?;
+    Some(cwd.join(arg).to_string_lossy().into_owned())
 }
 
 pub fn run() {
@@ -70,6 +82,19 @@ pub fn run() {
     );
 
     let builder = tauri::Builder::default()
+        // Registered first, as the plugin requires. "Open with" while Qyra is
+        // running started a second copy; the file now opens in a new tab of
+        // the running one, which comes to the front.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            let args = argv.into_iter().map(std::ffi::OsString::from);
+            if let Some(path) = file_arg(args, std::path::Path::new(&cwd)) {
+                let _ = app.emit("open-pdf", path);
+            }
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
         .manage(commands::crash::CrashLogDir::new())
         .setup(|app| {
             if let Some(dir) = commands::crash::install_panic_hook(app.handle()) {
@@ -103,8 +128,8 @@ pub fn run() {
                 app.manage(render::thumbs::ThumbCache::new(dir, 256 * 1024 * 1024));
             }
             // "Open with" passes the file path as a CLI arg.
-            let file_path = std::env::args().skip(1).find(|a| !a.starts_with('-'));
-            app.manage(PendingOpen(Mutex::new(file_path)));
+            let cwd = std::env::current_dir().unwrap_or_default();
+            app.manage(PendingOpen(Mutex::new(file_arg(std::env::args_os(), &cwd))));
             Ok(())
         });
 
@@ -235,4 +260,28 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|_app_handle, _event| {});
+}
+
+#[cfg(test)]
+mod tests {
+    use super::file_arg;
+    use std::ffi::OsString;
+    use std::path::Path;
+
+    #[test]
+    fn file_arg_skips_flags_and_resolves_relative_paths() {
+        let args = ["qyra", "--flag", "doc.pdf"].map(OsString::from);
+        assert_eq!(file_arg(args, Path::new("/home/u")).as_deref(), Some("/home/u/doc.pdf"));
+        let args = ["qyra", "/abs/doc.pdf"].map(OsString::from);
+        assert_eq!(file_arg(args, Path::new("/home/u")).as_deref(), Some("/abs/doc.pdf"));
+        assert_eq!(file_arg([OsString::from("qyra")], Path::new("/")), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_arg_skips_non_utf8_arguments() {
+        use std::os::unix::ffi::OsStringExt;
+        let args = vec![OsString::from("qyra"), OsString::from_vec(vec![0xFF, 0xFE])];
+        assert_eq!(file_arg(args, Path::new("/")), None);
+    }
 }

@@ -54,6 +54,7 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 # tesseract stays for OCR.
 mupdf = { version = "0.6", default-features = false, features = ["system-fonts", "tesseract"] }
 tauri-plugin-updater = "2"
+tauri-plugin-single-instance = "2"
 
 # libc on unix for setpriority() in the worker thread scheduling.
 [target.'cfg(unix)'.dependencies]
