@@ -74,6 +74,8 @@ enum Job {
     },
     Info { path: String, mtime: u64, reply: Sender<AppResult<DocInfo>> },
     Features { path: String, mtime: u64, reply: Sender<AppResult<DocFeatures>> },
+    /// Drop everything cached for `path`, closing MuPDF's handle on the file.
+    Close { path: String, reply: Sender<()> },
     List { path: String, mtime: u64, page: u32, reply: Sender<AppResult<Arc<mupdf::DisplayList>>> },
     /// Generic short read-only task against the cached document. The closure
     /// owns its own reply channel and receives the open result (or the open
@@ -157,6 +159,16 @@ impl RenderWorker {
         let (reply, rx) = channel();
         self.enqueue(Job::Features { path, mtime, reply })?;
         rx.recv().map_err(|_| AppError::Other("render worker dropped reply".to_string()))?
+    }
+
+    /// Close `path` on the doc thread (open document and display lists) and wait
+    /// until it is closed, so the file can be replaced on disk. The next read
+    /// reopens it.
+    pub fn close(&self, path: &str) {
+        let (reply, rx) = channel();
+        if self.enqueue(Job::Close { path: path.to_string(), reply }).is_ok() {
+            let _ = rx.recv();
+        }
     }
 
     /// Cached display list for 1-based `page` of `path`.
@@ -289,6 +301,13 @@ fn worker_loop(rx: Receiver<Job>) {
                     features.insert(key, f);
                 }
                 let _ = reply.send(found);
+            }
+            Job::Close { path, reply } => {
+                cache.docs.remove(&path);
+                cache.order.retain(|p| *p != path);
+                lists.retain(|((p, _, _), _)| *p != path);
+                features.retain(|(p, _), _| *p != path);
+                let _ = reply.send(());
             }
             Job::List { path, mtime, page, reply } => {
                 let key = (path.clone(), mtime, page);

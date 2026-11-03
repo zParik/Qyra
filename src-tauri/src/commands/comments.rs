@@ -811,7 +811,18 @@ pub async fn save_comments(path: String, comments_json: String) -> AppResult<()>
             .map_err(|e| AppError::Other(e.to_string()))?;
         write_sidecar(&mut doc, json_bytes)?;
 
-        doc.save(&path)?;
+        // Atomically: this is often the user's original file, and the doc
+        // thread reads it lazily while we write.
+        let worker = crate::commands::render_worker::global();
+        crate::utils::paths::replace_file_with(
+            path.as_ref(),
+            |f| doc.save_to(f).map(|_| ()),
+            || {
+                if let Some(w) = &worker {
+                    w.close(&path);
+                }
+            },
+        )?;
         Ok(())
     })
     .await
