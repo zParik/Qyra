@@ -237,14 +237,16 @@ export interface PdfAnnotation {
   quad_points: number[] | null;
 }
 
+/** Mirrors the Rust `NewAnnotation`, which is serde `rename_all = "camelCase"`. */
 export interface NewAnnotation {
   subtype: string;
   page: number;
   rect: [number, number, number, number];
   color: string;
   contents?: string;
-  quad_points?: number[];
+  quadPoints?: number[];
   author?: string;
+  stampName?: string;
 }
 
 export const getPageAnnotations = (path: string, page: number) =>

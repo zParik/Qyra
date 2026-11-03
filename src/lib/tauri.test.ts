@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mergePdfs, splitPdf, rotatePages } from "./tauri";
+import { mergePdfs, splitPdf, rotatePages, addPdfAnnotation } from "./tauri";
 import { mockCommand, lastCallArgs } from "../test/mockTauri";
 
 // Smoke test for the IPC mock seam: the typed wrappers in lib/tauri.ts must
@@ -33,5 +33,17 @@ describe("tauri wrapper seam", () => {
 
   it("rejects when no mock is registered for a command", async () => {
     await expect(rotatePages("in.pdf", [1], 90)).rejects.toThrow(/No mock registered/);
+  });
+
+  it("addPdfAnnotation sends quadPoints in the camelCase the Rust struct reads", async () => {
+    // NewAnnotation is #[serde(rename_all = "camelCase")]: a quad_points key is
+    // silently dropped and a multi-line highlight paints one bounding box.
+    mockCommand("add_pdf_annotation", "out.pdf");
+    await addPdfAnnotation("in.pdf", {
+      subtype: "Highlight", page: 1, rect: [0, 0, 1, 1], color: "#ff0", quadPoints: [0, 0, 1, 0, 0, 1, 1, 1],
+    });
+    const annotation = (lastCallArgs("add_pdf_annotation") as { annotation: Record<string, unknown> }).annotation;
+    expect(annotation.quadPoints).toEqual([0, 0, 1, 0, 0, 1, 1, 1]);
+    expect(annotation).not.toHaveProperty("quad_points");
   });
 });

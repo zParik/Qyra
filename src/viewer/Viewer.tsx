@@ -1063,13 +1063,13 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
       const oldPath = vf.path;
       let path = oldPath;
       for (const g of geom) {
-        const quad_points = g.lines.flatMap((l) => [l.x0, l.y0, l.x1, l.y0, l.x0, l.y1, l.x1, l.y1]);
+        const quadPoints = g.lines.flatMap((l) => [l.x0, l.y0, l.x1, l.y0, l.x0, l.y1, l.x1, l.y1]);
         path = await addPdfAnnotation(path, {
           subtype,
           page: g.page,
           rect: [g.bbox.x0, g.bbox.y0, g.bbox.x1, g.bbox.y1],
           color: annotColor,
-          quad_points,
+          quadPoints,
         });
       }
       swapInPlaceAfterEdit(vf, oldPath, path);
