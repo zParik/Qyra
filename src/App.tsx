@@ -15,6 +15,7 @@ import { UpdateBanner } from "./components/UpdateBanner";
 import { CommandPalette } from "./components/CommandPalette";
 import { CrashLogBanner } from "./components/CrashLogBanner";
 import { ErrorFallback } from "./components/ErrorFallback";
+import { installCloseGuard } from "./lib/closeGuard";
 
 /** Handles "Open with" / double-click file association — must live inside BrowserRouter */
 function OpenWithHandler() {
@@ -32,6 +33,17 @@ export default function App() {
       clearFiles();
       reset();
     };
+  }, []);
+
+  // The window's single close handler: asks about unsaved documents and waits
+  // for every tab's pending writes.
+  useEffect(() => {
+    let off: (() => void) | undefined;
+    let gone = false;
+    installCloseGuard()
+      .then((u) => { if (gone) u(); else off = u; })
+      .catch(() => {});
+    return () => { gone = true; off?.(); };
   }, []);
 
   return (

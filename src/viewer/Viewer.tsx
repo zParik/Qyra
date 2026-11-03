@@ -2,6 +2,7 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "re
 import { useNavigate } from "react-router-dom";
 import { useGoToLibrary } from "../hooks/useGoToLibrary";
 import { useStableCallback } from "./hooks/useStableCallback";
+import { registerCloseFlusher } from "../lib/closeGuard";
 import { useAppStore } from "../store/useAppStore";
 import { useNotesStore, PageTemplate, VirtualPage } from "../store/useNotesStore";
 
@@ -193,28 +194,11 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
   // in flight would kill the write mid-parse and silently lose the comment —
   // exactly what happened with a 145 MB document. Hold the close, flush, then
   // close for real (second close passes because nothing is pending anymore).
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    let closing = false;
-    import("@tauri-apps/api/window").then(({ getCurrentWindow }) => {
-      getCurrentWindow()
-        .onCloseRequested(async (event) => {
-          if (closing || !hasUnsavedComments()) return;
-          event.preventDefault();
-          try {
-            await flushComments();
-          } catch (e) {
-            console.error("[comments] flush on close failed:", e);
-          }
-          closing = true;
-          getCurrentWindow().close();
-        })
-        .then((u) => { unlisten = u; })
-        .catch(() => {});
-    }).catch(() => {});
-    return () => unlisten?.();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Pending comment writes reach disk before the window closes (closeGuard).
+  useEffect(
+    () => registerCloseFlusher({ hasPending: hasUnsavedComments, flush: flushComments }),
+    [hasUnsavedComments, flushComments],
+  );
 
   // Restore page + zoom from SQLite when this tab is mounted. The page is
   // scrolled to (below) once the layout knows where it is; only marking it
