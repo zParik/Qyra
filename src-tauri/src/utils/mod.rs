@@ -56,3 +56,42 @@ pub fn fnv1a(s: &str) -> u64 {
 pub fn fnv1a_hex(s: &str) -> String {
     format!("{:016x}", fnv1a(s))
 }
+
+/// Paint the stream `stamp_id` over the page's existing content.
+///
+/// The original streams are wrapped in `q` … `Q`, so whatever graphics state
+/// they leave behind (a flipped CTM, a clip) is undone before the stamp, which
+/// therefore draws in the page's initial coordinate system. Prepending the
+/// stamp instead put it under the content, invisible on a scanned page. The two
+/// wrapper streams carry `tag` like the stamp, so removing every stream tagged
+/// `tag` restores the page's original Contents.
+pub fn put_overlay_on_top(
+    doc: &mut lopdf::Document,
+    page_id: lopdf::ObjectId,
+    stamp_id: lopdf::ObjectId,
+    tag: &str,
+) -> Result<(), lopdf::Error> {
+    use lopdf::{Dictionary, Object, Stream};
+    let existing: Vec<Object> = match doc.get_dictionary(page_id)?.get(b"Contents") {
+        Ok(Object::Array(arr)) => arr.clone(),
+        Ok(r @ Object::Reference(_)) => vec![r.clone()],
+        _ => vec![],
+    };
+    let mut contents = Vec::with_capacity(existing.len() + 3);
+    if !existing.is_empty() {
+        let mut wrap = |body: &[u8]| {
+            let mut d = Dictionary::new();
+            d.set(tag, Object::Boolean(true));
+            Object::Reference(doc.add_object(Stream::new(d, body.to_vec())))
+        };
+        let (open, close) = (wrap(b"q\n"), wrap(b"\nQ\n"));
+        contents.push(open);
+        contents.extend(existing);
+        contents.push(close);
+    }
+    contents.push(Object::Reference(stamp_id));
+    if let Object::Dictionary(dict) = doc.get_object_mut(page_id)? {
+        dict.set("Contents", Object::Array(contents));
+    }
+    Ok(())
+}

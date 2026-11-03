@@ -232,23 +232,8 @@ pub fn bates_core(
                 }
             }
 
-            if let Ok(Object::Dictionary(dict)) = doc.get_object_mut(*page_id) {
-                match dict.get_mut(b"Contents") {
-                    Ok(Object::Array(arr)) => {
-                        arr.insert(0, Object::Reference(stream_id));
-                    }
-                    Ok(Object::Reference(r)) => {
-                        let existing = *r;
-                        dict.set("Contents", Object::Array(vec![
-                            Object::Reference(stream_id),
-                            Object::Reference(existing),
-                        ]));
-                    }
-                    _ => {
-                        dict.set("Contents", Object::Reference(stream_id));
-                    }
-                }
-            }
+            // Over the page content (under it, a scanned page hid the stamp).
+            crate::utils::put_overlay_on_top(&mut doc, *page_id, stream_id, "BatesOverlay")?;
         }
 
         let out = output.unwrap_or_else(|| temp_output_path(&path, "bates"));

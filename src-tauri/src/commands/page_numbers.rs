@@ -246,29 +246,11 @@ pub fn add_page_numbers_core(
             }
         }
 
-        // --- Prepend content stream to page ---
-        // Prepending ensures our stream runs in the clean initial graphics state
-        // (origin at bottom-left, Y increasing upward). Appending would inherit
-        // any CTM mutations left by the existing streams (e.g. Y-flip transforms
-        // common in word-processor-generated PDFs), inverting our coordinates.
-        let page = doc.get_object_mut(*page_id)?;
-        if let Object::Dictionary(dict) = page {
-            match dict.get_mut(b"Contents") {
-                Ok(Object::Array(arr)) => {
-                    arr.insert(0, Object::Reference(stream_id));
-                }
-                Ok(Object::Reference(r)) => {
-                    let existing = *r;
-                    dict.set("Contents", Object::Array(vec![
-                        Object::Reference(stream_id),
-                        Object::Reference(existing),
-                    ]));
-                }
-                _ => {
-                    dict.set("Contents", Object::Reference(stream_id));
-                }
-            }
-        }
+        // --- Paint the stamp over the page ---
+        // The existing content is wrapped in q/Q so our stream still runs in the
+        // clean initial graphics state (origin at bottom-left, Y up) whatever CTM
+        // mutations it leaves (e.g. Y-flips in word-processor PDFs).
+        crate::utils::put_overlay_on_top(&mut doc, *page_id, stream_id, "PageNumOverlay")?;
     }
 
     let out = output.unwrap_or_else(|| temp_output_path(&path, "numbered"));
