@@ -65,7 +65,9 @@ impl RenderService {
                 .spawn(move || {
                     crate::utils::thread_priority::lower_current_thread_priority();
                     while let Some((id, job)) = sched.pop() {
-                        let result = run(&worker, &job);
+                        // A panic must not kill the thread and shrink the pool for good.
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&worker, &job)))
+                            .unwrap_or_else(|_| Err(AppError::Other("render panicked".into())));
                         let stale = sched.finish(id);
                         let _ = job.reply.send(if stale { Ok(None) } else { result });
                     }

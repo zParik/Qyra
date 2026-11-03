@@ -274,67 +274,78 @@ fn worker_loop(rx: Receiver<Job>) {
     // The viewer asks once per visible page; walk each file version once.
     let mut features: HashMap<(String, u64), DocFeatures> = HashMap::new();
     while let Ok(job) = rx.recv() {
-        match job {
-            Job::Text { path, mtime, page, reply } => {
-                let _ = reply.send(do_text(&mut cache, &path, mtime, page));
-            }
-            Job::Links { path, mtime, page, reply } => {
-                let _ = reply.send(do_links(&mut cache, &path, mtime, page));
-            }
-            Job::Info { path, mtime, reply } => {
-                let _ = reply.send(cache.with_doc(&path, mtime, |doc| {
-                    let pages = crate::render::raster::page_sizes(doc)?;
-                    Ok(DocInfo { page_count: pages.len() as u32, pages, version: mtime.to_string() })
-                }));
-            }
-            Job::Features { path, mtime, reply } => {
-                let key = (path.clone(), mtime);
-                if let Some(f) = features.get(&key) {
-                    let _ = reply.send(Ok(*f));
-                    continue;
+        // A panic in one job (mupdf-rs unwraps while resolving links in some
+        // damaged files) must not kill this thread: every later render would
+        // fail until restart. The job's reply is dropped, so its caller gets
+        // an error; the caches are reset in case the panic left them torn.
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            match job {
+                Job::Text { path, mtime, page, reply } => {
+                    let _ = reply.send(do_text(&mut cache, &path, mtime, page));
                 }
-                let found = cache.with_doc(&path, mtime, scan_features);
-                if let Ok(f) = found {
-                    if features.len() >= 32 {
-                        features.clear();
+                Job::Links { path, mtime, page, reply } => {
+                    let _ = reply.send(do_links(&mut cache, &path, mtime, page));
+                }
+                Job::Info { path, mtime, reply } => {
+                    let _ = reply.send(cache.with_doc(&path, mtime, |doc| {
+                        let pages = crate::render::raster::page_sizes(doc)?;
+                        Ok(DocInfo { page_count: pages.len() as u32, pages, version: mtime.to_string() })
+                    }));
+                }
+                Job::Features { path, mtime, reply } => {
+                    let key = (path.clone(), mtime);
+                    if let Some(f) = features.get(&key) {
+                        let _ = reply.send(Ok(*f));
+                        return;
                     }
-                    features.insert(key, f);
-                }
-                let _ = reply.send(found);
-            }
-            Job::Close { path, reply } => {
-                cache.docs.remove(&path);
-                cache.order.retain(|p| *p != path);
-                lists.retain(|((p, _, _), _)| *p != path);
-                features.retain(|(p, _), _| *p != path);
-                let _ = reply.send(());
-            }
-            Job::List { path, mtime, page, reply } => {
-                let key = (path.clone(), mtime, page);
-                if let Some(pos) = lists.iter().position(|(k, _)| *k == key) {
-                    let hit = lists.remove(pos); // move to most-recent
-                    let _ = reply.send(Ok(hit.1.clone()));
-                    lists.push(hit);
-                    continue;
-                }
-                let built = cache.with_doc(&path, mtime, |doc| {
-                    Ok(Arc::new(crate::render::raster::build_display_list(doc, page as i32 - 1)?))
-                });
-                if let Ok(list) = &built {
-                    lists.push((key, list.clone()));
-                    if lists.len() > LIST_CAP {
-                        lists.remove(0);
+                    let found = cache.with_doc(&path, mtime, scan_features);
+                    if let Ok(f) = found {
+                        if features.len() >= 32 {
+                            features.clear();
+                        }
+                        features.insert(key, f);
                     }
+                    let _ = reply.send(found);
                 }
-                let _ = reply.send(built);
+                Job::Close { path, reply } => {
+                    cache.docs.remove(&path);
+                    cache.order.retain(|p| *p != path);
+                    lists.retain(|((p, _, _), _)| *p != path);
+                    features.retain(|(p, _), _| *p != path);
+                    let _ = reply.send(());
+                }
+                Job::List { path, mtime, page, reply } => {
+                    let key = (path.clone(), mtime, page);
+                    if let Some(pos) = lists.iter().position(|(k, _)| *k == key) {
+                        let hit = lists.remove(pos); // move to most-recent
+                        let _ = reply.send(Ok(hit.1.clone()));
+                        lists.push(hit);
+                        return;
+                    }
+                    let built = cache.with_doc(&path, mtime, |doc| {
+                        Ok(Arc::new(crate::render::raster::build_display_list(doc, page as i32 - 1)?))
+                    });
+                    if let Ok(list) = &built {
+                        lists.push((key, list.clone()));
+                        if lists.len() > LIST_CAP {
+                            lists.remove(0);
+                        }
+                    }
+                    let _ = reply.send(built);
+                }
+                Job::Run { path, mtime, run } => match cache.ensure(&path, mtime) {
+                    Ok(()) => {
+                        let (_, doc) = cache.docs.get(&path).expect("ensure inserted the doc");
+                        run(Ok(&**doc));
+                    }
+                    Err(e) => run(Err(e)),
+                },
             }
-            Job::Run { path, mtime, run } => match cache.ensure(&path, mtime) {
-                Ok(()) => {
-                    let (_, doc) = cache.docs.get(&path).expect("ensure inserted the doc");
-                    run(Ok(&**doc));
-                }
-                Err(e) => run(Err(e)),
-            },
+        }));
+        if outcome.is_err() {
+            cache = DocCache::new();
+            lists.clear();
+            features.clear();
         }
     }
 }
