@@ -75,7 +75,10 @@ export function DropZone({ accept = [".pdf"], multiple = true, label }: DropZone
           } else if (event.payload.type === "drop" && isOver) {
             setDragging(false);
             const paths = (event.payload as any).paths as string[];
-            const filtered = multiple ? paths : paths.slice(0, 1);
+            // Only the file types this zone takes (the picker filters, a drop does not).
+            const ok = paths.filter((p) => accept.some((ext) => p.toLowerCase().endsWith(ext.toLowerCase())));
+            if (ok.length < paths.length) setError(`Only ${kinds} can be added here.`);
+            const filtered = multiple ? ok : ok.slice(0, 1);
             if (filtered.length > 0) await handlePaths(filtered);
           }
         });
