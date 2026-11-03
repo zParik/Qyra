@@ -15,7 +15,12 @@ function wire(w: number, h: number): ArrayBuffer {
   return buf;
 }
 
-beforeEach(() => invoke.mockReset());
+beforeEach(() => {
+  invoke.mockReset();
+  // Default: unmocked commands (e.g. the batched cancel_renders timer) resolve
+  // instead of returning undefined, which would throw on .catch().
+  invoke.mockResolvedValue(undefined);
+});
 
 describe("decodeRgba", () => {
   it("parses the LE header and pixels", () => {
