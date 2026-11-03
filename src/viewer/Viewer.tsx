@@ -216,10 +216,13 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Restore page + zoom from SQLite when this tab is mounted
+  // Restore page + zoom from SQLite when this tab is mounted. The page is
+  // scrolled to (below) once the layout knows where it is; only marking it
+  // current left the view at page 1, outside the band that gets tiles.
+  const [restorePage, setRestorePage] = useState<number | null>(null);
   useEffect(() => {
     invoke<[number, number]>("get_tab_ui_state", { path: tabPath }).then(([page, z]) => {
-      if (page > 1) setCurrentPage(page);
+      if (page > 1) setRestorePage(page);
       if (z !== 1.0) setZoom(z);
     }).catch(() => {});
   }, [tabPath]);
@@ -790,6 +793,15 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
   useEffect(() => {
     if (!isActive && viewerFile?.path) tileCache.dropPrefix(tileKeyPrefix(viewerFile.path));
   }, [isActive, viewerFile?.path]);
+
+  // Scroll to the restored page once its slot exists in a laid-out document.
+  useEffect(() => {
+    if (restorePage == null || !docInfo || !containerHeight || !pageToSlotIndex.has(restorePage)) return;
+    scrollToPage(restorePage);
+    setRestorePage(null);
+    // scrollToPage reads the current layout; layout is a dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [restorePage, docInfo, containerHeight, pageToSlotIndex, layout]);
 
   // Stable identities for the memoized page strip and tools sidebar, so the
   // scroll-driven re-renders of the viewer do not re-render them too.

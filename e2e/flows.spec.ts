@@ -45,3 +45,35 @@ test.describe("theme toggle", () => {
       .toBe("dark");
   });
 });
+
+test.describe("viewer", () => {
+  test("reopening a document scrolls back to its saved page", async ({ page, mockTauri }) => {
+    const pages = Array.from({ length: 12 }, () => ({ w: 612, h: 792 }));
+    await mockTauri({
+      get_setting: "1",
+      get_tab_session: [[{ path: "/x/a.pdf", name: "a.pdf" }], 0],
+      doc_open: { pageCount: 12, pages, version: "1" },
+      get_page_count: 12,
+      get_file_size: 1000,
+      get_text_page: [],
+      load_comments: "[]",
+      get_form_fields: [],
+      get_page_links: [],
+      get_outline: [],
+      get_tab_ui_state: [7, 1],
+      render_tile: null,
+    });
+    await page.goto("/view");
+    // Page 7 must be on screen, not just marked current while the view stays at page 1.
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const el = document.querySelector('[data-page-index="7"]');
+          if (!el) return false;
+          const r = el.getBoundingClientRect();
+          return r.top < innerHeight && r.bottom > 0;
+        }),
+      )
+      .toBe(true);
+  });
+});
