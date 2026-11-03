@@ -1,4 +1,3 @@
-import { clsx } from "clsx";
 import { useTheme, ThemeChoice } from "../lib/useTheme";
 import { IcSun, IcMoon, IcMonitor } from "./Icons";
 
@@ -17,7 +16,7 @@ interface Props {
 export function ThemeToggle({ variant = "compact" }: Props) {
   const { theme, setTheme } = useTheme();
   return (
-    <div className={clsx("seg", variant === "rail" && "seg-full")} role="group" aria-label="Theme">
+    <div className={variant === "rail" ? "seg seg-full" : "seg"} role="group" aria-label="Theme">
       {CHOICES.map(({ value, label, Icon }) => (
         <button
           key={value}
