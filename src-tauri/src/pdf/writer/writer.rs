@@ -16,6 +16,9 @@ use crate::pdf::writer::object_stream::build_objstm;
 use crate::pdf::writer::serialize;
 use crate::pdf::writer::xref_stream::{build_xref_stream, XrefRow};
 
+/// Highest object number written (real files stay far below ten million).
+const MAX_OBJECT_NUMBER: u32 = 10_000_000;
+
 pub struct PdfWriter<W: Write> {
     out: W,
     /// Bytes written so far — the running offset for xref entries.
@@ -89,7 +92,23 @@ impl<W: Write> PdfWriter<W> {
     ) -> Result<(), PdfError> {
         const BATCH: usize = 100;
 
-        let max_obj = objects.iter().map(|(id, _)| id.0).max().unwrap_or(0);
+        // New ObjStm/XRef numbers start above the input's /Size too: references
+        // to objects that were dropped (a stripped /Metadata stream, a dangling
+        // ref) keep their numbers, and must not end up pointing at an ObjStm.
+        let live_max = objects.iter().map(|(id, _)| id.0).max().unwrap_or(0);
+        let size_max = trailer
+            .get(b"Size")
+            .and_then(|v| v.as_integer())
+            .and_then(|n| u32::try_from(n.saturating_sub(1)).ok())
+            .unwrap_or(0);
+        let max_obj = live_max.max(size_max);
+        // The xref has a row per object number: a bogus /Size or object number
+        // in the billions would allocate gigabytes.
+        if max_obj > MAX_OBJECT_NUMBER {
+            return Err(PdfError::ParseError(format!(
+                "object number {max_obj} is beyond what this writer handles"
+            )));
+        }
 
         // Partition: stream objects (or non-gen-0) → regular; else → packable.
         let mut regular: Vec<(ObjectId, &PdfObject)> = Vec::new();
@@ -186,6 +205,12 @@ impl<W: Write> PdfWriter<W> {
         }
 
         let max_obj_num = *by_obj_num.keys().last().unwrap_or(&0);
+        // One table row per object number, as above.
+        if max_obj_num > MAX_OBJECT_NUMBER {
+            return Err(PdfError::ParseError(format!(
+                "object number {max_obj_num} is beyond what this writer handles"
+            )));
+        }
         let size = max_obj_num + 1;
 
         trailer_dict.set(b"Size", PdfObject::Integer(size as i64));
@@ -229,6 +254,31 @@ mod tests {
     /// Build an in-memory writer over a `Vec<u8>`.
     fn writer() -> PdfWriter<Vec<u8>> {
         PdfWriter::new(Vec::new())
+    }
+
+    #[test]
+    fn new_object_numbers_start_above_the_input_size() {
+        // Object 40 (say a stripped /Metadata stream) is gone, but the catalog
+        // may still refer to it: the ObjStm and XRef must not take number 40.
+        let mut w = writer();
+        w.write_header().unwrap();
+        let mut trailer = PdfDict::new();
+        trailer.set(b"Size", PdfObject::Integer(41));
+        let objects = vec![((1, 0), PdfObject::Integer(1)), ((2, 0), PdfObject::Integer(2))];
+        w.write_with_object_streams(&objects, trailer).unwrap();
+        let s = String::from_utf8_lossy(&w.finish().unwrap()).into_owned();
+        for n in 3..=40 {
+            assert!(!s.contains(&format!("\n{n} 0 obj")), "new object took free number {n}");
+        }
+    }
+
+    #[test]
+    fn an_absurd_object_count_is_an_error_not_an_abort() {
+        let mut w = writer();
+        w.write_header().unwrap();
+        let mut trailer = PdfDict::new();
+        trailer.set(b"Size", PdfObject::Integer(4_000_000_000));
+        assert!(w.write_with_object_streams(&[((1, 0), PdfObject::Integer(1))], trailer).is_err());
     }
 
     #[test]
