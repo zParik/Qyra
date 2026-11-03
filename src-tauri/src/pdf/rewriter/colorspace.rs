@@ -327,16 +327,25 @@ fn fill_pixels(
                     [r, g, b]
                 }
                 ResolvedColorSpace::Cmyk => {
-                    let c = br.read(bpc) as f32 / maxval;
-                    let m = br.read(bpc) as f32 / maxval;
-                    let yv = br.read(bpc) as f32 / maxval;
-                    let k = br.read(bpc) as f32 / maxval;
+                    // Inverted CMYK ([1 0 1 0 1 0 1 0], common in scans) came
+                    // out as a negative when /Decode was ignored.
+                    let c = decode_unit(br.read(bpc), maxval, decode, 0);
+                    let m = decode_unit(br.read(bpc), maxval, decode, 1);
+                    let yv = decode_unit(br.read(bpc), maxval, decode, 2);
+                    let k = decode_unit(br.read(bpc), maxval, decode, 3);
                     cmyk_to_rgb(c, m, yv, k)
                 }
                 ResolvedColorSpace::Indexed { base, hival, lookup } => {
-                    let raw = br.read(bpc) as usize;
-                    let i = raw.min(*hival);
-                    index_lookup(base, *hival, lookup, i)
+                    let raw = br.read(bpc);
+                    // For Indexed, /Decode maps samples to palette indices
+                    // (default [0 2^bpc-1]); [N 0] reverses the palette.
+                    let i = match decode {
+                        Some(d) if d.len() >= 2 => {
+                            (d[0] + raw as f64 * (d[1] - d[0]) / maxval as f64).round().max(0.0) as usize
+                        }
+                        _ => raw as usize,
+                    };
+                    index_lookup(base, *hival, lookup, i.min(*hival))
                 }
                 ResolvedColorSpace::Unsupported => return None,
             };
@@ -346,9 +355,9 @@ fn fill_pixels(
     Some(())
 }
 
-/// Apply the /Decode remap (default identity) and scale to 8-bit.
+/// Apply the /Decode remap (default identity) to one component, as 0..1.
 #[inline]
-fn decode_channel(sample: u32, maxval: f32, decode: Option<&[f64]>, comp: usize) -> u8 {
+fn decode_unit(sample: u32, maxval: f32, decode: Option<&[f64]>, comp: usize) -> f32 {
     let n = sample as f32 / maxval;
     let v = match decode {
         Some(d) if d.len() >= (comp + 1) * 2 => {
@@ -358,7 +367,13 @@ fn decode_channel(sample: u32, maxval: f32, decode: Option<&[f64]>, comp: usize)
         }
         _ => n,
     };
-    (v.clamp(0.0, 1.0) * 255.0).round() as u8
+    v.clamp(0.0, 1.0)
+}
+
+/// Apply the /Decode remap (default identity) and scale to 8-bit.
+#[inline]
+fn decode_channel(sample: u32, maxval: f32, decode: Option<&[f64]>, comp: usize) -> u8 {
+    (decode_unit(sample, maxval, decode, comp) * 255.0).round() as u8
 }
 
 /// Resolve one palette entry to RGB.
@@ -390,6 +405,29 @@ fn index_lookup(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inverted_cmyk_decode_is_applied() {
+        // One pixel of no ink, stored inverted: 255 everywhere means 0 ink.
+        let img = decode_image_to_dynimage(
+            &[255, 255, 255, 255], 1, 1, 8, &ResolvedColorSpace::Cmyk,
+            Some(&[1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0]),
+        )
+        .unwrap();
+        assert_eq!(img.to_rgb8().get_pixel(0, 0).0, [255, 255, 255]);
+    }
+
+    #[test]
+    fn reversed_indexed_decode_picks_the_mirrored_entry() {
+        let cs = ResolvedColorSpace::Indexed {
+            base: Box::new(ResolvedColorSpace::Gray),
+            hival: 1,
+            lookup: vec![10, 200],
+        };
+        // 1-bit sample 0 with /Decode [1 0] is palette index 1.
+        let img = decode_image_to_dynimage(&[0b0000_0000], 1, 1, 1, &cs, Some(&[1.0, 0.0])).unwrap();
+        assert_eq!(img.to_rgb8().get_pixel(0, 0).0, [200, 200, 200]);
+    }
 
     #[test]
     fn cyclic_colour_spaces_resolve_to_unsupported_instead_of_recursing() {
