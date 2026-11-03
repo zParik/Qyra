@@ -334,7 +334,6 @@
 
   html {
     font-family: var(--font-sans);
-    font-size: var(--fs-body);
     font-feature-settings: "kern" 1, "liga" 1, "calt" 1, "tnum" 1;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -344,6 +343,7 @@
   body {
     background: var(--bg0);
     color: var(--fg0);
+    font-size: var(--fs-body);
     line-height: var(--lh-body);
   }
 
