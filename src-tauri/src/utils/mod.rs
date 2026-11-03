@@ -1,4 +1,5 @@
 pub mod annots;
+pub mod geometry;
 pub mod paths;
 pub mod progress;
 pub mod thread_priority;

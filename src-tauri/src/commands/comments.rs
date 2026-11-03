@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::commands::pdf_annotations::{color_array_to_hex, hex_to_rgb_f32};
 use crate::error::{AppError, AppResult};
-use crate::utils::get_page_dims;
+use crate::utils::geometry::PageGeom;
 
 const ATTACHMENT_KEY: &[u8] = b"qyra-comments";
 const ATTACHMENT_FILENAME: &[u8] = b"qyra-comments.json";
@@ -490,10 +490,10 @@ fn note_appearance(doc: &mut Document, color: &str) -> ObjectId {
 }
 
 /// Build a fresh Text-annotation dictionary for a comment.
-fn build_note_dict(comment: &Comment, pw: f64, ph: f64, ap_id: ObjectId) -> Dictionary {
-    // Pin tip (normalized, top-left origin) → PDF coords (bottom-left origin).
-    let tip_x = comment.x.clamp(0.0, 1.0) * pw;
-    let tip_y = (1.0 - comment.y.clamp(0.0, 1.0)) * ph;
+fn build_note_dict(comment: &Comment, geom: &PageGeom, ap_id: ObjectId) -> Dictionary {
+    // Pin tip (normalised to the page as shown) → user space. The tip is the
+    // bottom-centre of /Rect in user space, so it reads back exactly.
+    let (tip_x, tip_y) = geom.to_pdf(comment.x.clamp(0.0, 1.0), comment.y.clamp(0.0, 1.0));
     let (r, g, b) = hex_to_rgb_f32(&comment.color);
 
     let mut d = Dictionary::new();
@@ -608,9 +608,9 @@ fn sync_text_annots(doc: &mut Document, comments: &mut [Comment]) {
                 // Page out of range (stale comment) — keep in sidecar only.
                 continue;
             };
-            let (pw, ph) = get_page_dims(doc, page_id);
+            let geom = PageGeom::of(doc, page_id);
             let ap_id = note_appearance(doc, &comment.color);
-            let note_dict = build_note_dict(comment, pw, ph, ap_id);
+            let note_dict = build_note_dict(comment, &geom, ap_id);
             let annot_id = doc.add_object(note_dict);
             if push_annot_ref(doc, page_id, annot_id).is_ok() {
                 comment.synced = true;
@@ -659,10 +659,7 @@ pub async fn load_comments(path: String) -> AppResult<String> {
 
         // Import every Text annotation, merging sidecar extras by id.
         for (page_num, page_id) in doc.get_pages() {
-            let (pw, ph) = get_page_dims(&doc, page_id);
-            if pw <= 0.0 || ph <= 0.0 {
-                continue;
-            }
+            let geom = PageGeom::of(&doc, page_id);
             for annot_id in annot_refs(&doc, page_id) {
                 let Some(dict) = get_dict(&doc, annot_id) else { continue };
                 if dict_subtype(dict) != Some(b"Text".as_slice()) {
@@ -684,7 +681,8 @@ pub async fn load_comments(path: String) -> AppResult<String> {
                             (num(&arr[0]), num(&arr[1]), num(&arr[2]), num(&arr[3]));
                         let cx = (x0 + x1) / 2.0;
                         let bottom = y0.min(y1);
-                        ((cx / pw).clamp(0.0, 1.0), (1.0 - bottom / ph).clamp(0.0, 1.0))
+                        let (nx, ny) = geom.to_norm(cx, bottom);
+                        (nx.clamp(0.0, 1.0), ny.clamp(0.0, 1.0))
                     }
                     _ => match &side {
                         Some(s) => (s.x, s.y),

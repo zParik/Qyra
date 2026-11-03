@@ -125,3 +125,43 @@ async fn adding_an_annotation_keeps_annotations_behind_an_indirect_annots() {
     };
     assert_eq!(n, before + 1, "existing annotations were dropped");
 }
+
+#[tokio::test]
+async fn highlight_on_rotated_page_reads_back_where_it_was_drawn() {
+    // Positions are normalised to the page as shown. On a page turned by
+    // /Rotate they used to be mapped as if it were upright.
+    let (_d, rotated) = temp_output("rotated.pdf");
+    qyra_lib::commands::rotate::rotate_pages(fixture_str("simple.pdf"), vec![1], 90, Some(rotated.clone()))
+        .expect("rotate");
+    let (_d2, out) = temp_output("rotated-highlight.pdf");
+    let rect = [0.1, 0.2, 0.5, 0.25];
+    add_pdf_annotation(
+        rotated,
+        NewAnnotation {
+            subtype: "Highlight".into(),
+            page: 1,
+            rect,
+            color: "#ffeb3b".into(),
+            contents: None,
+            quad_points: Some(vec![0.1, 0.2, 0.5, 0.2, 0.1, 0.25, 0.5, 0.25]),
+            author: None,
+            stamp_name: None,
+        },
+        Some(out.clone()),
+    )
+    .await
+    .expect("add highlight");
+
+    let annots = get_page_annotations(out.clone(), 1).await.expect("read annotations");
+    let hl = annots.iter().find(|a| a.subtype == "Highlight").expect("highlight");
+    for (got, want) in hl.rect.iter().zip(rect) {
+        assert!((got - want).abs() < 1e-3, "rect {:?} != {:?}", hl.rect, rect);
+    }
+    // In user space the box is turned: tall and narrow on a portrait page.
+    let doc = common::load_lopdf(&out);
+    let page_id = doc.get_pages()[&1];
+    let annot_id = qyra_lib::utils::annots::annot_refs(&doc, page_id)[0];
+    let r = doc.get_object(annot_id).unwrap().as_dict().unwrap().get(b"Rect").unwrap().as_array().unwrap().clone();
+    let n = |o: &lopdf::Object| o.as_float().unwrap() as f64;
+    assert!(n(&r[3]) - n(&r[1]) > n(&r[2]) - n(&r[0]), "rect {r:?} should be taller than wide");
+}

@@ -6,7 +6,7 @@ use tauri::{Emitter, Manager};
 
 use crate::utils::paths::temp_output_path;
 use crate::utils::progress::Progress;
-use crate::utils::get_page_dims;
+use crate::utils::geometry::PageGeom;
 use crate::error::{AppError, AppResult};
 
 #[derive(Deserialize, Serialize)]
@@ -171,8 +171,7 @@ pub fn make_searchable_core(
                 continue;
             }
 
-            let (pw, ph) = get_page_dims(&doc, page_id);
-            let content = text_content(&ocr_page.words, pw, ph);
+            let content = text_content(&ocr_page.words, &PageGeom::of(&doc, page_id));
             if content.is_empty() {
                 continue;
             }
@@ -207,7 +206,9 @@ pub fn make_searchable_core(
 
 /// Build a PDF content stream that places invisible (render mode 3) text at
 /// each word's position so the document becomes searchable / copy-pasteable.
-fn text_content(words: &[OcrWord], pw: f64, ph: f64) -> Vec<u8> {
+fn text_content(words: &[OcrWord], geom: &PageGeom) -> Vec<u8> {
+    let (_, dh) = geom.display_size();
+    let [a, b, c, d] = geom.upright_basis();
     let mut buf = String::from("q\nBT\n/OcrF 1 Tf\n3 Tr\n");
     let mut any = false;
 
@@ -218,14 +219,15 @@ fn text_content(words: &[OcrWord], pw: f64, ph: f64) -> Vec<u8> {
         }
         any = true;
 
-        let x = w.x * pw;
-        // PDF origin is bottom-left; OCR bbox y is from top-left → flip
-        let y = ph - (w.y + w.h) * ph;
+        // Word boxes are normalised to the page as shown; the baseline
+        // starts at the box's shown bottom-left corner.
+        let (x, y) = geom.to_pdf(w.x, w.y + w.h);
         // Font size = word height in points (minimum 4 pt for readability)
-        let fs = (w.h * ph).max(4.0);
+        let fs = (w.h * dh).max(4.0);
+        let (a, b, c, d) = (a * fs, b * fs, c * fs, d * fs);
 
-        // Tm sets the text matrix: scale x/y by fs, position at (x, y)
-        buf.push_str(&format!("{fs:.3} 0 0 {fs:.3} {x:.3} {y:.3} Tm ({t}) Tj\n"));
+        // Tm sets the text matrix: upright on the shown page, scaled by fs
+        buf.push_str(&format!("{a:.3} {b:.3} {c:.3} {d:.3} {x:.3} {y:.3} Tm ({t}) Tj\n"));
     }
 
     buf.push_str("ET\nQ\n");
