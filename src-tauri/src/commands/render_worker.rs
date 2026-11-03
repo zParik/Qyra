@@ -31,9 +31,10 @@ const CACHE_CAP: usize = 6;
 use crate::render::geometry::PageSizePt;
 use mupdf::pdf::PdfDocument;
 
-/// Display lists kept (across documents). A list is the parsed page, so this
-/// bounds re-parse work, not pixels.
-const LIST_CAP: usize = 64;
+/// Display lists kept (across documents). A list is the parsed page, which can
+/// run to tens of MB on a vector-heavy page; 24 covers the viewer's mounted
+/// band (about 17 pages) with room to scroll back.
+const LIST_CAP: usize = 24;
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]

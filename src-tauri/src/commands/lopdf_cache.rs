@@ -24,8 +24,9 @@ use lopdf::Document;
 
 use crate::error::{AppError, AppResult};
 
-/// How many distinct documents to keep parsed at once.
-const CACHE_CAP: usize = 4;
+/// How many distinct documents to keep parsed at once. A parse holds the
+/// whole file in memory (often several times its size), so keep few.
+const CACHE_CAP: usize = 2;
 
 struct Cache {
     docs: HashMap<String, (u64, Arc<Document>)>,
