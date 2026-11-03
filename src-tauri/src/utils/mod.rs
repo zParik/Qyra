@@ -1,3 +1,4 @@
+pub mod annots;
 pub mod paths;
 pub mod progress;
 pub mod thread_priority;

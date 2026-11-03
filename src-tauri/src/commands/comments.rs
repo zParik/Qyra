@@ -208,67 +208,8 @@ fn author_name() -> String {
 // /Annots access
 // ---------------------------------------------------------------------------
 
-/// Object ids referenced by a page's /Annots array (inline or indirect).
-/// Inline annotation dictionaries (no indirect ref) are skipped, matching
-/// pdf_annotations.rs.
-fn annot_refs(doc: &Document, page_id: ObjectId) -> Vec<ObjectId> {
-    let Some(page_dict) = get_dict(doc, page_id) else {
-        return vec![];
-    };
-    match page_dict.get(b"Annots") {
-        Ok(Object::Array(arr)) => arr.iter().filter_map(obj_as_ref).collect(),
-        Ok(Object::Reference(r)) => match doc.get_object(*r) {
-            Ok(Object::Array(arr)) => arr.iter().filter_map(obj_as_ref).collect(),
-            _ => vec![],
-        },
-        _ => vec![],
-    }
-}
+use crate::utils::annots::{annot_refs, push_annot_ref, remove_annot_ref};
 
-/// Append an annotation reference to a page's /Annots, handling the inline
-/// array, indirect array, and missing cases.
-fn push_annot_ref(doc: &mut Document, page_id: ObjectId, annot_id: ObjectId) -> AppResult<()> {
-    // Determine the array's location with immutable borrows first.
-    let indirect_arr: Option<ObjectId> = get_dict(doc, page_id)
-        .and_then(|d| d.get(b"Annots").ok())
-        .and_then(obj_as_ref);
-
-    if let Some(arr_id) = indirect_arr {
-        if let Ok(Object::Array(arr)) = doc.get_object_mut(arr_id) {
-            arr.push(Object::Reference(annot_id));
-            return Ok(());
-        }
-    }
-
-    let page_obj = doc.get_object_mut(page_id)?;
-    if let Object::Dictionary(page_dict) = page_obj {
-        match page_dict.get_mut(b"Annots") {
-            Ok(Object::Array(arr)) => arr.push(Object::Reference(annot_id)),
-            _ => page_dict.set("Annots", Object::Array(vec![Object::Reference(annot_id)])),
-        }
-    }
-    Ok(())
-}
-
-/// Remove an annotation reference from a page's /Annots (inline or indirect).
-fn remove_annot_ref(doc: &mut Document, page_id: ObjectId, annot_id: ObjectId) {
-    let indirect_arr: Option<ObjectId> = get_dict(doc, page_id)
-        .and_then(|d| d.get(b"Annots").ok())
-        .and_then(obj_as_ref);
-
-    let target = Object::Reference(annot_id);
-    if let Some(arr_id) = indirect_arr {
-        if let Ok(Object::Array(arr)) = doc.get_object_mut(arr_id) {
-            arr.retain(|o| *o != target);
-        }
-        return;
-    }
-    if let Ok(Object::Dictionary(page_dict)) = doc.get_object_mut(page_id) {
-        if let Ok(Object::Array(arr)) = page_dict.get_mut(b"Annots") {
-            arr.retain(|o| *o != target);
-        }
-    }
-}
 
 /// Stable comment id for a Text annotation: its /NM if present, otherwise a
 /// synthetic id derived from the object id (stable across load/save because
@@ -682,10 +623,10 @@ fn sync_text_annots(doc: &mut Document, comments: &mut [Comment]) {
         if keep.contains(&note.annot_id) {
             continue;
         }
-        remove_annot_ref(doc, note.page_id, note.annot_id);
+        let _ = remove_annot_ref(doc, note.page_id, note.annot_id);
         doc.objects.remove(&note.annot_id);
         if let Some(popup_id) = note.popup_id {
-            remove_annot_ref(doc, note.page_id, popup_id);
+            let _ = remove_annot_ref(doc, note.page_id, popup_id);
             doc.objects.remove(&popup_id);
         }
     }

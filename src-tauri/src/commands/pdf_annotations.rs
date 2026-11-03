@@ -424,17 +424,7 @@ pub async fn add_pdf_annotation(
         let annot_id = doc.add_object(annot_dict);
 
         // Add the annotation reference to the page's /Annots array
-        let page_obj = doc.get_object_mut(page_id)?;
-        if let Object::Dictionary(page_dict) = page_obj {
-            match page_dict.get_mut(b"Annots") {
-                Ok(Object::Array(arr)) => {
-                    arr.push(Object::Reference(annot_id));
-                }
-                _ => {
-                    page_dict.set("Annots", Object::Array(vec![Object::Reference(annot_id)]));
-                }
-            }
-        }
+        crate::utils::annots::push_annot_ref(&mut doc, page_id, annot_id)?;
 
         doc.save(&out)?;
         Ok(out)

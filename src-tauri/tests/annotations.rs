@@ -93,3 +93,35 @@ async fn export_annotations_writes_csv_rows() {
     assert!(csv.contains("page,type,color,contents"), "has CSV header");
     assert!(csv.contains("Square") || csv.contains("Text"), "lists an annotation row");
 }
+
+#[tokio::test]
+async fn adding_an_annotation_keeps_annotations_behind_an_indirect_annots() {
+    let mut doc = common::load_lopdf(&fixture_str("annotated.pdf"));
+    let pid = doc.get_pages()[&1];
+    let arr = doc.get_dictionary(pid).unwrap().get(b"Annots").unwrap().clone();
+    let before = arr.as_array().unwrap().len();
+    let arr_id = doc.add_object(arr);
+    doc.get_dictionary_mut(pid).unwrap().set("Annots", lopdf::Object::Reference(arr_id));
+    let (_d, src) = temp_output("indirect-annots.pdf");
+    doc.save(&src).unwrap();
+
+    let (_d2, out) = temp_output("annotated2.pdf");
+    add_pdf_annotation(
+        src,
+        NewAnnotation {
+            subtype: "Square".into(), page: 1, rect: [100.0, 100.0, 200.0, 200.0], color: "#ff0000".into(),
+            contents: None, quad_points: None, author: None, stamp_name: None,
+        },
+        Some(out.clone()),
+    )
+    .await
+    .expect("annotate");
+    let doc = common::load_lopdf(&out);
+    let pid = doc.get_pages()[&1];
+    let n = match doc.get_dictionary(pid).unwrap().get(b"Annots").unwrap() {
+        lopdf::Object::Array(a) => a.len(),
+        lopdf::Object::Reference(r) => doc.get_object(*r).unwrap().as_array().unwrap().len(),
+        _ => 0,
+    };
+    assert_eq!(n, before + 1, "existing annotations were dropped");
+}

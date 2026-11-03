@@ -102,22 +102,7 @@ pub async fn add_link(
         let annot_id = build_link_annot(&mut doc, rect, link.uri.as_deref(), dest_page_id);
 
         // Attach to the page's /Annots array, creating one if missing.
-        if let Ok(Object::Dictionary(page)) = doc.get_object_mut(page_id) {
-            match page.get_mut(b"Annots") {
-                Ok(Object::Array(arr)) => arr.push(Object::Reference(annot_id)),
-                Ok(Object::Reference(r)) => {
-                    let existing = *r;
-                    // Replace direct reference with array containing both.
-                    page.set("Annots", Object::Array(vec![
-                        Object::Reference(existing),
-                        Object::Reference(annot_id),
-                    ]));
-                }
-                _ => {
-                    page.set("Annots", Object::Array(vec![Object::Reference(annot_id)]));
-                }
-            }
-        }
+        crate::utils::annots::push_annot_ref(&mut doc, page_id, annot_id)?;
 
         let out = output.unwrap_or_else(|| temp_output_path(&path, "links"));
         doc.save(&out)?;
@@ -140,17 +125,10 @@ pub async fn remove_link(
 
         // Collect all annotation refs on the page that are Link subtype.
         let link_refs: Vec<ObjectId> = {
-            let Ok(Object::Dictionary(page)) = doc.get_object(page_id) else {
+            if doc.get_dictionary(page_id).is_err() {
                 return Err(AppError::Other("page missing".into()));
-            };
-            let annot_refs: Vec<ObjectId> = match page.get(b"Annots") {
-                Ok(Object::Array(arr)) => arr.iter()
-                    .filter_map(|o| o.as_reference().ok())
-                    .collect(),
-                Ok(Object::Reference(r)) => vec![*r],
-                _ => vec![],
-            };
-            annot_refs.into_iter().filter(|id| {
+            }
+            crate::utils::annots::annot_refs(&doc, page_id).into_iter().filter(|id| {
                 matches!(
                     doc.get_object(*id),
                     Ok(Object::Dictionary(d)) if matches!(
@@ -164,20 +142,7 @@ pub async fn remove_link(
         let target = link_refs.get(index as usize).copied()
             .ok_or_else(|| AppError::Other(format!("link index {} out of range", index)))?;
 
-        if let Ok(Object::Dictionary(page)) = doc.get_object_mut(page_id) {
-            match page.get_mut(b"Annots") {
-                Ok(Object::Array(arr)) => {
-                    arr.retain(|o| match o.as_reference() {
-                        Ok(id) => id != target,
-                        Err(_) => true,
-                    });
-                }
-                Ok(Object::Reference(r)) if *r == target => {
-                    page.remove(b"Annots");
-                }
-                _ => {}
-            }
-        }
+        crate::utils::annots::remove_annot_ref(&mut doc, page_id, target)?;
 
         let out = output.unwrap_or_else(|| temp_output_path(&path, "links"));
         doc.save(&out)?;
