@@ -21,7 +21,7 @@ export const FAMILY: Record<Family, { label: string; color: string }> = {
   forms:    { label: "Forms",    color: "var(--sw-forms)" },
   redact:   { label: "Redact",   color: "var(--sw-redact)" },
   compress: { label: "Compress", color: "var(--sw-compress)" },
-  export:   { label: "Export",   color: "var(--sw-export)" },
+  export:   { label: "Convert",  color: "var(--sw-export)" },
 };
 
 /** Style object that sets the `--chip` custom property a `.chip` or `.thumb-tab` reads. */
