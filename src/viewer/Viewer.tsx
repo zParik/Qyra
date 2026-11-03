@@ -676,7 +676,8 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
     function onKey(e: KeyboardEvent) {
       if (!isActive) return; // hidden tabs ignore the keyboard
       const target = e.target as HTMLElement;
-      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
+      // Typing, picking a form choice field or editing text keeps its keys.
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable) return;
 
       if (e.key === "Escape" && readingMode) {
         e.preventDefault();
