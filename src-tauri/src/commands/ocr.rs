@@ -197,7 +197,7 @@ pub fn make_searchable_core(
                 .map_err(|e| AppError::Pdf(format!("Failed to patch page: {e}")))?;
         }
 
-        doc.save(&out)?;
+        crate::utils::save_pdf(&mut doc, &out)?;
         Ok(out)
 }
 

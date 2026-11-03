@@ -36,6 +36,6 @@ pub fn remove_pages(
     doc.delete_pages(&pages);
 
     let out = output.unwrap_or_else(|| temp_output_path(&path, "removed"));
-    doc.save(&out)?;
+    crate::utils::save_pdf(&mut doc, &out)?;
     Ok(out)
 }

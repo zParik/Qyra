@@ -131,7 +131,7 @@ fn rasterize_pages(path: &str, dpi: u32) -> AppResult<(String, usize)> {
     doc.trailer.set("Root", Object::Reference(catalog_id));
 
     let out = temp_output_path(path, "repaired");
-    doc.save(&out)?;
+    crate::utils::save_pdf(&mut doc, &out)?;
     Ok((out, page_count))
 }
 
@@ -152,7 +152,7 @@ pub async fn repair_pdf(
                 let page_count = doc.get_pages().len();
                 let mut doc = doc;
                 let out = output.clone().unwrap_or_else(|| temp_output_path(&path, "repaired"));
-                match doc.save(&out) {
+                match crate::utils::save_pdf(&mut doc, &out) {
                     Ok(_) => {
                         return Ok(RepairReport {
                             output: out.clone(),

@@ -90,7 +90,7 @@ pub async fn add_link(
         crate::utils::annots::push_annot_ref(&mut doc, page_id, annot_id)?;
 
         let out = output.unwrap_or_else(|| temp_output_path(&path, "links"));
-        doc.save(&out)?;
+        crate::utils::save_pdf(&mut doc, &out)?;
         Ok(out)
     })
     .await
@@ -130,7 +130,7 @@ pub async fn remove_link(
         crate::utils::annots::remove_annot_ref(&mut doc, page_id, target)?;
 
         let out = output.unwrap_or_else(|| temp_output_path(&path, "links"));
-        doc.save(&out)?;
+        crate::utils::save_pdf(&mut doc, &out)?;
         Ok(out)
     })
     .await

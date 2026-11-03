@@ -543,6 +543,6 @@ pub fn bake_annotations(
         insert_virtual_pages(&mut doc, &virtual_pages)?;
     }
 
-    doc.save(&out)?;
+    crate::utils::save_pdf(&mut doc, &out)?;
     Ok(out)
 }

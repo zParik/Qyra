@@ -63,6 +63,6 @@ pub fn rotate_pages(
     }
 
     let out = output.unwrap_or_else(|| temp_output_path(&path, "rotated"));
-    doc.save(&out)?;
+    crate::utils::save_pdf(&mut doc, &out)?;
     Ok(out)
 }

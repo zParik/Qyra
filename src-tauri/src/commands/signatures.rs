@@ -63,7 +63,7 @@ pub fn stamp_images(path: String, stamps: Vec<ImageStamp>, output: Option<String
     let mut doc = Document::load(&path)?;
     stamp_images_doc(&mut doc, &stamps)?;
     let out = output.unwrap_or_else(|| temp_output_path(&path, "signed"));
-    doc.save(&out)?;
+    crate::utils::save_pdf(&mut doc, &out)?;
     Ok(out)
 }
 

@@ -148,7 +148,7 @@ pub fn anonymize_pdf(
     // without pruning the XMP stream and attachments stayed in the file.
     doc.prune_objects();
     let out = output.unwrap_or_else(|| temp_output_path(&path, "anon"));
-    doc.save(&out)?;
+    crate::utils::save_pdf(&mut doc, &out)?;
     report.output = out;
     Ok(report)
 }

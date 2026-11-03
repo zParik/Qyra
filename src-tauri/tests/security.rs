@@ -37,3 +37,25 @@ async fn permissions_report_plaintext_as_unencrypted() {
     assert!(!perms.encrypted);
     assert!(perms.print);
 }
+
+#[tokio::test]
+async fn edits_keep_owner_only_encryption() {
+    // A file with an owner password and an empty user password opens without
+    // a prompt. lopdf decrypts it on load, and every edit used to save it
+    // with the encryption (and its permission limits) gone.
+    let (_d1, protected) = temp_output("owner-only.pdf");
+    protect_pdf(fixture_str("simple.pdf"), String::new(), Some("owner".into()), Some(protected.clone()))
+        .expect("protect");
+    let has_encrypt = |p: &str| {
+        let bytes = std::fs::read(p).unwrap();
+        bytes.windows(8).any(|w| w == b"/Encrypt")
+    };
+    assert!(has_encrypt(&protected));
+
+    let (_d2, rotated) = temp_output("rotated.pdf");
+    qyra_lib::commands::rotate::rotate_pages(protected, vec![1], 90, Some(rotated.clone())).expect("rotate");
+    assert!(has_encrypt(&rotated), "rotating must keep the encryption");
+    assert_eq!(page_count(&rotated), 1, "and the file must still open");
+    let doc = lopdf::Document::load(&rotated).unwrap();
+    assert_eq!(doc.get_pages().len(), 1);
+}

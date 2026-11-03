@@ -14,7 +14,7 @@ pub async fn flatten_pdf(
         let mut doc = Document::load(&path)?;
         let out = output.unwrap_or_else(|| temp_output_path(&path, "flattened"));
         super::forms::flatten_form(&mut doc)?;
-        doc.save(&out)?;
+        crate::utils::save_pdf(&mut doc, &out)?;
         Ok(out)
     })
     .await

@@ -137,7 +137,7 @@ pub fn split_pdf_by_bookmarks(path: String, output_dir: Option<String>) -> AppRe
         let safe_title = if safe_title.is_empty() { format!("part{}", i + 1) } else { safe_title };
 
         let out = format!("{}/{}_{}.pdf", dir, stem, safe_title);
-        part.save(&out)?;
+        crate::utils::save_pdf(&mut part, &out)?;
         output_paths.push(out);
     }
 
@@ -186,7 +186,7 @@ pub fn split_pdf(
         part.delete_pages(&pages_to_delete);
 
         let out = format!("{}/{}_part{}.pdf", dir, stem, i + 1);
-        part.save(&out)?;
+        crate::utils::save_pdf(&mut part, &out)?;
         output_paths.push(out);
     }
 
@@ -220,7 +220,7 @@ pub fn split_pdf_per_page(path: String, output_dir: Option<String>) -> AppResult
         single.delete_pages(&others);
         single.prune_objects();
         let out = format!("{}/{}_page{:04}.pdf", dir, stem, page_num);
-        single.save(&out)?;
+        crate::utils::save_pdf(&mut single, &out)?;
         output_paths.push(out);
     }
 

@@ -297,7 +297,7 @@ pub fn header_footer_core(
         }
 
         let out = output.unwrap_or_else(|| temp_output_path(&path, "header"));
-        doc.save(&out)?;
+        crate::utils::save_pdf(&mut doc, &out)?;
 
         Ok(HeaderFooterReport { output: out, pages_stamped })
 }
@@ -352,7 +352,7 @@ pub fn remove_header_footer(path: String, output: Option<String>) -> AppResult<S
     }
 
     let out = output.unwrap_or_else(|| temp_output_path(&path, "unheader"));
-    doc.save(&out)?;
+    crate::utils::save_pdf(&mut doc, &out)?;
     Ok(out)
 }
 

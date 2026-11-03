@@ -30,7 +30,7 @@ fn get_info_string(doc: &Document, key: &[u8]) -> Option<String> {
     if let Object::Dictionary(dict) = info_obj {
         let val = dict.get(key).ok()?;
         // May be a string literal or a string reference
-        val.as_str().ok().map(|s| String::from_utf8_lossy(s).to_string())
+        val.as_str().ok().map(crate::utils::pdf_text::decode)
     } else {
         None
     }
@@ -204,7 +204,7 @@ pub fn set_metadata(
     if let Object::Dictionary(dict) = info {
         let set_str = |dict: &mut lopdf::Dictionary, key: &[u8], val: Option<&String>| {
             if let Some(v) = val {
-                dict.set(key, Object::string_literal(v.clone()));
+                dict.set(key, crate::utils::pdf_text::encode(v));
             }
         };
         set_str(dict, b"Title", metadata.title.as_ref());
@@ -215,6 +215,6 @@ pub fn set_metadata(
     }
 
     let out = output.unwrap_or_else(|| temp_output_path(&path, "meta"));
-    doc.save(&out)?;
+    crate::utils::save_pdf(&mut doc, &out)?;
     Ok(out)
 }

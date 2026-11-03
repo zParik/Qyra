@@ -238,7 +238,7 @@ pub fn bates_core(
         }
 
         let out = output.unwrap_or_else(|| temp_output_path(&path, "bates"));
-        doc.save(&out)?;
+        crate::utils::save_pdf(&mut doc, &out)?;
 
         Ok(BatesResult {
             output: out,
@@ -299,7 +299,7 @@ pub fn remove_bates_numbers(path: String, output: Option<String>) -> AppResult<S
     }
 
     let out = output.unwrap_or_else(|| temp_output_path(&path, "unbates"));
-    doc.save(&out)?;
+    crate::utils::save_pdf(&mut doc, &out)?;
     Ok(out)
 }
 

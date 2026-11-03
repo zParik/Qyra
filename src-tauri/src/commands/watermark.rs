@@ -111,7 +111,7 @@ pub fn watermark_core(
         }
 
         progress(Progress::new(total_to_mark, total_to_mark + 1, "Saving PDF"));
-        doc.save(&out)?;
+        crate::utils::save_pdf(&mut doc, &out)?;
         Ok(out)
 }
 

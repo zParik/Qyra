@@ -255,7 +255,7 @@ pub fn add_page_numbers_core(
     }
 
     let out = output.unwrap_or_else(|| temp_output_path(&path, "numbered"));
-    doc.save(&out)?;
+    crate::utils::save_pdf(&mut doc, &out)?;
     Ok(out)
 }
 
@@ -324,6 +324,6 @@ pub fn remove_page_numbers(
     }
 
     let out = output.unwrap_or_else(|| temp_output_path(&path, "unnumbered"));
-    doc.save(&out)?;
+    crate::utils::save_pdf(&mut doc, &out)?;
     Ok(out)
 }

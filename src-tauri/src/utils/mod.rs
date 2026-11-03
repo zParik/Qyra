@@ -1,6 +1,7 @@
 pub mod annots;
 pub mod geometry;
 pub mod paths;
+pub mod pdf_text;
 pub mod progress;
 pub mod thread_priority;
 pub mod timing;
@@ -172,4 +173,25 @@ pub fn add_page_xobject(
     let name = (0..).map(|i| format!("{prefix}{i}")).find(|n| !xo.has(n.as_bytes())).unwrap_or_default();
     xo.set(name.clone(), Object::Reference(xobj));
     Ok(name)
+}
+
+/// Encrypt `doc` again with the encryption it was loaded with.
+///
+/// lopdf opens a file whose user password is empty without asking, decrypts
+/// it and drops /Encrypt, so saving it wrote the file unprotected: every edit
+/// silently removed the owner's restrictions on printing and copying.
+pub fn reencrypt(doc: &mut lopdf::Document) -> lopdf::Result<()> {
+    if !doc.is_encrypted() {
+        if let Some(state) = doc.encryption_state.clone() {
+            doc.encrypt(&state)?;
+        }
+    }
+    Ok(())
+}
+
+/// Save `doc` to `path`, keeping the encryption it was loaded with.
+pub fn save_pdf(doc: &mut lopdf::Document, path: impl AsRef<std::path::Path>) -> lopdf::Result<()> {
+    reencrypt(doc)?;
+    doc.save(path)?;
+    Ok(())
 }

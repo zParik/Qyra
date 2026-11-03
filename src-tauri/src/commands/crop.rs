@@ -60,7 +60,7 @@ pub async fn crop_pages(
             }
         }
 
-        doc.save(&out)?;
+        crate::utils::save_pdf(&mut doc, &out)?;
         Ok(out)
     })
     .await

@@ -68,6 +68,6 @@ pub fn reorder_pages(
     }
 
     let out = output.unwrap_or_else(|| temp_output_path(&path, "reordered"));
-    doc.save(&out)?;
+    crate::utils::save_pdf(&mut doc, &out)?;
     Ok(out)
 }

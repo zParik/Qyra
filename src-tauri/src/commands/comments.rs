@@ -108,18 +108,9 @@ fn pdf_text_encode(s: &str) -> Vec<u8> {
     out
 }
 
-/// Decode a PDF text string: UTF-16BE when BOM-prefixed, else treat the bytes
-/// as (lossy) UTF-8 — close enough to PDFDocEncoding for comment text.
+/// Decode a PDF text string (UTF-16 or PDFDocEncoding).
 fn pdf_text_decode(bytes: &[u8]) -> String {
-    if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
-        let units: Vec<u16> = bytes[2..]
-            .chunks_exact(2)
-            .map(|p| u16::from_be_bytes([p[0], p[1]]))
-            .collect();
-        String::from_utf16_lossy(&units)
-    } else {
-        String::from_utf8_lossy(bytes).into_owned()
-    }
+    crate::utils::pdf_text::decode(bytes)
 }
 
 /// Days-from-civil (Howard Hinnant's algorithm); days since 1970-01-01.
@@ -749,6 +740,9 @@ pub async fn save_comments(path: String, comments_json: String) -> AppResult<()>
         let json_bytes = serde_json::to_vec(&comments)
             .map_err(|e| AppError::Other(e.to_string()))?;
         write_sidecar(&mut doc, json_bytes)?;
+
+        // Keep the encryption the file was opened with.
+        crate::utils::reencrypt(&mut doc)?;
 
         // Atomically: this is often the user's original file, and the doc
         // thread reads it lazily while we write.

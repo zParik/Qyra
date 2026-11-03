@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream, StringFormat};
+use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream};
 
 use crate::error::{AppError, AppResult};
 use crate::utils::annots::{annot_refs, remove_annot_ref};
@@ -40,21 +40,7 @@ const FF_PUSHBUTTON: i64 = 1 << 16;
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 fn decode_pdf_string(bytes: &[u8]) -> String {
-    if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
-        let words: Vec<u16> = bytes[2..]
-            .chunks_exact(2)
-            .map(|c| u16::from_be_bytes([c[0], c[1]]))
-            .collect();
-        return String::from_utf16_lossy(&words).to_string();
-    }
-    if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
-        let words: Vec<u16> = bytes[2..]
-            .chunks_exact(2)
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
-            .collect();
-        return String::from_utf16_lossy(&words).to_string();
-    }
-    String::from_utf8_lossy(bytes).to_string()
+    crate::utils::pdf_text::decode(bytes)
 }
 
 fn object_to_string(obj: &Object) -> String {
@@ -75,20 +61,6 @@ fn obj_to_f64(o: &Object) -> f64 {
         Object::Integer(i) => *i as f64,
         Object::Real(f) => *f as f64,
         _ => 0.0,
-    }
-}
-
-/// A text value as a PDF text string: literal when it is ASCII, UTF-16BE
-/// otherwise (a literal of UTF-8 bytes reads back as mojibake).
-fn text_string(s: &str) -> Object {
-    if s.is_ascii() {
-        Object::string_literal(s)
-    } else {
-        let mut b = vec![0xFE, 0xFF];
-        for u in s.encode_utf16() {
-            b.extend(u.to_be_bytes());
-        }
-        Object::String(b, StringFormat::Hexadecimal)
     }
 }
 
@@ -491,7 +463,7 @@ fn text_style(doc: &Document, field: &Dictionary) -> TextStyle {
 
 fn set_text_field(doc: &mut Document, font_id: ObjectId, t: &Terminal, value: &str) -> AppResult<()> {
     let style = text_style(doc, doc.get_dictionary(t.id)?);
-    doc.get_dictionary_mut(t.id)?.set("V", text_string(value));
+    doc.get_dictionary_mut(t.id)?.set("V", crate::utils::pdf_text::encode(value));
     for &w in &t.widgets {
         let Some((ww, wh)) = widget_size(doc, w) else { continue };
         let ap = text_appearance(doc, font_id, ww, wh, value, &style);
@@ -665,7 +637,7 @@ fn fill_form_sync(
     if flatten {
         flatten_form(&mut doc)?;
     }
-    doc.save(&out)?;
+    crate::utils::save_pdf(&mut doc, &out)?;
     Ok(out)
 }
 

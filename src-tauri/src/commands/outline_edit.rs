@@ -46,7 +46,7 @@ pub async fn set_outline(
 
         if items.is_empty() {
             let out = output.unwrap_or_else(|| temp_output_path(&path, "outline"));
-            doc.save(&out)?;
+            crate::utils::save_pdf(&mut doc, &out)?;
             return Ok(out);
         }
 
@@ -140,7 +140,7 @@ pub async fn set_outline(
         // 5) Materialise each item dictionary.
         for (idx, (_depth, item)) in flat.iter().enumerate() {
             let mut dict = Dictionary::new();
-            dict.set("Title", Object::string_literal(item.title.clone()));
+            dict.set("Title", crate::utils::pdf_text::encode(&item.title));
             dict.set("Parent", Object::Reference(metas[idx].parent));
             if let Some(p) = metas[idx].prev { dict.set("Prev", Object::Reference(p)); }
             if let Some(n) = metas[idx].next { dict.set("Next", Object::Reference(n)); }
@@ -194,7 +194,7 @@ pub async fn set_outline(
         }
 
         let out = output.unwrap_or_else(|| temp_output_path(&path, "outline"));
-        doc.save(&out)?;
+        crate::utils::save_pdf(&mut doc, &out)?;
         Ok(out)
     })
     .await

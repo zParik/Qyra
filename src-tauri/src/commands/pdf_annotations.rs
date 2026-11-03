@@ -126,7 +126,7 @@ fn parse_page_annots(doc: &Document, page: u32, page_id: ObjectId) -> Vec<PdfAnn
         };
 
         let contents = match annot_dict.get(b"Contents") {
-            Ok(Object::String(bytes, _)) => Some(String::from_utf8_lossy(bytes).to_string()),
+            Ok(Object::String(bytes, _)) => Some(crate::utils::pdf_text::decode(bytes)),
             _ => None,
         };
 
@@ -285,17 +285,11 @@ pub async fn add_pdf_annotation(
         annot_dict.set("CA", Object::Real(1.0_f32));
 
         if let Some(contents) = &annotation.contents {
-            annot_dict.set("Contents", Object::String(
-                contents.as_bytes().to_vec(),
-                lopdf::StringFormat::Literal,
-            ));
+            annot_dict.set("Contents", crate::utils::pdf_text::encode(contents));
         }
 
         if let Some(author) = &annotation.author {
-            annot_dict.set("T", Object::String(
-                author.as_bytes().to_vec(),
-                lopdf::StringFormat::Literal,
-            ));
+            annot_dict.set("T", crate::utils::pdf_text::encode(author));
         }
 
         // Stamp /Name field (e.g. /Approved, /Confidential)
@@ -432,7 +426,7 @@ pub async fn add_pdf_annotation(
         // Add the annotation reference to the page's /Annots array
         crate::utils::annots::push_annot_ref(&mut doc, page_id, annot_id)?;
 
-        doc.save(&out)?;
+        crate::utils::save_pdf(&mut doc, &out)?;
         Ok(out)
     })
     .await
