@@ -21,6 +21,12 @@ describe("multi-file actions", () => {
     expect(get().files).toEqual([]);
   });
 
+  it("does not add a file that is already in the list", () => {
+    get().addFile(file("a.pdf"));
+    get().addFile(file("a.pdf"));
+    expect(get().files.map((f) => f.path)).toEqual(["a.pdf"]);
+  });
+
   it("reorders files", () => {
     get().setFiles([file("a.pdf"), file("b.pdf"), file("c.pdf")]);
     get().reorderFiles(0, 2);

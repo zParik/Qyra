@@ -127,7 +127,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setCancelFn: (cancelFn) => set({ cancelFn }),
   setFiles: (files) => set({ files }),
-  addFile: (file) => set((s) => ({ files: [...s.files, file] })),
+  // A file already in the list (dropped or picked twice) is not added again.
+  addFile: (file) => set((s) => (s.files.some((f) => f.path === file.path) ? s : { files: [...s.files, file] })),
   removeFile: (path) => set((s) => ({ files: s.files.filter((f) => f.path !== path) })),
   reorderFiles: (fromIndex, toIndex) =>
     set((s) => {
