@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ZOOM_MIN, ZOOM_MAX, ZOOM_STEP, clampZoom, nextZoomFromWheel, snapZoom } from "./zoom";
+import { ZOOM_MIN, ZOOM_MAX, ZOOM_STEP, clampZoom, commitZoom, nextZoomFromWheel, snapZoom } from "./zoom";
 
 describe("clampZoom", () => {
   it("clamps below the minimum", () => {
@@ -86,5 +86,38 @@ describe("snapZoom", () => {
 
   it("is idempotent on values already on the ladder", () => {
     expect(snapZoom(snapZoom(1.37))).toBeCloseTo(snapZoom(1.37), 10);
+  });
+});
+
+describe("commitZoom", () => {
+  const noFit = -1;
+
+  // A small gesture used to snap straight back to the zoom it started from, so the
+  // committed zoom never changed and the gesture's preview transform was left on
+  // the pages, resampling every tile (blurry text after zooming out).
+  it("moves at least one rung when a small zoom-out would snap back", () => {
+    expect(commitZoom(0.97, 1.0, noFit)).toBeCloseTo(0.9, 10);
+    expect(commitZoom(0.27, 0.3, noFit)).toBeCloseTo(0.2, 10);
+  });
+
+  it("moves at least one rung when a small zoom-in would snap back", () => {
+    expect(commitZoom(1.03, 1.0, noFit)).toBeCloseTo(1.1, 10);
+  });
+
+  it("snaps normally when the gesture already reaches another rung", () => {
+    expect(commitZoom(0.82, 1.0, noFit)).toBeCloseTo(0.8, 10);
+  });
+
+  it("keeps the fit-width zoom exactly", () => {
+    expect(commitZoom(1.234, 1.0, 1.234)).toBe(1.234);
+  });
+
+  it("stays put at the range limits", () => {
+    expect(commitZoom(ZOOM_MIN, ZOOM_MIN, noFit)).toBe(ZOOM_MIN);
+    expect(commitZoom(ZOOM_MAX, ZOOM_MAX, noFit)).toBe(ZOOM_MAX);
+  });
+
+  it("returns the current zoom when the gesture did not move", () => {
+    expect(commitZoom(1.0, 1.0, noFit)).toBe(1.0);
   });
 });

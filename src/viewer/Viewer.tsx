@@ -29,7 +29,7 @@ import { RedactLayer } from "./RedactLayer";
 import { SignaturePanel } from "./tools/SignaturePanel";
 import { useFormFilling } from "./useFormFilling";
 import { PresentationMode } from "./PresentationMode";
-import { nextZoomFromWheel, snapZoom, clampZoom } from "./zoom";
+import { nextZoomFromWheel, snapZoom, commitZoom, clampZoom } from "./zoom";
 import { useComments } from "./hooks/useComments";
 import { useViewerUI } from "./hooks/useViewerUI";
 import { useToolMode } from "./hooks/useToolMode";
@@ -564,8 +564,16 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
       const fitZoom = fitWidthZoom(slotSizesRef.current, cw);
       // Snap on commit (fit-width magnet exempt so it stays exactly landable). The
       // layout effect then clears the transform + re-anchors, pre-paint.
-      const committed = Math.abs(previewZoom - fitZoom) < 1e-6 ? previewZoom : snapZoom(previewZoom);
+      const committed = commitZoom(previewZoom, zoomRef.current, fitZoom);
       previewZoom = null;
+      if (committed === zoomRef.current) {
+        // No layout change is coming (e.g. pinned at the zoom limit), so the layout
+        // effect won't run: drop the preview transform here or it blurs every tile.
+        const wrapper = contentWrapperRef.current;
+        if (wrapper) wrapper.style.transform = "";
+        zoomAnchorRef.current = null;
+        return;
+      }
       setZoom(committed);
     }
 

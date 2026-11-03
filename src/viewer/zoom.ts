@@ -42,3 +42,19 @@ export function nextZoomFromWheel(prev: number, deltaY: number, fitZoom: number)
   if (!inZone(prev) && inZone(next)) return fitZoom;
   return next;
 }
+
+/**
+ * The zoom a wheel/pinch gesture commits to, given its continuous `preview` zoom.
+ *
+ * Normally {@link snapZoom}. But a small gesture can snap straight back to the
+ * `current` zoom; nothing would re-lay-out, so the gesture's preview transform
+ * would stay on the pages and blur every tile. A gesture that moved therefore
+ * always lands at least one rung away, in the direction it moved. `fitZoom` is
+ * kept exactly (the fit-width magnet).
+ */
+export function commitZoom(preview: number, current: number, fitZoom: number): number {
+  if (Math.abs(preview - fitZoom) < 1e-6) return preview;
+  const snapped = snapZoom(preview);
+  if (Math.abs(snapped - current) > 1e-6 || Math.abs(preview - current) < 1e-6) return snapped;
+  return snapZoom(current + (preview > current ? ZOOM_STEP : -ZOOM_STEP));
+}
