@@ -1,8 +1,9 @@
-export function SectionTitle({ children }: { children: React.ReactNode }) {
+export function SectionTitle({ children, note }: { children: React.ReactNode; note?: string }) {
   return (
-    <h2 className="text-base font-semibold mb-4" style={{ color: "var(--fg0)" }}>
-      {children}
-    </h2>
+    <header className="settings-head">
+      <h2 className="t-title" style={{ margin: 0 }}>{children}</h2>
+      {note && <p className="settings-note">{note}</p>}
+    </header>
   );
 }
 
@@ -16,28 +17,49 @@ export function SettingRow({
   children: React.ReactNode;
 }) {
   return (
-    <div
-      className="flex items-center justify-between gap-4 py-3"
-      style={{ borderBottom: "1px solid var(--line2)" }}
-    >
-      <div className="min-w-0">
-        <div className="text-sm" style={{ color: "var(--fg0)" }}>{label}</div>
-        {description && (
-          <div className="text-xs mt-0.5" style={{ color: "var(--fg2)" }}>{description}</div>
-        )}
+    <div className="setting-row">
+      <div className="setting-text">
+        <div className="setting-label">{label}</div>
+        {description && <div className="setting-desc">{description}</div>}
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="setting-control">{children}</div>
     </div>
   );
 }
 
-export function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+/** An on/off switch. */
+export function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label?: string }) {
   return (
-    <input
-      type="checkbox"
-      checked={checked}
-      onChange={(e) => onChange(e.target.checked)}
-      className="w-4 h-4"
-    />
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      className="switch"
+      onClick={() => onChange(!checked)}
+    >
+      <span className="switch-knob" aria-hidden="true" />
+    </button>
+  );
+}
+
+/** A row of exclusive choices. */
+export function Segmented<T extends string | number>({
+  options, value, onChange, label,
+}: { options: { value: T; label: string }[]; value: T; onChange: (v: T) => void; label?: string }) {
+  return (
+    <div className="seg" role="group" aria-label={label}>
+      {options.map((o) => (
+        <button
+          key={String(o.value)}
+          type="button"
+          className="seg-item"
+          aria-pressed={value === o.value}
+          onClick={() => onChange(o.value)}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
   );
 }

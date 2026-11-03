@@ -12,20 +12,27 @@ export function AboutSection() {
   return (
     <div>
       <SectionTitle>About</SectionTitle>
-      <div className="flex items-center gap-3 mb-4">
-        <img src="/Logo.png" alt="Qyra" className="w-12 h-12 rounded-full object-contain" />
+      <div className="about-card">
+        <span className="about-mark" aria-hidden="true">
+          <svg width={28} height={28} viewBox="0 0 20 20" fill="none">
+            <path d="M10 1.5c3.6 0 6 3.2 6 7.2 0 3.6-2.6 6.3-6 6.3s-6-2.7-6-6.3c0-4 2.4-7.2 6-7.2z" stroke="currentColor" strokeWidth={1.4} />
+            <ellipse cx="10" cy="8.8" rx="2.6" ry="3.2" fill="currentColor" opacity="0.9" />
+            <circle cx="10" cy="8.4" r="1" fill="var(--shell)" />
+            <path d="M10 15v3.5" stroke="currentColor" strokeWidth={1.4} strokeLinecap="round" />
+          </svg>
+        </span>
         <div>
-          <div className="text-sm font-semibold" style={{ color: "var(--fg0)" }}>Qyra {version}</div>
-          <div className="text-xs" style={{ color: "var(--fg2)" }}>free · offline · open source</div>
+          <div className="about-name">Qyra <span className="t-num" style={{ color: "var(--fg2)", fontWeight: 400 }}>{version}</span></div>
+          <div className="t-meta">Free, offline and open source. Your files never leave this computer.</div>
         </div>
       </div>
-      <SettingRow label="Source code" description="View the project on GitHub.">
+      <SettingRow label="Source code" description="The whole project is on GitHub under GPL-3.0.">
         <button
+          type="button"
           onClick={() => openUrl("https://github.com/zParik/Qyra").catch(() => {})}
-          className="text-xs px-3 py-1.5 rounded"
-          style={{ background: "var(--bg2)", color: "var(--fg1)" }}
+          className="btn-secondary btn-sm"
         >
-          Open
+          Open GitHub
         </button>
       </SettingRow>
     </div>

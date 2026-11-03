@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useState, type ReactElement } from "react";
 import { useNavigate } from "react-router-dom";
-import { UI } from "../lib/tokens";
 import { isAndroid } from "../lib/androidFileUtils";
+import { Wordmark } from "../components/Wordmark";
+import { IcArrowLeft, IcSun, IcFolder, IcRecent, IcConvert, IcInfo, type IconProps } from "../components/Icons";
 import { AppearanceSection } from "./settings/AppearanceSection";
 import { FilesSection } from "./settings/FilesSection";
 import { SessionSection } from "./settings/SessionSection";
@@ -13,6 +14,7 @@ type SectionId = "appearance" | "files" | "session" | "updates" | "about";
 interface SectionDef {
   id: SectionId;
   label: string;
+  Icon: (p: IconProps) => ReactElement;
   render: () => React.ReactNode;
 }
 
@@ -21,51 +23,49 @@ export default function Settings() {
   const [active, setActive] = useState<SectionId>("appearance");
 
   const sections: SectionDef[] = [
-    { id: "appearance", label: "Appearance", render: () => <AppearanceSection /> },
-    { id: "files", label: "Files", render: () => <FilesSection /> },
-    { id: "session", label: "Session", render: () => <SessionSection /> },
+    { id: "appearance", label: "Appearance", Icon: IcSun,     render: () => <AppearanceSection /> },
+    { id: "files",      label: "Files",      Icon: IcFolder,  render: () => <FilesSection /> },
+    { id: "session",    label: "Session",    Icon: IcRecent,  render: () => <SessionSection /> },
     ...(isAndroid()
       ? []
-      : [{ id: "updates" as const, label: "Updates", render: () => <UpdatesSection /> }]),
-    { id: "about", label: "About", render: () => <AboutSection /> },
+      : [{ id: "updates" as const, label: "Updates", Icon: IcConvert, render: () => <UpdatesSection /> }]),
+    { id: "about",      label: "About",      Icon: IcInfo,    render: () => <AboutSection /> },
   ];
 
   const current = sections.find((s) => s.id === active) ?? sections[0]!;
 
   return (
-    <div className="flex h-[100dvh]" style={{ fontFamily: UI, background: "var(--bg)" }}>
-      <aside className="w-56 shrink-0 flex flex-col" style={{ borderRight: "1px solid var(--line2)" }}>
-        <div className="flex items-center gap-2 px-4 py-3" style={{ borderBottom: "1px solid var(--line2)" }}>
-          <button
-            onClick={() => navigate(-1)}
-            className="text-sm px-2 py-1 rounded"
-            style={{ color: "var(--fg1)" }}
-            aria-label="Back"
-          >
-            ←
-          </button>
-          <span className="text-sm font-semibold" style={{ color: "var(--fg0)" }}>Settings</span>
-        </div>
-        <nav className="flex flex-col gap-px p-2">
-          {sections.map((s) => (
-            <button
-              key={s.id}
-              onClick={() => setActive(s.id)}
-              aria-current={active === s.id ? "page" : undefined}
-              className="text-left text-sm px-3 py-2 rounded"
-              style={{
-                color: active === s.id ? "var(--fg0)" : "var(--fg1)",
-                background: active === s.id ? "var(--bg2)" : "transparent",
-              }}
-            >
-              {s.label}
-            </button>
-          ))}
-        </nav>
-      </aside>
-      <main className="flex-1 overflow-y-auto">
-        <div className="max-w-2xl mx-auto px-8 py-8">{current.render()}</div>
-      </main>
+    <div className="tool-shell">
+      <div className="tabbar tool-top">
+        <Wordmark />
+        <button type="button" className="shell-btn tool-back" onClick={() => navigate(-1)} title="Back">
+          <IcArrowLeft size={16} />
+          <span>Back</span>
+        </button>
+      </div>
+
+      <div className="settings">
+        <aside className="rail settings-nav" aria-label="Settings sections">
+          <div className="rail-section">
+            <div className="t-label rail-label">Settings</div>
+            {sections.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => setActive(s.id)}
+                aria-current={active === s.id ? "page" : undefined}
+                className="rail-item"
+              >
+                <span className="rail-icon"><s.Icon /></span>
+                <span className="rail-text">{s.label}</span>
+              </button>
+            ))}
+          </div>
+        </aside>
+        <main className="settings-main">
+          <div className="settings-column">{current.render()}</div>
+        </main>
+      </div>
     </div>
   );
 }
