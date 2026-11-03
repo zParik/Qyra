@@ -7,19 +7,20 @@ test.describe("home", () => {
     await expect(
       page.getByRole("heading", { name: /drop a pdf here/i }),
     ).toBeVisible();
-    await expect(page.getByRole("button", { name: /merge pdfs/i })).toBeVisible();
+    // Merge is reachable twice: from the rail and from the tool card.
+    await expect(page.locator(".tool-card", { hasText: /merge pdfs/i })).toBeVisible();
   });
 
   test("shows the empty recents state", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByText(/no recent files/i)).toBeVisible();
+    await expect(page.getByText(/no sheets on the shelf yet/i)).toBeVisible();
   });
 });
 
 test.describe("navigation", () => {
   test("opening the Merge tool routes to /merge", async ({ page }) => {
     await page.goto("/");
-    await page.getByRole("button", { name: /merge pdfs/i }).click();
+    await page.locator(".tool-card", { hasText: /merge pdfs/i }).click();
     await expect(page).toHaveURL(/\/merge$/);
   });
 
@@ -33,14 +34,14 @@ test.describe("navigation", () => {
 });
 
 test.describe("theme toggle", () => {
-  test("cycles the theme label when clicked", async ({ page }) => {
+  test("switches the theme when a choice is pressed", async ({ page }) => {
     await page.goto("/");
-    const toggle = page.getByRole("button", { name: /^Theme:/ });
-    await expect(toggle).toBeVisible();
-    const before = await toggle.getAttribute("aria-label");
-    await toggle.click();
+    const dark = page.getByRole("button", { name: /^Theme: Dark/ });
+    await expect(dark).toBeVisible();
+    await dark.click();
+    await expect(dark).toHaveAttribute("aria-pressed", "true");
     await expect
-      .poll(async () => toggle.getAttribute("aria-label"))
-      .not.toBe(before);
+      .poll(async () => page.evaluate(() => document.documentElement.dataset.theme))
+      .toBe("dark");
   });
 });
