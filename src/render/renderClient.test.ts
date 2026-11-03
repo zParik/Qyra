@@ -65,6 +65,8 @@ describe("renderTile", () => {
     ctl.abort();
     reject(new Error("tile worker dropped reply"));
     await expect(p).resolves.toBeNull();
+    // Let the batched cancel timer fire inside this test, not after the file ends.
+    await new Promise((r) => setTimeout(r, 30));
   });
 
   it("returns null without invoking when already aborted", async () => {
