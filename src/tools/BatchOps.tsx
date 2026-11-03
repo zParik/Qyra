@@ -51,6 +51,23 @@ function joinPath(dir: string, name: string, suffix: string): string {
   return `${trimmed}${sep}${stem}_${suffix}.pdf`;
 }
 
+/**
+ * Output path for each input. Two inputs with the same file name from
+ * different folders got the same path in the output folder, so the second
+ * overwrote the first; later ones now get " (2)", " (3)"….
+ */
+export function batchOutputs(paths: string[], suffix: string, destDir: string | null): string[] {
+  const seen = new Map<string, number>();
+  return paths.map((path) => {
+    const name = path.split(/[\\/]/).pop() ?? path;
+    const base = destDir ? joinPath(destDir, name, suffix) : withSuffix(path, suffix);
+    const key = base.toLowerCase();
+    const n = (seen.get(key) ?? 0) + 1;
+    seen.set(key, n);
+    return n === 1 ? base : base.replace(/\.pdf$/i, ` (${n}).pdf`);
+  });
+}
+
 export default function BatchOps() {
   const [rows, setRows] = useState<RowState[]>([]);
   const [op, setOp] = useState<Op>("compress");
@@ -84,11 +101,6 @@ export default function BatchOps() {
 
   function clearAll() { setRows([]); }
   function removeRow(idx: number) { setRows((r) => r.filter((_, i) => i !== idx)); }
-
-  function outputFor(row: RowState): string {
-    const suffix = defaultSuffix(op);
-    return destDir ? joinPath(destDir, row.name, suffix) : withSuffix(row.path, suffix);
-  }
 
   async function runOne(row: RowState, output: string): Promise<string> {
     switch (op) {
@@ -141,12 +153,12 @@ export default function BatchOps() {
     setRunning(true);
     // Reset statuses.
     setRows((arr) => arr.map((r) => ({ ...r, status: "pending", message: undefined, output: undefined })));
+    const targets = batchOutputs(rows.map((r) => r.path), defaultSuffix(op), destDir);
     for (let i = 0; i < rows.length; i++) {
       setRows((arr) => arr.map((r, idx) => (idx === i ? { ...r, status: "running" } : r)));
       try {
         const row = rows[i]!;
-        const target = outputFor(row);
-        const out = await runOne(row, target);
+        const out = await runOne(row, targets[i]!);
         setRows((arr) => arr.map((r, idx) => (idx === i ? { ...r, status: "done", output: out } : r)));
       } catch (e: any) {
         setRows((arr) => arr.map((r, idx) => (idx === i ? { ...r, status: "error", message: String(e?.message ?? e) } : r)));
