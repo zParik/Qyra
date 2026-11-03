@@ -1,32 +1,36 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type CSSProperties } from "react";
 
 import { LoadedFile } from "../store/useAppStore";
-import { RotatePanel } from "./tools/RotatePanel";
-import { RemovePanel } from "./tools/RemovePanel";
-import { ReorderPanel } from "./tools/ReorderPanel";
-import { SplitPanel } from "./tools/SplitPanel";
-import { CompressPanel } from "./tools/CompressPanel";
-import { PageNumbersPanel } from "./tools/PageNumbersPanel";
-import { ProtectPanel } from "./tools/ProtectPanel";
-import { UnlockPanel } from "./tools/UnlockPanel";
-import { MetadataPanel } from "./tools/MetadataPanel";
-import { ExportImagesPanel } from "./tools/ExportImagesPanel";
 import { triggerPrint } from "./tools/PrintPanel";
-import { DrawPanel } from "./tools/DrawPanel";
-import { WatermarkPanel } from "./tools/WatermarkPanel";
 import { CommentPanel } from "./CommentPanel";
-import { CropPanel } from "./tools/CropPanel";
-import { FlattenPanel } from "./tools/FlattenPanel";
-import { AnonymizePanel } from "./tools/AnonymizePanel";
-import { FormDataPanel } from "./tools/FormDataPanel";
-import { BatesPanel } from "./tools/BatesPanel";
-import { LinksPanel } from "./tools/LinksPanel";
-import { HeaderFooterPanel } from "./tools/HeaderFooterPanel";
-import { ExportTextPanel } from "./tools/ExportTextPanel";
-import { StampsPanel } from "./tools/StampsPanel";
-import { RedactPanel, type RedactRegion } from "./tools/RedactPanel";
-import { ExportAnnotationsPanel } from "./tools/ExportAnnotationsPanel";
-import { ComparePanel } from "./tools/ComparePanel";
+import type { RedactRegion } from "./tools/RedactPanel";
+
+// Tool panels load on first open: most sessions use one or two of them, so the
+// rest never need to be parsed.
+const RotatePanel = lazy(() => import("./tools/RotatePanel").then((m) => ({ default: m.RotatePanel })));
+const RemovePanel = lazy(() => import("./tools/RemovePanel").then((m) => ({ default: m.RemovePanel })));
+const ReorderPanel = lazy(() => import("./tools/ReorderPanel").then((m) => ({ default: m.ReorderPanel })));
+const SplitPanel = lazy(() => import("./tools/SplitPanel").then((m) => ({ default: m.SplitPanel })));
+const CompressPanel = lazy(() => import("./tools/CompressPanel").then((m) => ({ default: m.CompressPanel })));
+const PageNumbersPanel = lazy(() => import("./tools/PageNumbersPanel").then((m) => ({ default: m.PageNumbersPanel })));
+const ProtectPanel = lazy(() => import("./tools/ProtectPanel").then((m) => ({ default: m.ProtectPanel })));
+const UnlockPanel = lazy(() => import("./tools/UnlockPanel").then((m) => ({ default: m.UnlockPanel })));
+const MetadataPanel = lazy(() => import("./tools/MetadataPanel").then((m) => ({ default: m.MetadataPanel })));
+const ExportImagesPanel = lazy(() => import("./tools/ExportImagesPanel").then((m) => ({ default: m.ExportImagesPanel })));
+const DrawPanel = lazy(() => import("./tools/DrawPanel").then((m) => ({ default: m.DrawPanel })));
+const WatermarkPanel = lazy(() => import("./tools/WatermarkPanel").then((m) => ({ default: m.WatermarkPanel })));
+const CropPanel = lazy(() => import("./tools/CropPanel").then((m) => ({ default: m.CropPanel })));
+const FlattenPanel = lazy(() => import("./tools/FlattenPanel").then((m) => ({ default: m.FlattenPanel })));
+const AnonymizePanel = lazy(() => import("./tools/AnonymizePanel").then((m) => ({ default: m.AnonymizePanel })));
+const FormDataPanel = lazy(() => import("./tools/FormDataPanel").then((m) => ({ default: m.FormDataPanel })));
+const BatesPanel = lazy(() => import("./tools/BatesPanel").then((m) => ({ default: m.BatesPanel })));
+const LinksPanel = lazy(() => import("./tools/LinksPanel").then((m) => ({ default: m.LinksPanel })));
+const HeaderFooterPanel = lazy(() => import("./tools/HeaderFooterPanel").then((m) => ({ default: m.HeaderFooterPanel })));
+const ExportTextPanel = lazy(() => import("./tools/ExportTextPanel").then((m) => ({ default: m.ExportTextPanel })));
+const StampsPanel = lazy(() => import("./tools/StampsPanel").then((m) => ({ default: m.StampsPanel })));
+const RedactPanel = lazy(() => import("./tools/RedactPanel").then((m) => ({ default: m.RedactPanel })));
+const ExportAnnotationsPanel = lazy(() => import("./tools/ExportAnnotationsPanel").then((m) => ({ default: m.ExportAnnotationsPanel })));
+const ComparePanel = lazy(() => import("./tools/ComparePanel").then((m) => ({ default: m.ComparePanel })));
 import { invoke } from "@tauri-apps/api/core";
 import {
   IconComment, IconPencil, IconRotate, IconTrash, IconReorder, IconSplit,
@@ -230,7 +234,7 @@ export function ToolSidebar({ file, onApplied, activeTool, onToolChange, selecte
               {activeFamily && <span className="chip">{FAMILY[activeFamily].label}</span>}
             </div>
             <div className="vside-scroll vside-panel-body">
-              {panels[activeTool]}
+              <Suspense fallback={null}>{panels[activeTool]}</Suspense>
             </div>
           </div>
         ) : (
