@@ -1,28 +1,5 @@
 import * as RadixDropdown from "@radix-ui/react-dropdown-menu";
-import type { ReactNode, CSSProperties } from "react";
-
-const contentStyle: CSSProperties = {
-  background: "var(--bg2, #181825)",
-  border: "1px solid var(--line, #313244)",
-  borderRadius: 6,
-  padding: "4px 0",
-  minWidth: 160,
-  boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
-  zIndex: 9000,
-};
-
-const itemStyle: CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 8,
-  padding: "6px 12px",
-  fontSize: 12,
-  fontFamily: "'Inter', system-ui, sans-serif",
-  color: "var(--fg0, #cdd6f4)",
-  cursor: "pointer",
-  outline: "none",
-  borderRadius: 0,
-};
+import type { ReactNode } from "react";
 
 export interface DropdownItem {
   label: string;
@@ -30,6 +7,8 @@ export interface DropdownItem {
   onSelect: () => void;
   disabled?: boolean;
   destructive?: boolean;
+  /** Keyboard hint shown right-aligned, e.g. "Ctrl+S". */
+  shortcut?: string;
 }
 
 interface DropdownMenuProps {
@@ -44,22 +23,18 @@ export function DropdownMenu({ trigger, items, side = "bottom", align = "start" 
     <RadixDropdown.Root>
       <RadixDropdown.Trigger asChild>{trigger}</RadixDropdown.Trigger>
       <RadixDropdown.Portal>
-        <RadixDropdown.Content style={contentStyle} side={side} align={align} sideOffset={4}>
+        <RadixDropdown.Content className="pop menu" side={side} align={align} sideOffset={6} style={{ zIndex: 9000 }}>
           {items.map((item, i) => (
             <RadixDropdown.Item
               key={i}
               disabled={item.disabled}
               onSelect={item.onSelect}
-              style={{
-                ...itemStyle,
-                color: item.destructive ? "var(--v-bad-text, #ef4444)" : itemStyle.color,
-                opacity: item.disabled ? 0.4 : 1,
-              }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--bg3, #313244)"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+              className="menu-item"
+              data-destructive={item.destructive ? "true" : undefined}
             >
-              {item.icon && <span style={{ flexShrink: 0, opacity: 0.7 }}>{item.icon}</span>}
-              {item.label}
+              {item.icon && <span className="menu-icon">{item.icon}</span>}
+              <span style={{ flex: 1 }}>{item.label}</span>
+              {item.shortcut && <span className="menu-shortcut">{item.shortcut}</span>}
             </RadixDropdown.Item>
           ))}
         </RadixDropdown.Content>
