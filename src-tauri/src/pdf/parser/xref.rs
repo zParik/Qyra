@@ -257,10 +257,6 @@ fn parse_traditional_xref(
             entries.insert((obj_num, gen_val), entry);
         }
     }
-
-    Err(PdfError::MalformedXref(
-        "Reached EOF without finding 'trailer'".into(),
-    ))
 }
 
 // ---------------------------------------------------------------------------
