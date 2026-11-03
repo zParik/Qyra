@@ -46,12 +46,9 @@ memmap2 = "0.9"
 tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread", "macros"] }
 rayon = "1"
 tempfile = "3"
-base64 = "0.22"
 thiserror = "1"
 sysinfo = { version = "0.33", default-features = false, features = ["disk"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
-docx-rs = "0.4"
-quick-xml = "0.36"
 # Only PDFs are opened, so MuPDF's other document handlers (XPS, SVG, CBZ,
 # HTML, EPUB, image files) and its JavaScript engine are left out.
 # tesseract stays for OCR.

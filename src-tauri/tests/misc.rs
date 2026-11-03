@@ -1,5 +1,5 @@
-//! Remaining standalone commands: anonymize, repair, images→PDF, PDF→Word,
-//! remove Bates numbers.
+//! Remaining standalone commands: anonymize, repair, images→PDF, remove Bates
+//! numbers.
 
 mod common;
 
@@ -7,7 +7,6 @@ use common::{fixture_str, page_count, temp_output};
 use qyra_lib::commands::anonymize::{anonymize_pdf, AnonymizeOptions};
 use qyra_lib::commands::bates::remove_bates_numbers;
 use qyra_lib::commands::create::images_to_pdf;
-use qyra_lib::commands::export_word::export_pdf_to_word;
 use qyra_lib::commands::repair::repair_pdf;
 
 #[tokio::test]
@@ -43,17 +42,6 @@ async fn images_to_pdf_makes_a_one_page_document() {
 
     images_to_pdf(vec![png], Some(out.clone())).expect("images to pdf");
     assert_eq!(page_count(&out), 1);
-}
-
-#[tokio::test]
-async fn export_to_word_writes_a_docx() {
-    let (_d, out) = temp_output("out.docx");
-    export_pdf_to_word(fixture_str("text.pdf"), Some(out.clone()))
-        .await
-        .expect("export word");
-
-    let meta = std::fs::metadata(&out).expect("docx exists");
-    assert!(meta.len() > 0, "docx should be non-empty");
 }
 
 #[tokio::test]

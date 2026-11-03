@@ -34,7 +34,6 @@ pub mod redact;
 pub mod crop;
 pub mod flatten;
 pub mod export_text;
-pub mod export_word;
 pub mod tabs;
 pub mod folder_pick;
 pub mod repair;
