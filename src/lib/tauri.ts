@@ -170,6 +170,10 @@ export interface OcrPage {
   words: OcrWord[];
 }
 
+/** Recognize the words on one 1-based page, offline (MuPDF's tesseract). */
+export const ocrPage = (path: string, page: number) =>
+  invoke<OcrPage>("ocr_page", { path, page });
+
 export const makeSearchable = (path: string, pages: OcrPage[], output?: string) =>
   invoke<string>("make_searchable", { path, pages, output });
 

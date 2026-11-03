@@ -22,7 +22,6 @@ export default defineConfig(async () => ({
           if (/[\\/](react|react-dom|react-router|react-router-dom|scheduler)[\\/]/.test(id))
             return "vendor-react";
           if (id.includes("@dnd-kit")) return "vendor-dnd";
-          if (id.includes("tesseract.js")) return "vendor-tesseract";
         },
       },
     },

@@ -40,7 +40,6 @@ import { useTextSelection, getSelectionGeometry } from "./hooks/useTextSelection
 import { useGoToPage } from "./hooks/useGoToPage";
 import { useRedactRegions } from "./hooks/useRedactRegions";
 import { useAutoSave } from "./hooks/useAutoSave";
-// import { getPageOcrText } from "../lib/ocrEngine";
 
 const EMPTY_VIRTUAL_PAGES: VirtualPage[] = [];
 const EMPTY_SIGS: never[] = [];

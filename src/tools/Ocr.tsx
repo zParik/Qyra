@@ -3,10 +3,7 @@ import { ToolLayout } from "../components/ToolLayout";
 import { DropZone } from "../components/DropZone";
 import { useAppStore } from "../store/useAppStore";
 import { invoke } from "@tauri-apps/api/core";
-import { makeSearchable, showSaveDialog, openFile, copyFile } from "../lib/tauri";
-
-import { ocrImage, getOcrWorker } from "../lib/ocrEngine";
-import { renderPageRgba, rgbaToCanvas } from "../render/renderClient";
+import { makeSearchable, ocrPage, showSaveDialog, openFile, copyFile } from "../lib/tauri";
 import type { OcrPage } from "../lib/tauri";
 
 import { UI } from "../lib/tokens";
@@ -52,18 +49,7 @@ export default function Ocr() {
       setProgress({ stage: "Loading PDF…", page: 0, total: 0, pct: 2 });
       const totalPages = await invoke<number>("get_page_count", { path: file.path });
 
-      // Step 2: warm up the OCR worker (may download the English model ~10 MB on first use)
-      setProgress({ stage: "Initializing OCR engine…", page: 0, total: totalPages, pct: 5 });
-      await getOcrWorker((pct, stage) => {
-        setProgress({
-          stage: `${stage.charAt(0).toUpperCase() + stage.slice(1)}…`,
-          page: 0,
-          total: totalPages,
-          pct: 5 + pct * 20,
-        });
-      });
-
-      // Step 3: render + OCR each page
+      // Step 2: recognize each page in Rust (MuPDF's tesseract, bundled English model)
       const ocrPages: OcrPage[] = [];
       let totalWords = 0;
 
@@ -72,25 +58,14 @@ export default function Ocr() {
           stage: `Recognizing page ${i} of ${totalPages}`,
           page: i,
           total: totalPages,
-          pct: 25 + ((i - 1) / totalPages) * 65,
+          pct: 5 + ((i - 1) / totalPages) * 85,
         });
-
-        // Render at 2× scale for better OCR accuracy (~144 DPI) — lossless RGBA.
-        const rgba = await renderPageRgba(file.path, i, 2.0);
-        if (!rgba) throw new Error(`Page ${i} could not be rendered`);
-        const canvas = rgbaToCanvas(rgba);
-
-        const res = await ocrImage(canvas, canvas.width, canvas.height);
-
-        ocrPages.push({
-          words: res.words
-            .filter((w) => w.confidence > 30)
-            .map((w) => ({ text: w.text, x: w.x, y: w.y, w: w.w, h: w.h })),
-        });
-        totalWords += ocrPages[i - 1]!.words.length;
+        const page = await ocrPage(file.path, i);
+        ocrPages.push(page);
+        totalWords += page.words.length;
       }
 
-      // Step 4: embed text layer via Rust
+      // Step 3: embed text layer via Rust
       setProgress({ stage: "Embedding text layer…", page: totalPages, total: totalPages, pct: 92 });
       const outputPath = await makeSearchable(file.path, ocrPages);
 
