@@ -738,7 +738,9 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
           setViewerFile(undoViewerFile);
           setUndoViewerFile(null);
           setIsViewerDirty(undoViewerFile.path !== (originalViewerPath ?? ""));
-          setCurrentPage(1);
+          // Stay on this page (marking page 1 current without scrolling left
+          // the visible pages without tiles).
+          setRestorePage(currentPage);
         }
         return;
       }
@@ -784,8 +786,11 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
 
   // Scroll to the restored page once its slot exists in a laid-out document.
   useEffect(() => {
-    if (restorePage == null || !docInfo || !containerHeight || !pageToSlotIndex.has(restorePage)) return;
-    scrollToPage(restorePage);
+    if (restorePage == null || !docInfo || !containerHeight) return;
+    // Clamped: an undo can leave fewer pages than the page we were on.
+    const target = Math.max(1, Math.min(restorePage, docInfo.pageCount));
+    if (!pageToSlotIndex.has(target)) return;
+    scrollToPage(target);
     setRestorePage(null);
     // scrollToPage reads the current layout; layout is a dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -926,6 +931,9 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
   }
 
   function markSaved() {
+    // The undo snapshot is the file as it was before the last edit, which the
+    // save just overwrote: undoing to it would show the saved file as changed.
+    setUndoViewerFile(null);
     clearTimeout(savedFeedbackTimerRef.current);
     setSaveStatus("saved");
     savedFeedbackTimerRef.current = window.setTimeout(
@@ -1415,7 +1423,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
               setViewerFile(undoViewerFile);
               setUndoViewerFile(null);
               setIsViewerDirty(undoViewerFile.path !== (originalViewerPath ?? ""));
-              setCurrentPage(1);
+              setRestorePage(currentPage);
             }}
             className="btn-ghost"
             title="Undo last operation (Ctrl+Z)"
@@ -1916,6 +1924,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
                             setSignatures(prev => [...prev, sig]);
                             setPendingSignature(null);
                           }}
+                          onSignatureUpdated={(sig) => setSignatures(prev => prev.map(s => (s.id === sig.id ? sig : s)))}
                           onSignatureRemoved={(id) => setSignatures(prev => prev.filter(s => s.id !== id))}
                           signatures={sigsByPage.get(page) ?? EMPTY_SIGS}
                         />
