@@ -273,6 +273,12 @@ impl Rewriter {
         out_trailer.remove(b"Encrypt");
         out_trailer.remove(b"XRefStm");
         out_trailer.remove(b"Prev");
+        // A file whose xref is a stream has that stream's dictionary as its
+        // trailer. Its stream keys (/Type /XRef, /W, /Filter, /Length …) are
+        // wrong in a classic trailer and stale for a new xref stream.
+        for key in [&b"Type"[..], b"W", b"Index", b"Filter", b"DecodeParms", b"Length", b"DL"] {
+            out_trailer.remove(key);
+        }
         if self.config.strip_metadata {
             out_trailer.remove(b"Info");
             out_trailer.remove(b"Metadata");
