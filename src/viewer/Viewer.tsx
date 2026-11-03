@@ -486,7 +486,9 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
         fileSize = 0;
       }
       if (cancelled || count <= 0) return;
-      const current = useAppStore.getState().viewerFile;
+      // This tab's own file, not the active tab's: a tab restored in the
+      // background must still get its page count, or it never shows pages.
+      const current = useAppStore.getState().tabFiles[tabPath];
       if (current?.path !== path) return;
       setViewerFile({ ...current, info: { file_size: fileSize, metadata: {}, page_count: count } });
       // Skip background metadata load for large PDFs — getPdfInfo parses the entire document
