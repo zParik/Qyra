@@ -23,6 +23,7 @@ import { DrawToolbar } from "./tools/DrawToolbar";
 import { TextLayer, evictTextPageCache } from "./TextLayer";
 import { LinkLayer, evictLinkPageCache } from "./LinkLayer";
 import { FindBar } from "./FindBar";
+import { IcArrowLeft, IcClose, IcSearch } from "../components/Icons";
 import { CommentLayer, CommentEditor } from "./CommentLayer";
 import { FormLayer } from "./FormLayer";
 import { SignatureLayer } from "./SignatureLayer";
@@ -1254,231 +1255,92 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
         <button
           onClick={() => setReadingMode(false)}
           title="Exit reading mode (Esc)"
-          style={{
-            position: "fixed", top: 12, right: 12, zIndex: 500,
-            background: "var(--viewer-elevated)",
-            border: "1px solid var(--viewer-border)",
-            borderRadius: 6, padding: "5px 10px",
-            color: "var(--viewer-text-muted)",
-            fontSize: 11, fontFamily: "'Inter', system-ui, sans-serif",
-            cursor: "pointer", display: "flex", alignItems: "center", gap: 5,
-            boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
-          }}
+          className="btn-secondary btn-sm"
+          style={{ position: "fixed", top: 12, right: 12, zIndex: 500, boxShadow: "var(--shadow-pop)" }}
         >
-          <svg width={10} height={10} fill="none" stroke="currentColor" strokeWidth={2}
-            strokeLinecap="round" viewBox="0 0 16 16">
-            <path d="M12 4L4 12M4 4l8 8" />
-          </svg>
+          <IcClose size={14} />
           Exit reading
         </button>
       )}
 
-      {/* Header — dense pro-tool toolbar */}
-      <header
-        style={{
-          height: "calc(44px + env(safe-area-inset-top, 0px))",
-          flexShrink: 0,
-          background: "var(--viewer-surface)",
-          borderBottom: "1px solid var(--viewer-border)",
-          display: readingMode ? "none" : "flex", alignItems: "center",
-          gap: 8,
-          padding: "0 12px",
-          paddingTop: "env(safe-area-inset-top, 0px)",
-        }}
-      >
-        {/* ← Library */}
-        <button
-          onClick={handleBack}
-          className="v-icon-btn shrink-0"
-          title="Back to home"
-          style={{
-            height: 26, padding: "0 8px", borderRadius: 4,
-            display: "inline-flex", alignItems: "center", gap: 5,
-            border: "1px solid var(--viewer-border)",
-            background: "var(--viewer-elevated)",
-            fontSize: 11.5, fontFamily: "'Inter', system-ui, sans-serif",
-          }}
-        >
-          <svg width={11} height={11} fill="none" stroke="currentColor" strokeWidth={1.5}
-            strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 16 16">
-            <path d="M10 4L6 8l4 4" />
-          </svg>
-          <span className="hidden sm:inline">Library</span>
+      {/* Toolbar — the kiri-wood counter above the page */}
+      <header className="toolbar" style={{ display: readingMode ? "none" : undefined }}>
+        <button onClick={handleBack} className="btn-ghost" title="Back to library">
+          <IcArrowLeft size={16} />
+          Library
         </button>
 
-        <div style={{ width: 1, height: 18, background: "var(--viewer-border-sub)", flexShrink: 0 }} />
-
-        {/* File title */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flex: 1 }}>
-          <svg width={14} height={14} fill="currentColor" viewBox="0 0 24 24"
-            style={{ color: "var(--accent)", flexShrink: 0 }}>
-            <path d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-          </svg>
-          <div style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
-            <span style={{
-              fontFamily: "'Inter', system-ui, sans-serif", fontSize: 12, fontWeight: 600,
-              color: "var(--viewer-text)", overflow: "hidden", textOverflow: "ellipsis",
-              whiteSpace: "nowrap", maxWidth: 260, lineHeight: 1.1,
-            }}>
-              {displayName}
+        <div className="toolbar-title">
+          <span className="toolbar-name" title={displayName}>{displayName}</span>
+          {viewerFile.info && (
+            <span className="t-meta">
+              {viewerFile.info.page_count} {viewerFile.info.page_count === 1 ? "page" : "pages"}
+              {isViewerDirty && <span className="toolbar-dirty"> · unsaved</span>}
             </span>
-            {viewerFile.info && (
-              <span style={{ fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 10, color: "var(--viewer-text-muted)", lineHeight: 1.1 }}>
-                {viewerFile.info.page_count} pages
-                {isViewerDirty && <span style={{ color: "oklch(65% 0.16 65)", marginLeft: 5 }}>● unsaved</span>}
-              </span>
-            )}
-          </div>
+          )}
         </div>
 
-        {/* Annotation tool pills — hidden on small screens, accessible via the sidebar */}
-        <div className="hidden sm:flex" style={{ gap: 1, padding: 2, border: "1px solid var(--viewer-border)", borderRadius: 4, flexShrink: 0 }}>
-          {(["Highlight", "Comment", "Sign"] as const).map((t) => (
-            <button
-              key={t}
-              onClick={() => {
-                const targetTool = t === "Comment" ? "comment" : "draw";
-                if (activeTool === targetTool && activeAnnot === t) {
-                  handleToolChange(null);
-                } else {
-                  setActiveAnnot(t);
-                  handleToolChange(targetTool);
-                }
-              }}
-              style={{
-                padding: "3px 9px", border: "none", borderRadius: 3,
-                background: activeAnnot === t && (activeTool === "draw" || activeTool === "comment") ? "var(--accent-soft)" : "transparent",
-                color: activeAnnot === t && (activeTool === "draw" || activeTool === "comment") ? "var(--accent)" : "var(--viewer-text-muted)",
-                fontFamily: "'Inter', system-ui, sans-serif", fontSize: 11.5, fontWeight: 500,
-                cursor: "pointer", transition: "background 100ms, color 100ms",
-              }}
-            >{t}</button>
-          ))}
+        <div className="seg" role="group" aria-label="Markup">
+          {(["Highlight", "Comment", "Sign"] as const).map((t) => {
+            const on = activeAnnot === t && (activeTool === "draw" || activeTool === "comment");
+            return (
+              <button
+                key={t}
+                type="button"
+                className="seg-item"
+                aria-pressed={on}
+                onClick={() => {
+                  const targetTool = t === "Comment" ? "comment" : "draw";
+                  if (activeTool === targetTool && activeAnnot === t) {
+                    handleToolChange(null);
+                  } else {
+                    setActiveAnnot(t);
+                    handleToolChange(targetTool);
+                  }
+                }}
+              >{t}</button>
+            );
+          })}
         </div>
 
-        {/* ── right cluster ── */}
+        <span className="toolbar-sep" />
 
-        {/* Undo */}
-        {undoViewerFile && (
-          <>
-            <div style={{ width: 1, height: 18, background: "var(--viewer-border-sub)", flexShrink: 0 }} />
-            <button
-              onClick={() => {
-                setViewerFile(undoViewerFile);
-                setUndoViewerFile(null);
-                setIsViewerDirty(undoViewerFile.path !== (originalViewerPath ?? ""));
-                setCurrentPage(1);
-              }}
-              className="v-btn-secondary-sm shrink-0"
-              title="Undo last operation (Ctrl+Z)"
-              style={{ height: 26, padding: "0 8px", borderRadius: 4, fontSize: 11.5,
-                display: "inline-flex", alignItems: "center", gap: 4 }}
-            >
-              <svg width={12} height={12} fill="none" stroke="currentColor" strokeWidth={1.5}
-                strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
-                <path d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
-              </svg>
-              <span className="hidden sm:inline">Undo</span>
-            </button>
-          </>
-        )}
+        <button
+          onClick={() => setFindOpen((o) => !o)}
+          className="btn-icon"
+          aria-pressed={findOpen}
+          title="Find in document (Ctrl+F)"
+        >
+          <IcSearch size={16} />
+        </button>
 
-        {/* Save cluster — always visible */}
-        <>
-          <div style={{ width: 1, height: 18, background: "var(--viewer-border-sub)", flexShrink: 0 }} />
-          <div style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
-            {saveStatus === "saving" && (
-              <span style={{ fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 10, color: "var(--viewer-text-muted)" }}>
-                saving…
-              </span>
-            )}
-            {saveStatus === "saved" && (
-              <span style={{ fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 10, color: "oklch(65% 0.16 145)" }}>
-                ✓ saved
-              </span>
-            )}
-            <button
-              onClick={() => setAutoSave((a) => !a)}
-              className="hidden sm:inline-flex items-center"
-              title={autoSave ? "Auto-save on — click to disable" : "Auto-save off — click to enable"}
-              style={{
-                height: 20, padding: "0 7px", borderRadius: 10,
-                border: `1px solid ${autoSave ? "var(--accent)" : "var(--viewer-border)"}`,
-                background: autoSave ? "var(--accent-soft)" : "transparent",
-                color: autoSave ? "var(--accent)" : "var(--viewer-text-muted)",
-                fontSize: 10, fontWeight: 600, cursor: "pointer",
-                fontFamily: "'Inter', system-ui, sans-serif",
-                letterSpacing: "0.3px",
-                transition: "background 120ms, color 120ms, border-color 120ms",
-              }}
-            >
-              Auto
-            </button>
-            <button
-              onClick={activeTool === "draw" ? handleSaveAnnotations : handleSave}
-              disabled={saveStatus === "saving"}
-              className={isViewerDirty ? "v-btn-primary-sm" : "v-btn-secondary-sm"}
-              title="Save (Ctrl+S)"
-              style={{ height: 26, padding: "0 10px", borderRadius: 4, fontSize: 11.5, fontWeight: isViewerDirty ? 600 : 400, display: "inline-flex", alignItems: "center" }}
-            >
-              Save
-            </button>
-            <button
-              onClick={activeTool === "draw" ? handleSaveAsAnnotations : handleSaveAs}
-              className="v-btn-secondary-sm hidden sm:inline-flex items-center"
-              title="Save As (Ctrl+Shift+S)"
-              style={{ height: 26, padding: "0 10px", borderRadius: 4, fontSize: 11.5 }}
-            >
-              Save As
-            </button>
-          </div>
-        </>
-
-        {/* Zoom — hidden on small screens (pinch-to-zoom replaces it) */}
-        <div className="hidden sm:contents">
-          <div style={{ width: 1, height: 18, background: "var(--viewer-border-sub)", flexShrink: 0 }} />
-          <div style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
-            <VHeaderBtn onClick={() => adjustZoom(-0.25)} disabled={zoom <= 0.25} title="Zoom out (Ctrl+-)">
-              <svg width={12} height={12} fill="none" stroke="currentColor" strokeWidth={1.5}
-                strokeLinecap="round" viewBox="0 0 16 16"><path d="M3 8h10" /></svg>
-            </VHeaderBtn>
-            <button
-              onClick={() => setZoom(1.0)}
-              title="Reset zoom (Ctrl+0)"
-              style={{
-                background: "transparent", border: "none", cursor: "pointer",
-                fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 11,
-                color: "var(--viewer-text-muted)", minWidth: "3rem", textAlign: "center", padding: "0 2px",
-              }}
-            >
-              {Math.round(zoom * 100)}%
-            </button>
-            <VHeaderBtn onClick={() => adjustZoom(0.25)} disabled={zoom >= 3.0} title="Zoom in (Ctrl+=)">
-              <svg width={12} height={12} fill="none" stroke="currentColor" strokeWidth={1.5}
-                strokeLinecap="round" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10" /></svg>
-            </VHeaderBtn>
-          </div>
+        <div className="toolbar-group" role="group" aria-label="Zoom">
+          <button className="btn-icon" onClick={() => adjustZoom(-0.25)} disabled={zoom <= 0.25} title="Zoom out (Ctrl+-)">
+            <svg width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.5}
+              strokeLinecap="round" viewBox="0 0 16 16"><path d="M3 8h10" /></svg>
+          </button>
+          <button className="btn-ghost toolbar-num" onClick={() => setZoom(1.0)} title="Reset zoom (Ctrl+0)">
+            {Math.round(zoom * 100)}%
+          </button>
+          <button className="btn-icon" onClick={() => adjustZoom(0.25)} disabled={zoom >= 3.0} title="Zoom in (Ctrl+=)">
+            <svg width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.5}
+              strokeLinecap="round" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10" /></svg>
+          </button>
         </div>
 
-        {/* Page nav — hidden on small screens (scroll-to-navigate replaces it) */}
         {pageCount > 0 && (
-          <div className="hidden sm:contents">
-            <div style={{ width: 1, height: 18, background: "var(--viewer-border-sub)", flexShrink: 0 }} />
-            <div style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
-              <VHeaderBtn onClick={() => currentPage > 1 && scrollToPage(currentPage - 1)} title="Previous page">
-                <svg width={12} height={12} fill="none" stroke="currentColor" strokeWidth={1.5}
-                  strokeLinecap="round" viewBox="0 0 16 16"><path d="M10 4L6 8l4 4" /></svg>
-              </VHeaderBtn>
+          <>
+            <span className="toolbar-sep" />
+            <div className="toolbar-group" role="group" aria-label="Page">
+              <button className="btn-icon" onClick={() => currentPage > 1 && scrollToPage(currentPage - 1)} disabled={currentPage <= 1} title="Previous page">
+                <svg width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.5}
+                  strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 16 16"><path d="M10 4L6 8l4 4" /></svg>
+              </button>
               {editingPage ? (
                 <input
                   type="number" min={1} max={pageCount} value={pageInputValue} autoFocus
-                  style={{
-                    width: "5rem", textAlign: "center",
-                    background: "var(--viewer-elevated)", border: "1px solid var(--viewer-border)",
-                    borderRadius: 4, color: "var(--viewer-text)", caretColor: "var(--viewer-text)",
-                    fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 11, padding: "2px 4px",
-                    outline: "none",
-                  }}
+                  className="input toolbar-page-input"
+                  aria-label="Go to page"
                   onChange={(e) => setPageInputValue(e.target.value)}
                   onKeyDown={(e) => {
                     e.stopPropagation();
@@ -1498,128 +1360,128 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
                 />
               ) : (
                 <button
+                  className="btn-ghost toolbar-num"
                   onClick={() => { setPageInputValue(String(currentPage)); setEditingPage(true); }}
                   title="Go to page"
-                  style={{
-                    background: "transparent", border: "none", cursor: "pointer",
-                    fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 11,
-                    color: "var(--viewer-text-muted)", minWidth: "5rem", textAlign: "center", padding: "0 2px",
-                  }}
                 >
-                  {String(currentPage).padStart(3, "0")}<span style={{ color: "var(--viewer-border)" }}> / </span>{pageCount}
+                  {currentPage}<span className="toolbar-of"> / {pageCount}</span>
                 </button>
               )}
-              <VHeaderBtn onClick={() => currentPage < pageCount && scrollToPage(currentPage + 1)} title="Next page">
-                <svg width={12} height={12} fill="none" stroke="currentColor" strokeWidth={1.5}
-                  strokeLinecap="round" viewBox="0 0 16 16"><path d="M6 4l4 4-4 4" /></svg>
-              </VHeaderBtn>
+              <button className="btn-icon" onClick={() => currentPage < pageCount && scrollToPage(currentPage + 1)} disabled={currentPage >= pageCount} title="Next page">
+                <svg width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.5}
+                  strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 16 16"><path d="M6 4l4 4-4 4" /></svg>
+              </button>
             </div>
-          </div>
+          </>
         )}
 
-        {/* Presentation mode */}
-        {pageCount > 0 && (
+        <span style={{ flex: 1 }} />
+
+        {undoViewerFile && (
           <button
-            onClick={() => setShowPresentation(true)}
-            className="v-icon-btn shrink-0"
-            title="Present (fullscreen slideshow)"
-            style={{ width: 28, height: 28, borderRadius: 4, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+            onClick={() => {
+              setViewerFile(undoViewerFile);
+              setUndoViewerFile(null);
+              setIsViewerDirty(undoViewerFile.path !== (originalViewerPath ?? ""));
+              setCurrentPage(1);
+            }}
+            className="btn-ghost"
+            title="Undo last operation (Ctrl+Z)"
           >
-            <svg width={15} height={15} fill="none" stroke="currentColor" strokeWidth={1.5}
+            <svg width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.5}
               strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
-              <path d="M15 10l4.553-2.069A1 1 0 0121 8.847v6.306a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
+              <path d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
             </svg>
+            Undo
           </button>
         )}
 
-        {/* Reading mode */}
-        <button
-          onClick={() => setReadingMode(r => !r)}
-          className="v-icon-btn shrink-0"
-          title="Reading mode — hide UI (Esc to exit)"
-          style={{
-            width: 28, height: 28, borderRadius: 4, display: "inline-flex",
-            alignItems: "center", justifyContent: "center",
-            color: readingMode ? "var(--accent)" : undefined,
-          }}
-        >
-          <svg width={15} height={15} fill="none" stroke="currentColor" strokeWidth={1.5}
-            strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
-            <path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-          </svg>
-        </button>
+        <div className="toolbar-group">
+          {saveStatus === "saving" && <span className="t-meta">Saving…</span>}
+          {saveStatus === "saved" && <span className="t-meta" style={{ color: "var(--ok)" }}>Saved</span>}
+          <button
+            onClick={() => setAutoSave((a) => !a)}
+            className="btn-ghost btn-sm"
+            aria-pressed={autoSave}
+            title={autoSave ? "Auto-save is on. Click to turn it off." : "Auto-save is off. Click to turn it on."}
+          >
+            Auto-save
+          </button>
+          <button
+            onClick={activeTool === "draw" ? handleSaveAnnotations : handleSave}
+            disabled={saveStatus === "saving"}
+            className={isViewerDirty ? "btn-primary" : "btn-secondary"}
+            title="Save (Ctrl+S)"
+          >
+            Save
+          </button>
+          <button
+            onClick={activeTool === "draw" ? handleSaveAsAnnotations : handleSaveAs}
+            className="btn-ghost"
+            title="Save as… (Ctrl+Shift+S)"
+          >
+            Save as…
+          </button>
+        </div>
 
-        {/* Mobile toggles */}
-        <button
-          onClick={() => setShowStrip(s => !s)}
-          className="v-icon-btn shrink-0"
-          title="Toggle page strip"
-          style={{
-            width: 28, height: 28, borderRadius: 4, display: "inline-flex",
-            alignItems: "center", justifyContent: "center",
-            color: showStrip ? "var(--accent)" : undefined,
-          }}
-        >
-          <svg width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.5}
-            strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
-            <path d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
-          </svg>
-        </button>
-        <button
-          onClick={() => setShowTools(t => !t)}
-          className="v-icon-btn shrink-0"
-          title="Toggle tools"
-          style={{
-            width: 28, height: 28, borderRadius: 4, display: "inline-flex",
-            alignItems: "center", justifyContent: "center",
-            color: showTools ? "var(--accent)" : undefined,
-          }}
-        >
-          <svg width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.5}
-            strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
-            <path d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
-          </svg>
-        </button>
+        <span className="toolbar-sep" />
+
+        <div className="toolbar-group">
+          {pageCount > 0 && (
+            <button onClick={() => setShowPresentation(true)} className="btn-icon" title="Present (fullscreen slideshow)">
+              <svg width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.5}
+                strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+                <path d="M15 10l4.553-2.069A1 1 0 0121 8.847v6.306a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
+              </svg>
+            </button>
+          )}
+          <button onClick={() => setReadingMode(r => !r)} className="btn-icon" aria-pressed={readingMode} title="Reading mode: hide the chrome (Esc to exit)">
+            <svg width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.5}
+              strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+              <path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+            </svg>
+          </button>
+          <button onClick={() => setShowStrip(s => !s)} className="btn-icon" aria-pressed={showStrip} title="Show or hide the page strip">
+            <svg width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.5}
+              strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 16 16">
+              <rect x="2.5" y="3" width="4" height="10" rx="0.5" /><rect x="9.5" y="3" width="4" height="10" rx="0.5" />
+            </svg>
+          </button>
+          <button onClick={() => setShowTools(t => !t)} className="btn-icon" aria-pressed={showTools} title="Show or hide the tools">
+            <svg width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.5}
+              strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 16 16">
+              <rect x="2.5" y="3" width="11" height="10" rx="0.5" /><path d="M9.5 3v10M11 6h1M11 8h1" />
+            </svg>
+          </button>
+        </div>
       </header>
 
       {/* Discard-changes confirmation overlay */}
       {confirmingBack && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center"
-          style={{ background: "color-mix(in oklch, var(--viewer-bg) 70%, transparent)" }}
+          style={{ background: "oklch(0.15 0.03 265 / 0.45)" }}
           onClick={() => setConfirmingBack(false)}
         >
           <div
-            className="flex flex-col gap-4 rounded-xl px-6 py-5 w-80 mx-4"
-            style={{
-              background: "var(--viewer-elevated)",
-              border: "1px solid var(--viewer-border)",
-              boxShadow: "0 8px 32px color-mix(in oklch, oklch(0% 0 0) 40%, transparent)",
-            }}
+            role="alertdialog"
+            aria-labelledby="discard-title"
+            className="pop"
+            style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)", padding: "var(--space-6)", width: 360, boxShadow: "var(--shadow-dialog)" }}
             onClick={(e) => e.stopPropagation()}
           >
             <div>
-              <p className="text-sm font-semibold" style={{ color: "var(--viewer-text)" }}>
-                Discard unsaved changes?
-              </p>
-              <p className="text-xs mt-1" style={{ color: "var(--viewer-text-sec)" }}>
-                Your changes will be lost. This cannot be undone.
+              <p id="discard-title" className="t-title" style={{ margin: 0 }}>Discard unsaved changes?</p>
+              <p style={{ margin: "var(--space-2) 0 0", color: "var(--fg1)" }}>
+                Your changes to this sheet will be lost. This cannot be undone.
               </p>
             </div>
-            <div className="flex gap-2 justify-end">
-              <button
-                onClick={() => setConfirmingBack(false)}
-                className="v-btn-secondary-sm text-xs px-4 py-1.5 rounded-lg"
-                autoFocus
-              >
-                Cancel
+            <div style={{ display: "flex", gap: "var(--space-2)", justifyContent: "flex-end" }}>
+              <button onClick={() => setConfirmingBack(false)} className="btn-secondary" autoFocus>
+                Keep editing
               </button>
-              <button
-                onClick={doBack}
-                className="v-btn-danger text-xs px-4 py-1.5 rounded-lg"
-                style={{ display: "inline-flex", width: "auto" }}
-              >
-                Discard
+              <button onClick={doBack} className="btn-danger">
+                Discard changes
               </button>
             </div>
           </div>
@@ -1628,20 +1490,9 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
 
       {/* Save error banner */}
       {saveError && (
-        <div
-          className="px-4 py-2 text-xs flex items-center justify-between shrink-0"
-          style={{
-            background: "var(--v-bad-bg)",
-            borderBottom: "1px solid var(--v-bad-border)",
-            color: "var(--v-bad-text)",
-          }}
-        >
-          <span>Save failed: {saveError}</span>
-          <button
-            onClick={() => setSaveError(null)}
-            className="underline ml-3"
-            style={{ color: "var(--v-bad-text)" }}
-          >
+        <div role="alert" className="alert" style={{ borderRadius: 0, borderWidth: "0 0 1px", flexShrink: 0 }}>
+          <span style={{ flex: 1 }}>Save failed: {saveError}</span>
+          <button onClick={() => setSaveError(null)} className="btn-ghost btn-sm" style={{ color: "inherit" }}>
             Dismiss
           </button>
         </div>
@@ -1692,17 +1543,14 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
       {/* Selection Popup Tooltip — inline quick-access markup menu */}
       {selectionPopup && !selectionEditor && (
         <div
+          className="pop"
           style={{
             position: "fixed",
             left: selectionPopup.rect.left + selectionPopup.rect.width / 2,
             top: selectionPopup.rect.top - 46,
             transform: "translateX(-50%)",
             zIndex: 1000,
-            background: "var(--viewer-elevated)",
-            border: "1px solid var(--viewer-border)",
-            borderRadius: 8,
             padding: "4px 6px",
-            boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
             display: "flex",
             alignItems: "center",
             gap: 3,
@@ -1797,43 +1645,14 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
 
       {/* Three-panel body */}
       <div className="flex flex-1 overflow-hidden relative">
-        {/* Backdrop — dims content when a panel is open on mobile */}
-        {(showStrip || (showTools && activeTool !== "draw")) && (
-          <div
-            className="absolute inset-0 z-10 sm:hidden"
-            style={{ background: "rgba(0,0,0,0.45)" }}
-            onClick={() => { setShowStrip(false); setShowTools(false); }}
-          />
-        )}
-
-        {/* Left: page strip — slide-in drawer on phone (with backdrop), fixed column on desktop */}
-        {showStrip && !readingMode && (
-          <div
-            className="absolute inset-0 z-10 bg-black/40 sm:hidden"
-            onClick={() => setShowStrip(false)}
-            aria-hidden="true"
-          />
-        )}
-        <div
-          className={`h-full shrink-0 flex-col ${
-            showStrip && !readingMode
-              ? "flex absolute inset-y-0 left-0 z-20 sm:relative sm:z-auto page-strip-drawer"
-              : "hidden"
-          }`}
-          style={{
-            paddingTop: showStrip && !readingMode ? "env(safe-area-inset-top, 0px)" : undefined,
-            boxShadow: showStrip && !readingMode ? "6px 0 24px rgba(0,0,0,0.45)" : undefined,
-          }}
-        >
+        {/* Left: page strip */}
+        <div className={`h-full shrink-0 flex-col ${showStrip && !readingMode ? "flex" : "hidden"}`}>
           <PageStrip
             path={viewerFile.path}
             version={docInfo?.version}
             pageCount={pageCount}
             currentPage={currentPage}
-            onPageSelect={(page) => {
-              scrollToPage(page);
-              if (window.innerWidth < 640) setShowStrip(false);
-            }}
+            onPageSelect={scrollToPage}
             selectionMode={activeTool === "remove"}
             selectedPages={selectedPages}
             onPageToggle={handlePageToggle}
@@ -1952,31 +1771,23 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
                   }
                 </svg>
               </div>
-              <div style={{ textAlign: "center", maxWidth: 340 }}>
-                <p style={{ fontFamily: "'Inter', system-ui, sans-serif", fontSize: 15, fontWeight: 600, color: "var(--viewer-text)", marginBottom: 6 }}>
-                  {loadError === "encrypted" ? "Password protected" : "Cannot open this PDF"}
+              <div style={{ textAlign: "center", maxWidth: 360 }}>
+                <p className="t-title" style={{ margin: "0 0 var(--space-2)" }}>
+                  {loadError === "encrypted" ? "This PDF is password protected" : "This PDF cannot be opened"}
                 </p>
-                <p style={{ fontFamily: "'Inter', system-ui, sans-serif", fontSize: 13, color: "var(--viewer-text-sec)", lineHeight: 1.55 }}>
+                <p style={{ margin: 0, color: "var(--fg1)" }}>
                   {loadError === "encrypted"
-                    ? "This PDF is encrypted. Enter the password to unlock it, or use the Unlock tool."
-                    : "This file may be corrupt, truncated, or not a valid PDF. Try re-downloading or opening it in another app."}
+                    ? "Enter its password with the Unlock tool to read it."
+                    : "The file may be damaged, cut short, or not a PDF at all. Try the Repair tool, or download it again."}
                 </p>
               </div>
-              <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ display: "flex", gap: "var(--space-2)" }}>
                 {loadError === "encrypted" && (
-                  <button
-                    onClick={() => handleToolChange("unlock")}
-                    className="v-btn-primary"
-                    style={{ fontSize: 13, padding: "7px 18px" }}
-                  >
+                  <button onClick={() => handleToolChange("unlock")} className="btn-primary">
                     Unlock PDF…
                   </button>
                 )}
-                <button
-                  onClick={doBack}
-                  className="v-btn-secondary"
-                  style={{ fontSize: 13, padding: "7px 18px" }}
-                >
+                <button onClick={doBack} className="btn-secondary">
                   Back to library
                 </button>
               </div>
@@ -2203,13 +2014,10 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
           </div>
         </div>
 
-        {/* Right: tool sidebar — full-screen overlay on mobile, fixed 280px column on desktop */}
+        {/* Right: tool sidebar — the sample book */}
         <div
-          className={`h-full flex-col ${
-            activeTool === "draw" || !showTools || readingMode
-              ? "hidden"
-              : "flex absolute inset-y-0 inset-x-0 z-20 sm:inset-x-auto sm:right-0 sm:relative sm:z-auto sm:w-70"
-          }`}
+          className={`h-full flex-col ${activeTool === "draw" || !showTools || readingMode ? "hidden" : "flex"}`}
+          style={{ width: "var(--panel-w)", flexShrink: 0 }}
         >
           <ToolSidebar
             file={viewerFile}
@@ -2234,16 +2042,6 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
   );
 }
 
-function VHeaderBtn({ onClick, disabled, title, children }: {
-  onClick: () => void; disabled?: boolean; title?: string; children: React.ReactNode;
-}) {
-  return (
-    <button onClick={onClick} disabled={disabled} title={title} className="v-header-btn">
-      {children}
-    </button>
-  );
-}
-
 function AddPageBar({ onAdd }: { onAdd: () => void }) {
   return (
     <div className="group flex items-center justify-center w-full" style={{ height: "28px", position: "relative" }}>
@@ -2251,9 +2049,9 @@ function AddPageBar({ onAdd }: { onAdd: () => void }) {
         onClick={onAdd}
         className="add-page-btn flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity"
         style={{
-          background: "var(--brand)",
-          color: "#fff",
-          boxShadow: "0 1px 6px rgba(0,0,0,0.2)",
+          background: "var(--rose)",
+          color: "var(--rose-ink)",
+          boxShadow: "var(--shadow-pop)",
         }}
       >
         <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">

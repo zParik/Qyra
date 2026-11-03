@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 
 import { LoadedFile } from "../store/useAppStore";
-import { useIsPhone } from "../hooks/useMediaQuery";
 import { RotatePanel } from "./tools/RotatePanel";
 import { RemovePanel } from "./tools/RemovePanel";
 import { ReorderPanel } from "./tools/ReorderPanel";
@@ -37,6 +36,8 @@ import {
   IconFlatten, IconDocText, IconDocWord, IconList, IconCompare,
   IconChevronLeft, IconChevronRight, IconPrint,
 } from "./icons";
+import { IcPlus, IcClose, IcArrowLeft } from "../components/Icons";
+import { chipStyle, FAMILY, type Family } from "../lib/families";
 
 export type ViewerTool =
   | "rotate" | "remove" | "reorder" | "split"
@@ -70,43 +71,56 @@ interface ToolDef { id: ViewerTool; label: string; icon: React.ReactNode }
 
 const ICON_CLS = "w-4 h-4";
 
-const PAGE_TOOLS: ToolDef[] = [
-  { id: "comment",      label: "Comments",        icon: <IconComment className={ICON_CLS} /> },
-  { id: "draw",         label: "Draw & Annotate", icon: <IconPencil className={ICON_CLS} /> },
-  { id: "rotate",       label: "Rotate Pages",    icon: <IconRotate className={ICON_CLS} /> },
-  { id: "remove",       label: "Remove Pages",    icon: <IconTrash className={ICON_CLS} /> },
-  { id: "reorder",      label: "Reorder Pages",   icon: <IconReorder className={ICON_CLS} /> },
-  { id: "split",        label: "Split PDF",       icon: <IconSplit className={ICON_CLS} /> },
-  { id: "page-numbers", label: "Page Numbers",    icon: <IconPageNumbers className={ICON_CLS} /> },
-  { id: "bates",        label: "Bates Numbering", icon: <IconPageNumbers className={ICON_CLS} /> },
-  { id: "header-footer", label: "Header / Footer", icon: <IconPageNumbers className={ICON_CLS} /> },
-  { id: "links",        label: "Links",           icon: <IconList className={ICON_CLS} /> },
-  { id: "forms",        label: "Fill Forms",      icon: <IconForms className={ICON_CLS} /> },
-  { id: "signature",    label: "Sign",            icon: <IconPencil className={ICON_CLS} /> },
-  { id: "crop",         label: "Crop Pages",      icon: <IconCrop className={ICON_CLS} /> },
-  { id: "redact",       label: "Redact",          icon: <IconRedact className={ICON_CLS} /> },
-  { id: "stamps",       label: "Stamps",          icon: <IconCheckBadge className={ICON_CLS} /> },
+/** The sample book: every tool filed under its family, each family with its colour. */
+const GROUPS: { family: Family; tools: ToolDef[] }[] = [
+  { family: "annotate", tools: [
+    { id: "comment", label: "Comments",        icon: <IconComment className={ICON_CLS} /> },
+    { id: "draw",    label: "Draw & annotate", icon: <IconPencil className={ICON_CLS} /> },
+    { id: "stamps",  label: "Stamps",          icon: <IconCheckBadge className={ICON_CLS} /> },
+  ]},
+  { family: "sign", tools: [
+    { id: "signature", label: "Sign", icon: <IconPencil className={ICON_CLS} /> },
+  ]},
+  { family: "forms", tools: [
+    { id: "forms",     label: "Fill forms",       icon: <IconForms className={ICON_CLS} /> },
+    { id: "form-data", label: "Form data (XFDF)", icon: <IconForms className={ICON_CLS} /> },
+  ]},
+  { family: "pages", tools: [
+    { id: "rotate",        label: "Rotate pages",    icon: <IconRotate className={ICON_CLS} /> },
+    { id: "remove",        label: "Remove pages",    icon: <IconTrash className={ICON_CLS} /> },
+    { id: "reorder",       label: "Reorder pages",   icon: <IconReorder className={ICON_CLS} /> },
+    { id: "split",         label: "Split PDF",       icon: <IconSplit className={ICON_CLS} /> },
+    { id: "crop",          label: "Crop pages",      icon: <IconCrop className={ICON_CLS} /> },
+    { id: "page-numbers",  label: "Page numbers",    icon: <IconPageNumbers className={ICON_CLS} /> },
+    { id: "bates",         label: "Bates numbering", icon: <IconPageNumbers className={ICON_CLS} /> },
+    { id: "header-footer", label: "Header & footer", icon: <IconPageNumbers className={ICON_CLS} /> },
+    { id: "watermark",     label: "Watermark",       icon: <IconWatermark className={ICON_CLS} /> },
+    { id: "links",         label: "Links",           icon: <IconList className={ICON_CLS} /> },
+    { id: "flatten",       label: "Flatten",         icon: <IconFlatten className={ICON_CLS} /> },
+  ]},
+  { family: "redact", tools: [
+    { id: "redact",    label: "Redact",    icon: <IconRedact className={ICON_CLS} /> },
+    { id: "anonymize", label: "Anonymize", icon: <IconUnlock className={ICON_CLS} /> },
+  ]},
+  { family: "compress", tools: [
+    { id: "compress", label: "Compress",         icon: <IconCompress className={ICON_CLS} /> },
+    { id: "protect",  label: "Password protect", icon: <IconLock className={ICON_CLS} /> },
+    { id: "unlock",   label: "Unlock",           icon: <IconUnlock className={ICON_CLS} /> },
+    { id: "metadata", label: "Edit metadata",    icon: <IconEdit className={ICON_CLS} /> },
+  ]},
+  { family: "export", tools: [
+    { id: "export-images",      label: "Export images",      icon: <IconImage className={ICON_CLS} /> },
+    { id: "export-text",        label: "Export text",        icon: <IconDocText className={ICON_CLS} /> },
+    { id: "export-word",        label: "Export to Word",     icon: <IconDocWord className={ICON_CLS} /> },
+    { id: "export-annotations", label: "Export annotations", icon: <IconList className={ICON_CLS} /> },
+    { id: "compare",            label: "Compare PDFs",       icon: <IconCompare className={ICON_CLS} /> },
+  ]},
 ];
 
-const FILE_TOOLS: ToolDef[] = [
-  { id: "compress",            label: "Compress",           icon: <IconCompress className={ICON_CLS} /> },
-  { id: "protect",             label: "Password Protect",   icon: <IconLock className={ICON_CLS} /> },
-  { id: "unlock",              label: "Unlock PDF",         icon: <IconUnlock className={ICON_CLS} /> },
-  { id: "metadata",            label: "Edit Metadata",      icon: <IconEdit className={ICON_CLS} /> },
-  { id: "export-images",       label: "Export to Images",   icon: <IconImage className={ICON_CLS} /> },
-  { id: "watermark",           label: "Watermark",          icon: <IconWatermark className={ICON_CLS} /> },
-  { id: "flatten",             label: "Flatten PDF",        icon: <IconFlatten className={ICON_CLS} /> },
-  { id: "anonymize",           label: "Anonymize",          icon: <IconUnlock className={ICON_CLS} /> },
-  { id: "export-text",         label: "Export Text",        icon: <IconDocText className={ICON_CLS} /> },
-  { id: "export-word",         label: "Export to Word",     icon: <IconDocWord className={ICON_CLS} /> },
-  { id: "export-annotations",  label: "Export Annotations", icon: <IconList className={ICON_CLS} /> },
-  { id: "form-data",           label: "Form Data (XFDF)",   icon: <IconForms className={ICON_CLS} /> },
-  { id: "compare",             label: "Compare PDFs",       icon: <IconCompare className={ICON_CLS} /> },
-];
-
-const ALL_TOOLS = [...PAGE_TOOLS, ...FILE_TOOLS];
-
-import { UI, MONO } from "../lib/tokens";
+const ALL_TOOLS = GROUPS.flatMap((g) => g.tools);
+const FAMILY_OF: Partial<Record<ViewerTool, Family>> = Object.fromEntries(
+  GROUPS.flatMap((g) => g.tools.map((t) => [t.id, g.family])),
+);
 
 type SidebarTab = "tools" | "outline" | "comments";
 
@@ -163,128 +177,88 @@ export function ToolSidebar({ file, onApplied, activeTool, onToolChange, selecte
     ),
     "export-annotations": <ExportAnnotationsPanel file={file} />,
     compare: <ComparePanel file={file} />,
-    // comment, forms, signature, redact have no sidebar panel — handled directly in Viewer
+    // comment, forms, signature have no sidebar panel — handled directly in Viewer
   };
 
-  const isPhone = useIsPhone();
+  const activeDef = activeTool ? ALL_TOOLS.find((t) => t.id === activeTool) : undefined;
+  const activeFamily = activeTool ? FAMILY_OF[activeTool] : undefined;
 
   return (
-    <div
-      style={{
-        width: "100%", flexShrink: 0, height: "100%", display: "flex", flexDirection: "column",
-        background: "var(--viewer-surface)", borderLeft: "1px solid var(--viewer-border)",
-        overflow: "hidden",
-        paddingTop: isPhone ? "env(safe-area-inset-top, 0px)" : undefined,
-      }}
-    >
-      {/* Tab bar */}
-      <div style={{ display: "flex", borderBottom: "1px solid var(--viewer-border-sub)", flexShrink: 0 }}>
-        {(["tools", "outline", "comments"] as SidebarTab[]).map((t) => (
-          <button
-            key={t}
-            onClick={() => {
-              setTab(t);
-              if (t === "comments") {
-                if (activeTool !== "comment") setActiveTool(null);
-              } else if (t !== "tools") {
-                setActiveTool(null);
-              }
-            }}
-            style={{
-              flex: 1,
-              padding: isPhone ? "14px 8px" : "10px 8px",
-              minHeight: isPhone ? 48 : undefined,
-              border: "none",
-              background: "transparent",
-              borderBottom: `2px solid ${tab === t ? "var(--accent)" : "transparent"}`,
-              color: tab === t ? "var(--viewer-text)" : "var(--viewer-text-muted)",
-              fontFamily: UI,
-              fontSize: isPhone ? 14 : 11,
-              fontWeight: 500,
-              textTransform: "capitalize", cursor: "pointer", transition: "color 100ms",
-              WebkitTapHighlightColor: "transparent",
-            }}
-          >{t}</button>
-        ))}
-        {isPhone && (
-          <button
-            onClick={() => {
-              // Close sidebar on phone — find the showTools setter via Viewer's prop indirectly
-              // by dispatching a custom event the Viewer can listen to. Simpler: call onToolChange(null)
-              // then rely on header toggle to dismiss. We just clear activeTool here.
-              onToolChange(null);
-              window.dispatchEvent(new CustomEvent("viewer:closeTools"));
-            }}
-            aria-label="Close panel"
-            style={{
-              width: 48, minHeight: 48,
-              border: "none", background: "transparent",
-              color: "var(--viewer-text-muted)",
-              cursor: "pointer",
-              borderLeft: "1px solid var(--viewer-border-sub)",
-              fontSize: 20, lineHeight: 1,
-              WebkitTapHighlightColor: "transparent",
-            }}
-          >×</button>
-        )}
+    <div className="vside">
+      <div className="panel-head vside-head">
+        <div className="seg seg-full" role="tablist" aria-label="Sidebar">
+          {(["tools", "outline", "comments"] as SidebarTab[]).map((t) => (
+            <button
+              key={t}
+              type="button"
+              role="tab"
+              aria-selected={tab === t}
+              aria-pressed={tab === t}
+              className="seg-item"
+              onClick={() => {
+                setTab(t);
+                if (t === "comments") {
+                  if (activeTool !== "comment") setActiveTool(null);
+                } else if (t !== "tools") {
+                  setActiveTool(null);
+                }
+              }}
+            >
+              {t === "tools" ? "Tools" : t === "outline" ? "Outline" : "Comments"}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* Tools tab */}
       {tab === "tools" && (
         activeTool && activeTool !== "comment" ? (
-          <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", flexShrink: 0, borderBottom: "1px solid var(--viewer-border)" }}>
-              <button
-                onClick={() => setActiveTool(null)}
-                className="v-icon-btn"
-                style={{ padding: 4, borderRadius: 4 }}
-                title="Back to tools (Esc)"
-              >
-                <IconChevronLeft width={14} height={14} />
+          <div className="vside-panel" style={activeFamily ? (chipStyle(activeFamily) as CSSProperties) : undefined}>
+            <div className="vside-panel-head">
+              <button onClick={() => setActiveTool(null)} className="btn-icon" title="Back to all tools (Esc)" aria-label="Back to all tools">
+                <IcArrowLeft size={16} />
               </button>
-              <span style={{ fontFamily: UI, fontSize: 12, fontWeight: 600, color: "var(--accent)" }}>
-                {ALL_TOOLS.find((t) => t.id === activeTool)?.label}
-              </span>
+              <span className="vside-panel-title">{activeDef?.label}</span>
+              {activeFamily && <span className="chip">{FAMILY[activeFamily].label}</span>}
             </div>
-            <div className="scroll-invisible" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 12, paddingBottom: "max(12px, env(safe-area-inset-bottom, 0px))" }}>
+            <div className="vside-scroll vside-panel-body">
               {panels[activeTool]}
             </div>
           </div>
         ) : (
-          <div className="scroll-invisible" style={{ flex: 1, minHeight: 0, overflowY: "auto", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
-            <ToolGroup label="Pages" tools={PAGE_TOOLS} onSelect={setActiveTool} />
-            <ToolGroup label="File" tools={FILE_TOOLS} onSelect={setActiveTool} />
-            <div style={{ borderTop: "1px solid var(--viewer-border-sub)" }}>
-              <p style={{ padding: "12px 16px 6px", fontFamily: UI, fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.6px", color: "var(--viewer-text-muted)" }}>
-                Actions
-              </p>
-              <button
-                onClick={() => triggerPrint(file.path)}
-                className="v-row-btn"
-                style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "8px 16px", textAlign: "left" }}
-              >
-                <span className="v-row-icon" style={{ flexShrink: 0 }}>
-                  <IconPrint width={16} height={16} />
-                </span>
-                <span style={{ flex: 1, fontFamily: UI, fontSize: 12 }}>Print</span>
-                {!isPhone && (
-                  <span style={{ fontFamily: MONO, fontSize: 10.5, color: "var(--viewer-text-muted)" }}>Ctrl+P</span>
+          <div className="vside-scroll">
+            {GROUPS.map((g) => (
+              <section key={g.family} className="vside-group" style={chipStyle(g.family) as CSSProperties} aria-label={FAMILY[g.family].label}>
+                <div className="vside-group-head">
+                  <span className="chip">{FAMILY[g.family].label}</span>
+                  <span className="t-meta">{g.tools.length} {g.tools.length === 1 ? "tool" : "tools"}</span>
+                  <span className="thumb-tab" aria-hidden="true" />
+                </div>
+                {g.tools.map((tool) => (
+                  <button key={tool.id} type="button" onClick={() => setActiveTool(tool.id)} className="row vside-row">
+                    <span className="vside-row-icon">{tool.icon}</span>
+                    <span style={{ flex: 1 }}>{tool.label}</span>
+                    <IconChevronRight width={12} height={12} className="vside-row-chev" />
+                  </button>
+                ))}
+                {g.family === "export" && (
+                  <button type="button" onClick={() => triggerPrint(file.path)} className="row vside-row">
+                    <span className="vside-row-icon"><IconPrint width={16} height={16} /></span>
+                    <span style={{ flex: 1 }}>Print</span>
+                    <kbd className="kbd">Ctrl+P</kbd>
+                  </button>
                 )}
-              </button>
-              <div style={{ paddingBottom: 4 }} />
-            </div>
+              </section>
+            ))}
           </div>
         )
       )}
 
-      {/* Outline tab */}
       {tab === "outline" && (
-        <div className="scroll-invisible" style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
+        <div className="vside-scroll" style={{ padding: "var(--space-2) 0" }}>
           <OutlineContent filePath={file.path} onPageSelect={onPageSelect} onApplied={onApplied} />
         </div>
       )}
 
-      {/* Comments tab */}
       {tab === "comments" && (
         <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
           <CommentPanel
@@ -307,6 +281,15 @@ interface OutlineNode {
 
 async function buildOutline(filePath: string): Promise<OutlineNode[]> {
   return invoke<OutlineNode[]>("get_outline", { path: filePath });
+}
+
+function Spinner() {
+  return (
+    <svg width={16} height={16} viewBox="0 0 16 16" fill="none" style={{ animation: "spin 0.8s linear infinite", color: "var(--rose)" }} aria-hidden="true">
+      <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth={1.5} strokeOpacity={0.2} />
+      <path d="M8 2a6 6 0 016 6" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" />
+    </svg>
+  );
 }
 
 function OutlineContent({ filePath, onPageSelect, onApplied }: { filePath: string; onPageSelect: (page: number) => void; onApplied: (path: string) => void }) {
@@ -344,12 +327,8 @@ function OutlineContent({ filePath, onPageSelect, onApplied }: { filePath: strin
 
   if (loading) {
     return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", paddingTop: 40 }}>
-        <svg width={16} height={16} viewBox="0 0 16 16" fill="none" style={{ animation: "spin 0.8s linear infinite", color: "var(--accent)" }}>
-          <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth={1.5} strokeOpacity={0.2} />
-          <path d="M8 2a6 6 0 016 6" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" />
-        </svg>
-        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", paddingTop: 40 }} aria-busy="true" aria-label="Loading outline">
+        <Spinner />
       </div>
     );
   }
@@ -370,85 +349,41 @@ function OutlineContent({ filePath, onPageSelect, onApplied }: { filePath: strin
   }
 
   const autoButton = (
-    <button
-      onClick={runAutoDetect}
-      disabled={autoDetecting}
-      style={{
-        marginTop: 8,
-        padding: "6px 10px",
-        background: "var(--viewer-elevated)",
-        color: "var(--viewer-text)",
-        border: "1px solid var(--viewer-border)",
-        borderRadius: 6,
-        fontFamily: UI, fontSize: 11.5,
-        cursor: autoDetecting ? "wait" : "pointer",
-      }}
-    >
-      {autoDetecting ? "Detecting…" : isAuto ? "Re-detect from headings" : "Auto-detect from headings"}
+    <button type="button" onClick={runAutoDetect} disabled={autoDetecting} className="btn-secondary btn-sm">
+      {autoDetecting ? "Detecting…" : isAuto ? "Detect again from headings" : "Detect from headings"}
     </button>
   );
 
   if (nodes.length === 0) {
     return (
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, paddingTop: 40 }}>
-        <svg width={28} height={28} fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24" style={{ color: "var(--viewer-text-muted)", opacity: 0.5 }}>
-          <path d="M4 6h16M4 10h10M4 14h12M4 18h8" />
-        </svg>
-        <p style={{ fontFamily: UI, fontSize: 12, color: "var(--viewer-text-muted)", textAlign: "center", margin: 0 }}>
-          No outline in this document
-        </p>
-        {autoButton}
-        <button
-          onClick={() => setEditing(true)}
-          style={{
-            padding: "6px 12px",
-            background: "var(--viewer-elevated)",
-            color: "var(--viewer-text)",
-            border: "1px solid var(--viewer-border)",
-            borderRadius: 6,
-            fontFamily: UI, fontSize: 11.5,
-            cursor: "pointer",
-          }}
-        >
-          Create outline
-        </button>
+      <div className="empty" style={{ margin: "var(--space-3)" }}>
+        <IconList className="w-6 h-6" style={{ color: "var(--fg3)" }} />
+        <strong>No outline in this document</strong>
+        <span>Qyra can guess one from the headings, or you can write your own.</span>
+        <div style={{ display: "flex", gap: "var(--space-2)", marginTop: "var(--space-2)" }}>
+          {autoButton}
+          <button type="button" onClick={() => setEditing(true)} className="btn-secondary btn-sm">
+            Create outline
+          </button>
+        </div>
       </div>
     );
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column" }}>
-      <div style={{ padding: "0 12px 8px", display: "flex", justifyContent: "flex-end" }}>
-        <button
-          onClick={() => setEditing(true)}
-          style={{
-            padding: "4px 10px",
-            background: "var(--viewer-elevated)",
-            color: "var(--viewer-text)",
-            border: "1px solid var(--viewer-border)",
-            borderRadius: 6,
-            fontFamily: UI, fontSize: 11,
-            cursor: "pointer",
-          }}
-        >
+      <div style={{ padding: "0 var(--space-3) var(--space-2)", display: "flex", justifyContent: "flex-end" }}>
+        <button type="button" onClick={() => setEditing(true)} className="btn-secondary btn-sm">
           Edit outline
         </button>
       </div>
       {isAuto && (
-        <div
-          style={{
-            padding: "6px 12px",
-            fontSize: 10.5,
-            color: "var(--viewer-text-muted)",
-            fontFamily: UI,
-            borderBottom: "1px solid var(--viewer-border-sub)",
-          }}
-        >
-          Detected from font-size jumps · not saved to document
+        <div className="t-meta" style={{ padding: "var(--space-2) var(--space-4)", borderBottom: "1px solid var(--line2)" }}>
+          Guessed from heading sizes. Not saved to the document.
         </div>
       )}
       <OutlineTree nodes={nodes} onPageSelect={onPageSelect} depth={0} />
-      <div style={{ padding: "0 12px 12px" }}>{autoButton}</div>
+      <div style={{ padding: "var(--space-3)" }}>{autoButton}</div>
     </div>
   );
 }
@@ -557,68 +492,31 @@ function OutlineEditor({
   }
 
   return (
-    <div style={{ padding: "0 8px 8px", display: "flex", flexDirection: "column", gap: 6 }}>
-      <div style={{ display: "flex", gap: 6, padding: "4px 4px 8px" }}>
-        <button
-          onClick={save}
-          disabled={saving}
-          style={{
-            padding: "5px 12px",
-            background: "var(--accent)", color: "var(--accent-text)",
-            border: "none", borderRadius: 6,
-            fontFamily: UI, fontSize: 11.5, fontWeight: 600,
-            cursor: saving ? "wait" : "pointer",
-          }}
-        >
+    <div style={{ padding: "0 var(--space-2) var(--space-2)", display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+      <div style={{ display: "flex", gap: "var(--space-2)", padding: "var(--space-1) var(--space-1) var(--space-2)" }}>
+        <button type="button" onClick={save} disabled={saving} className="btn-primary btn-sm">
           {saving ? "Saving…" : "Save outline"}
         </button>
-        <button
-          onClick={onCancel}
-          disabled={saving}
-          style={{
-            padding: "5px 12px",
-            background: "transparent", color: "var(--viewer-text)",
-            border: "1px solid var(--viewer-border)", borderRadius: 6,
-            fontFamily: UI, fontSize: 11.5,
-            cursor: "pointer",
-          }}
-        >
+        <button type="button" onClick={onCancel} disabled={saving} className="btn-ghost btn-sm">
           Cancel
         </button>
-        <button
-          onClick={() => addAfter(items.length - 1, 0)}
-          disabled={saving}
-          style={{
-            marginLeft: "auto",
-            padding: "5px 10px",
-            background: "var(--viewer-elevated)", color: "var(--viewer-text)",
-            border: "1px solid var(--viewer-border)", borderRadius: 6,
-            fontFamily: UI, fontSize: 11.5,
-            cursor: "pointer",
-          }}
-        >
-          + Add
+        <button type="button" onClick={() => addAfter(items.length - 1, 0)} disabled={saving} className="btn-secondary btn-sm" style={{ marginLeft: "auto" }}>
+          <IcPlus size={14} /> Add
         </button>
       </div>
 
-      {err && (
-        <div style={{
-          padding: "6px 10px",
-          background: "var(--v-bad-bg)", border: "1px solid var(--v-bad-border)",
-          borderRadius: 6, color: "var(--v-bad-text)", fontSize: 11.5,
-        }}>{err}</div>
-      )}
+      {err && <div className="alert" role="alert">{err}</div>}
 
       {items.length === 0 ? (
-        <div style={{ padding: "12px", fontSize: 12, color: "var(--viewer-text-muted)" }}>
-          Outline is empty. Use + Add to insert a bookmark.
+        <div className="t-meta" style={{ padding: "var(--space-3)" }}>
+          The outline is empty. Add a bookmark to start.
         </div>
       ) : items.map((item, idx) => (
         <div
           key={item.id}
           style={{
             display: "grid",
-            gridTemplateColumns: "1fr 56px auto",
+            gridTemplateColumns: "1fr 52px auto",
             gap: 4,
             paddingLeft: 4 + item.depth * 14,
             alignItems: "center",
@@ -628,14 +526,9 @@ function OutlineEditor({
             value={item.title}
             onChange={(e) => update(idx, { title: e.target.value })}
             placeholder="Title"
-            style={{
-              padding: "4px 6px",
-              background: "var(--viewer-elevated)",
-              color: "var(--viewer-text)",
-              border: "1px solid var(--viewer-border)",
-              borderRadius: 4,
-              fontSize: 12,
-            }}
+            aria-label="Bookmark title"
+            className="input"
+            style={{ height: 28, padding: "0 var(--space-2)" }}
           />
           <input
             type="number"
@@ -643,24 +536,21 @@ function OutlineEditor({
             value={item.page ?? ""}
             onChange={(e) => update(idx, { page: e.target.value === "" ? null : Math.max(1, parseInt(e.target.value) || 1) })}
             placeholder="Pg"
-            style={{
-              padding: "4px 6px",
-              background: "var(--viewer-elevated)",
-              color: "var(--viewer-text)",
-              border: "1px solid var(--viewer-border)",
-              borderRadius: 4,
-              fontSize: 11,
-              fontFamily: MONO,
-              textAlign: "right",
-            }}
+            aria-label="Page"
+            className="input t-num"
+            style={{ height: 28, padding: "0 var(--space-1)", textAlign: "right" }}
           />
           <div style={{ display: "flex", gap: 2 }}>
-            <IconBtn label="Outdent" onClick={() => indent(idx, -1)}>⇤</IconBtn>
-            <IconBtn label="Indent" onClick={() => indent(idx, +1)}>⇥</IconBtn>
-            <IconBtn label="Up" onClick={() => move(idx, -1)}>↑</IconBtn>
-            <IconBtn label="Down" onClick={() => move(idx, +1)}>↓</IconBtn>
-            <IconBtn label="Add below" onClick={() => addAfter(idx, item.depth)}>+</IconBtn>
-            <IconBtn label="Delete" danger onClick={() => remove(idx)}>×</IconBtn>
+            <IconBtn label="Outdent" onClick={() => indent(idx, -1)}><IconChevronLeft width={12} height={12} /></IconBtn>
+            <IconBtn label="Indent" onClick={() => indent(idx, +1)}><IconChevronRight width={12} height={12} /></IconBtn>
+            <IconBtn label="Move up" onClick={() => move(idx, -1)}>
+              <svg width={12} height={12} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round"><path d="M8 13V3M4 7l4-4 4 4" /></svg>
+            </IconBtn>
+            <IconBtn label="Move down" onClick={() => move(idx, +1)}>
+              <svg width={12} height={12} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round"><path d="M8 3v10M4 9l4 4 4-4" /></svg>
+            </IconBtn>
+            <IconBtn label="Add below" onClick={() => addAfter(idx, item.depth)}><IcPlus size={12} /></IconBtn>
+            <IconBtn label="Delete" danger onClick={() => remove(idx)}><IcClose size={12} /></IconBtn>
           </div>
         </div>
       ))}
@@ -675,16 +565,8 @@ function IconBtn({ children, label, onClick, danger }: { children: React.ReactNo
       onClick={onClick}
       aria-label={label}
       title={label}
-      style={{
-        width: 22, height: 22,
-        background: "var(--viewer-elevated)",
-        color: danger ? "var(--v-bad-text)" : "var(--viewer-text)",
-        border: "1px solid var(--viewer-border)",
-        borderRadius: 4,
-        fontSize: 11, lineHeight: 1,
-        cursor: "pointer",
-        display: "inline-flex", alignItems: "center", justifyContent: "center",
-      }}
+      className="btn-icon"
+      style={{ width: 24, height: 24, color: danger ? "var(--bad)" : undefined }}
     >{children}</button>
   );
 }
@@ -702,86 +584,46 @@ function OutlineTree({ nodes, onPageSelect, depth }: { nodes: OutlineNode[]; onP
 function OutlineRow({ node, onPageSelect, depth }: { node: OutlineNode; onPageSelect: (page: number) => void; depth: number }) {
   const [open, setOpen] = useState(depth < 1);
   const hasChildren = node.items.length > 0;
-  const [hover, setHover] = useState(false);
 
   return (
     <div>
       <div
-        onMouseEnter={() => setHover(true)}
-        onMouseLeave={() => setHover(false)}
-        style={{
-          display: "flex", alignItems: "center", gap: 4,
-          padding: `4px 12px 4px ${12 + depth * 14}px`,
-          background: hover ? "var(--viewer-elevated)" : "transparent",
-          cursor: node.page != null ? "pointer" : "default",
-          transition: "background 80ms",
-        }}
+        className="outline-row"
+        role="button"
+        tabIndex={0}
+        style={{ paddingLeft: 12 + depth * 14, cursor: node.page != null ? "pointer" : "default" }}
         onClick={() => {
           if (hasChildren) setOpen((o) => !o);
           if (node.page != null) onPageSelect(node.page);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            if (hasChildren) setOpen((o) => !o);
+            if (node.page != null) onPageSelect(node.page);
+          }
         }}
       >
         {hasChildren ? (
           <svg
             width={10} height={10} viewBox="0 0 10 10" fill="none"
             stroke="currentColor" strokeWidth={1.5} strokeLinecap="round"
-            style={{ flexShrink: 0, color: "var(--viewer-text-muted)", transform: open ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 120ms" }}
+            style={{ flexShrink: 0, color: "var(--fg2)", transform: open ? "rotate(90deg)" : "rotate(0deg)", transition: "transform var(--dur-1)" }}
+            aria-hidden="true"
           >
             <path d="M3 2l4 3-4 3" />
           </svg>
         ) : (
           <span style={{ width: 10, flexShrink: 0 }} />
         )}
-        <span style={{
-          fontFamily: UI, fontSize: 12, color: node.page != null ? "var(--viewer-text)" : "var(--viewer-text-muted)",
-          flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-          lineHeight: 1.4,
-        }}>{node.title || "(untitled)"}</span>
-        {node.page != null && (
-          <span style={{ fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 10, color: "var(--viewer-text-muted)", flexShrink: 0 }}>
-            {node.page}
-          </span>
-        )}
+        <span className="outline-title" style={{ color: node.page != null ? "var(--fg0)" : "var(--fg2)" }}>
+          {node.title || "(untitled)"}
+        </span>
+        {node.page != null && <span className="t-meta">{node.page}</span>}
       </div>
       {hasChildren && open && (
         <OutlineTree nodes={node.items} onPageSelect={onPageSelect} depth={depth + 1} />
       )}
-    </div>
-  );
-}
-
-
-function ToolGroup({
-  label,
-  tools,
-  onSelect,
-  isLast = false,
-}: {
-  label: string;
-  tools: ToolDef[];
-  onSelect: (id: ViewerTool) => void;
-  isLast?: boolean;
-}) {
-  return (
-    <div style={!isLast ? { borderBottom: "1px solid var(--viewer-border-sub)" } : {}}>
-      <p style={{ padding: "12px 16px 6px", fontFamily: UI, fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.6px", color: "var(--viewer-text-muted)" }}>
-        {label}
-      </p>
-      {tools.map((tool) => (
-        <button
-          key={tool.id}
-          onClick={() => onSelect(tool.id)}
-          className="v-row-btn"
-          style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "8px 16px", textAlign: "left" }}
-        >
-          <span className="v-row-icon" style={{ flexShrink: 0 }}>
-            {tool.icon}
-          </span>
-          <span style={{ flex: 1, fontFamily: UI, fontSize: 12 }}>{tool.label}</span>
-          <IconChevronRight width={12} height={12} className="v-row-chevron" style={{ flexShrink: 0 }} />
-        </button>
-      ))}
-      <div style={{ paddingBottom: 4 }} />
     </div>
   );
 }

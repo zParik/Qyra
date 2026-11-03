@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from "react";
+import { IcSearch, IcClose } from "../components/Icons";
 
 interface FindBarProps {
   query: string;
@@ -55,100 +56,52 @@ export function FindBar({
         ? `Scanning ${ocrProgress.page} / ${ocrProgress.total}…`
         : "Scanning…"
       : matchCount === 0
-        ? "No results"
+        ? "No matches"
         : `${currentMatch} / ${matchCount}`;
 
   return (
-    <div
-      className="flex items-center gap-2 px-3 py-1.5 shrink-0"
-      style={{
-        background: "var(--viewer-surface)",
-        borderBottom: "1px solid var(--viewer-border)",
-      }}
-    >
-      {/* Search icon */}
-      <svg
-        className="w-3.5 h-3.5 shrink-0"
-        style={{ color: "var(--viewer-text-muted)" }}
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z"
+    <div className="findbar" role="search" aria-label="Find in document">
+      <div className="findbar-field">
+        <IcSearch size={16} style={{ color: "var(--fg2)", flexShrink: 0 }} />
+        <input
+          ref={inputRef}
+          type="text"
+          value={query}
+          onChange={(e) => onQueryChange(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Find in document…"
+          aria-label="Find in document"
+          className="findbar-input"
         />
-      </svg>
-
-      <input
-        ref={inputRef}
-        type="text"
-        value={query}
-        onChange={(e) => onQueryChange(e.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder="Find in document…"
-        className="flex-1 text-sm outline-none min-w-0 px-2 py-0.5 rounded"
-        style={{
-          background: "var(--viewer-elevated)",
-          border: "1px solid var(--viewer-border)",
-          color: "var(--viewer-text)",
-          caretColor: "var(--viewer-text)",
-        }}
-      />
-
-      {/* Status */}
-      {hasQuery && (
-        ocrSearching ? (
-          <span className="flex items-center gap-1.5 text-xs shrink-0 tabular-nums"
-            style={{ color: "var(--viewer-text-muted)" }}>
-            <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <circle cx="12" cy="12" r="10" strokeWidth={2} strokeOpacity={0.25} />
-              <path d="M12 2a10 10 0 0 1 10 10" strokeWidth={2} strokeLinecap="round" />
-            </svg>
-            {statusText}
-          </span>
-        ) : (
+        {hasQuery && (
           <span
-            className="text-xs shrink-0 tabular-nums"
-            style={{ color: matchCount === 0 ? "var(--v-bad-text)" : "var(--viewer-text-muted)" }}
+            className="t-meta findbar-status"
+            role="status"
+            style={{ color: !ocrSearching && matchCount === 0 ? "var(--bad)" : undefined }}
           >
+            {ocrSearching && (
+              <svg width={12} height={12} viewBox="0 0 16 16" fill="none" style={{ animation: "spin 0.8s linear infinite" }} aria-hidden="true">
+                <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth={1.5} strokeOpacity={0.25} />
+                <path d="M8 2a6 6 0 016 6" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" />
+              </svg>
+            )}
             {statusText}
           </span>
-        )
-      )}
+        )}
+      </div>
 
-      <button
-        onClick={onPrev}
-        disabled={matchCount === 0}
-        className="v-icon-btn p-1 rounded disabled:opacity-30"
-        title="Previous match (Shift+Enter)"
-      >
-        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+      <button type="button" onClick={onPrev} disabled={matchCount === 0} className="btn-icon" title="Previous match (Shift+Enter)">
+        <svg width={16} height={16} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M4 10l4-4 4 4" />
         </svg>
       </button>
-
-      <button
-        onClick={onNext}
-        disabled={matchCount === 0}
-        className="v-icon-btn p-1 rounded disabled:opacity-30"
-        title="Next match (Enter)"
-      >
-        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+      <button type="button" onClick={onNext} disabled={matchCount === 0} className="btn-icon" title="Next match (Enter)">
+        <svg width={16} height={16} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M4 6l4 4 4-4" />
         </svg>
       </button>
-
-      <button
-        onClick={onClose}
-        className="v-icon-btn p-1 rounded"
-        title="Close find bar (Escape)"
-      >
-        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-        </svg>
+      <button type="button" onClick={onClose} className="btn-icon" title="Close (Escape)" aria-label="Close find bar">
+        <IcClose size={16} />
       </button>
     </div>
   );
