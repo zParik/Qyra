@@ -1267,7 +1267,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
           )}
         </div>
 
-        <div className="seg" role="group" aria-label="Markup">
+        <div className="seg toolbar-markup" role="group" aria-label="Markup">
           {(["Highlight", "Comment", "Sign"] as const).map((t) => {
             const on = activeAnnot === t && (activeTool === "draw" || activeTool === "comment");
             return (
@@ -1319,7 +1319,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
           <>
             <span className="toolbar-sep" />
             <div className="toolbar-group" role="group" aria-label="Page">
-              <button className="btn-icon" onClick={() => currentPage > 1 && scrollToPage(currentPage - 1)} disabled={currentPage <= 1} title="Previous page">
+              <button className="btn-icon toolbar-pagestep" onClick={() => currentPage > 1 && scrollToPage(currentPage - 1)} disabled={currentPage <= 1} title="Previous page">
                 <svg width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.5}
                   strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 16 16"><path d="M10 4L6 8l4 4" /></svg>
               </button>
@@ -1354,7 +1354,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
                   {currentPage}<span className="toolbar-of"> / {pageCount}</span>
                 </button>
               )}
-              <button className="btn-icon" onClick={() => currentPage < pageCount && scrollToPage(currentPage + 1)} disabled={currentPage >= pageCount} title="Next page">
+              <button className="btn-icon toolbar-pagestep" onClick={() => currentPage < pageCount && scrollToPage(currentPage + 1)} disabled={currentPage >= pageCount} title="Next page">
                 <svg width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.5}
                   strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 16 16"><path d="M6 4l4 4-4 4" /></svg>
               </button>
@@ -1388,7 +1388,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
           {saveStatus === "saved" && <span className="t-meta" style={{ color: "var(--ok)" }}>Saved</span>}
           <button
             onClick={() => setAutoSave((a) => !a)}
-            className="btn-ghost btn-sm"
+            className="btn-ghost btn-sm toolbar-autosave"
             aria-pressed={autoSave}
             title={autoSave ? "Auto-save is on. Click to turn it off." : "Auto-save is off. Click to turn it on."}
           >

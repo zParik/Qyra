@@ -665,7 +665,14 @@
     background: var(--bar); border-bottom: 1px solid var(--bar-line);
   }
   .toolbar .btn-ghost[aria-pressed="true"], .toolbar .btn-icon[aria-pressed="true"] { background: var(--rose-soft); color: var(--rose); }
-  .toolbar-title { display: flex; flex-direction: column; justify-content: center; gap: 1px; min-width: 0; max-width: 280px; padding: 0 var(--space-2); }
+  .toolbar-title { display: flex; flex-direction: column; justify-content: center; gap: 1px; min-width: 96px; max-width: 280px; padding: 0 var(--space-2); }
+  /* Narrow windows (a tiled half screen) drop the least-needed controls first,
+     so the strip and tools toggles at the end never leave the screen. Quick
+     markup is also in the tools sidebar, auto-save in Settings, and the page
+     arrows on the keyboard. */
+  @media (max-width: 1180px) { .toolbar .toolbar-markup { display: none; } }
+  @media (max-width: 1024px) { .toolbar .toolbar-sep { display: none; } }
+  @media (max-width: 900px) { .toolbar .toolbar-autosave, .toolbar .toolbar-pagestep { display: none; } }
   .toolbar-name { font-weight: 600; line-height: var(--lh-tight); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .toolbar-dirty { color: var(--rose); }
   .toolbar-group { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
