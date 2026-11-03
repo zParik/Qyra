@@ -24,7 +24,6 @@ import { LinksPanel } from "./tools/LinksPanel";
 import { HeaderFooterPanel } from "./tools/HeaderFooterPanel";
 import { ExportTextPanel } from "./tools/ExportTextPanel";
 import { StampsPanel } from "./tools/StampsPanel";
-import { ExportWordPanel } from "./tools/ExportWordPanel";
 import { RedactPanel, type RedactRegion } from "./tools/RedactPanel";
 import { ExportAnnotationsPanel } from "./tools/ExportAnnotationsPanel";
 import { ComparePanel } from "./tools/ComparePanel";
@@ -33,7 +32,7 @@ import {
   IconComment, IconPencil, IconRotate, IconTrash, IconReorder, IconSplit,
   IconPageNumbers, IconForms, IconCrop, IconRedact, IconCheckBadge,
   IconCompress, IconLock, IconUnlock, IconEdit, IconImage, IconWatermark,
-  IconFlatten, IconDocText, IconDocWord, IconList, IconCompare,
+  IconFlatten, IconDocText, IconList, IconCompare,
   IconChevronLeft, IconChevronRight, IconPrint,
 } from "./icons";
 import { IcPlus, IcClose, IcArrowLeft } from "../components/Icons";
@@ -45,7 +44,7 @@ export type ViewerTool =
   | "rotate" | "remove" | "reorder" | "split"
   | "compress" | "page-numbers" | "protect" | "unlock"
   | "metadata" | "export-images" | "draw" | "comment" | "watermark"
-  | "forms" | "signature" | "crop" | "flatten" | "export-text" | "export-word" | "redact" | "stamps" | "export-annotations" | "compare" | "anonymize" | "form-data" | "bates" | "links" | "header-footer";
+  | "forms" | "signature" | "crop" | "flatten" | "export-text" | "redact" | "stamps" | "export-annotations" | "compare" | "anonymize" | "form-data" | "bates" | "links" | "header-footer";
 
 interface ToolSidebarProps {
   file: LoadedFile;
@@ -113,7 +112,6 @@ const GROUPS: { family: Family; tools: ToolDef[] }[] = [
   { family: "export", tools: [
     { id: "export-images",      label: "Export images",      icon: <IconImage className={ICON_CLS} /> },
     { id: "export-text",        label: "Export text",        icon: <IconDocText className={ICON_CLS} /> },
-    { id: "export-word",        label: "Export to Word",     icon: <IconDocWord className={ICON_CLS} /> },
     { id: "export-annotations", label: "Export annotations", icon: <IconList className={ICON_CLS} /> },
     { id: "compare",            label: "Compare PDFs",       icon: <IconCompare className={ICON_CLS} /> },
   ]},
@@ -165,7 +163,6 @@ export function ToolSidebar({ file, onApplied, activeTool, onToolChange, selecte
     "export-text": <ExportTextPanel file={file} />,
     draw: <DrawPanel />,
     stamps: <StampsPanel filePath={file.path} currentPage={currentPage} onApplied={onApplied} />,
-    "export-word": <ExportWordPanel file={file} />,
     redact: (
       <RedactPanel
         file={file}

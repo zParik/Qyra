@@ -39,5 +39,5 @@ export const IN_DOCUMENT: { family: Family; note: string }[] = [
   { family: "redact",   note: "Redact" },
   { family: "pages",    note: "Rotate, reorder, split" },
   { family: "compress", note: "Compress, protect" },
-  { family: "export",   note: "Images, text, Word" },
+  { family: "export",   note: "Images, text" },
 ];
