@@ -3,9 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "../store/useAppStore";
 import { useTheme } from "../lib/useTheme";
-import { UI } from "../lib/tokens";
 import type { RecentFile } from "../lib/schemas";
 import { RecentFileSchema } from "../lib/schemas";
+import { IcSearch } from "./Icons";
 
 const RECENT_KEY = "qyra-recent";
 
@@ -113,25 +113,25 @@ export function CommandPalette() {
 
   const commands: Command[] = useMemo(() => {
     const list: Command[] = [
-      { id: "nav:home", label: "Go to Home", group: "Navigate", hint: "/", run: () => navigate("/") },
-      { id: "nav:view", label: "Go to Viewer", group: "Navigate", hint: "/view",
-        run: () => navigate("/view") },
-      { id: "nav:merge", label: "Open Merge", group: "Navigate", run: () => navigate("/merge") },
-      { id: "nav:images-to-pdf", label: "Open Images to PDF", group: "Navigate", run: () => navigate("/images-to-pdf") },
-      { id: "nav:ocr", label: "Open OCR", group: "Navigate", run: () => navigate("/ocr") },
-      { id: "nav:settings", label: "Open Settings", group: "Navigate", hint: "Ctrl+,",
-        run: () => navigate("/settings") },
+      { id: "nav:home", label: "Go to the library", group: "Navigate", run: () => navigate("/") },
+      { id: "nav:view", label: "Go to the viewer", group: "Navigate", run: () => navigate("/view") },
+      { id: "nav:merge", label: "Merge PDFs", group: "Navigate", hint: "Ctrl+M", run: () => navigate("/merge") },
+      { id: "nav:images-to-pdf", label: "Images to PDF", group: "Navigate", hint: "Ctrl+I", run: () => navigate("/images-to-pdf") },
+      { id: "nav:ocr", label: "Make searchable (OCR)", group: "Navigate", run: () => navigate("/ocr") },
+      { id: "nav:repair", label: "Repair PDF", group: "Navigate", run: () => navigate("/repair") },
+      { id: "nav:batch", label: "Batch operations", group: "Navigate", run: () => navigate("/batch") },
+      { id: "nav:settings", label: "Settings", group: "Navigate", hint: "Ctrl+,", run: () => navigate("/settings") },
 
-      { id: "file:open", label: "Open PDF…", group: "Tools", hint: "Ctrl+O", run: browseAndOpen },
-      { id: "ui:theme", label: "Cycle theme (Light / Dark / System)", group: "Appearance", run: cycleTheme },
+      { id: "file:open", label: "Open a PDF…", group: "Tools", hint: "Ctrl+O", run: browseAndOpen },
+      { id: "ui:theme", label: "Switch theme (light, dark, system)", group: "Appearance", run: cycleTheme },
     ];
 
     openTabs.forEach((tab, i) => {
       if (tab.type === "home") return;
       list.push({
         id: `tab:${tab.path}`,
-        label: `Switch to tab — ${tab.name}`,
-        hint: `${i + 1}`,
+        label: `Switch to ${tab.name}`,
+        hint: `Ctrl+${i + 1}`,
         group: "Tabs",
         run: () => { activateTab(i); navigate("/view"); },
       });
@@ -192,60 +192,31 @@ export function CommandPalette() {
     <div
       role="dialog"
       aria-modal="true"
+      aria-label="Command palette"
       onClick={() => setOpen(false)}
-      style={{
-        position: "fixed", inset: 0, zIndex: 9500,
-        background: "rgba(0,0,0,0.4)",
-        display: "flex", alignItems: "flex-start", justifyContent: "center",
-        paddingTop: "12vh",
-      }}
+      className="palette-overlay"
     >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: "min(640px, 92vw)",
-          background: "var(--bg2)",
-          border: "1px solid var(--line)",
-          borderRadius: 10,
-          boxShadow: "0 24px 64px rgba(0,0,0,0.45)",
-          overflow: "hidden",
-          fontFamily: UI,
-        }}
-      >
-        <input
-          ref={inputRef}
-          value={query}
-          onChange={(e) => { setQuery(e.target.value); setActiveIndex(0); }}
-          onKeyDown={handleInputKey}
-          placeholder="Search commands, tabs, recent files…"
-          style={{
-            width: "100%",
-            padding: "12px 16px",
-            border: "none", outline: "none",
-            background: "transparent",
-            color: "var(--fg0)",
-            fontFamily: UI,
-            fontSize: 14,
-            borderBottom: "1px solid var(--line2)",
-          }}
-        />
-        <div style={{ maxHeight: "60vh", overflowY: "auto", padding: "4px 0" }}>
-          {filtered.length === 0 && (
-            <div style={{
-              padding: "20px 16px",
-              color: "var(--fg2)",
-              fontSize: "var(--fs-body)", textAlign: "center",
-            }}>No matches</div>
-          )}
+      <div onClick={(e) => e.stopPropagation()} className="pop palette">
+        <div className="palette-field">
+          <IcSearch size={16} style={{ color: "var(--fg2)", flexShrink: 0 }} />
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={(e) => { setQuery(e.target.value); setActiveIndex(0); }}
+            onKeyDown={handleInputKey}
+            placeholder="Search commands, tabs and recent files…"
+            aria-label="Search commands"
+            className="palette-input"
+            role="combobox"
+            aria-expanded="true"
+            aria-controls="palette-list"
+          />
+        </div>
+        <div className="palette-list" id="palette-list" role="listbox">
+          {filtered.length === 0 && <div className="palette-empty">Nothing matches that.</div>}
           {[...groups.entries()].map(([group, items]) => (
-            <div key={group}>
-              <div style={{
-                padding: "6px 12px 2px",
-                fontSize: "var(--fs-label)", fontWeight: 600,
-                color: "var(--fg2)",
-                textTransform: "uppercase", letterSpacing: 0.5,
-                fontFamily: UI,
-              }}>{group}</div>
+            <div key={group} className="palette-group">
+              <div className="t-label palette-group-head">{group}</div>
               {items.map((cmd) => {
                 runningIndex++;
                 const idx = runningIndex; // snapshot — closures below must not read the mutating let
@@ -255,24 +226,18 @@ export function CommandPalette() {
                     key={cmd.id}
                     role="option"
                     aria-selected={active}
+                    className="menu-item"
+                    data-highlighted={active ? "" : undefined}
                     onMouseEnter={() => setActiveIndex(idx)}
                     onClick={() => { setOpen(false); cmd.run(); }}
-                    style={{
-                      display: "flex", alignItems: "center",
-                      padding: "8px 14px",
-                      background: active ? "var(--bg3)" : "transparent",
-                      color: "var(--fg0)",
-                      cursor: "pointer",
-                      fontSize: "var(--fs-body)",
-                    }}
                   >
                     <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {cmd.label}
                     </span>
                     {cmd.hint && (
-                      <span style={{ marginLeft: 12, color: "var(--fg2)", fontFamily: UI, fontSize: "var(--fs-label)" }}>
-                        {cmd.hint}
-                      </span>
+                      cmd.group === "Recent files"
+                        ? <span className="palette-path">{cmd.hint}</span>
+                        : <kbd className="kbd">{cmd.hint}</kbd>
                     )}
                   </div>
                 );
@@ -280,15 +245,10 @@ export function CommandPalette() {
             </div>
           ))}
         </div>
-        <div style={{
-          borderTop: "1px solid var(--line2)",
-          padding: "6px 12px",
-          fontSize: "var(--fs-label)", color: "var(--fg2)", fontFamily: UI,
-          display: "flex", gap: 12, justifyContent: "flex-end",
-        }}>
-          <span>↑↓ navigate</span>
-          <span>↵ run</span>
-          <span>esc close</span>
+        <div className="palette-foot">
+          <span><kbd className="kbd">↑</kbd> <kbd className="kbd">↓</kbd> move</span>
+          <span><kbd className="kbd">Enter</kbd> run</span>
+          <span><kbd className="kbd">Esc</kbd> close</span>
         </div>
       </div>
     </div>
