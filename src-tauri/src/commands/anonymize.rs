@@ -36,7 +36,8 @@ fn strip_dict_keys(dict: &mut lopdf::Dictionary, keys: &[&[u8]]) -> usize {
     removed
 }
 
-#[tauri::command]
+// Off the main thread: a full parse and save of a large file froze the window.
+#[tauri::command(async)]
 pub fn anonymize_pdf(
     path: String,
     options: AnonymizeOptions,

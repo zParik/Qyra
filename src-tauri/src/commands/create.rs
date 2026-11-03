@@ -19,7 +19,8 @@ const MAX_W: f32 = 538.583;
 const MAX_H: f32 = 765.354;
 
 /// Convert a list of images (PNG/JPG/WebP) to a PDF.
-#[tauri::command]
+// Off the main thread: a full parse and save of a large file froze the window.
+#[tauri::command(async)]
 pub fn images_to_pdf(
     image_paths: Vec<String>,
     output: Option<String>,

@@ -5,7 +5,8 @@ use crate::error::{AppError, AppResult};
 
 /// Split a PDF at bookmark boundaries. Each top-level outline entry becomes one output file.
 /// Returns the list of output paths.
-#[tauri::command]
+// Off the main thread: a full parse and save of a large file froze the window.
+#[tauri::command(async)]
 pub fn split_pdf_by_bookmarks(path: String, output_dir: Option<String>) -> AppResult<Vec<String>> {
     let _t = crate::utils::timing::Timer::start("split_pdf_by_bookmarks", String::new());
     let doc = Document::load(&path)?;
@@ -151,7 +152,8 @@ pub struct PageRange {
 
 /// Split a PDF by explicit page ranges. Each range produces one output file.
 /// Pages are 1-indexed.
-#[tauri::command]
+// Off the main thread: a full parse and save of a large file froze the window.
+#[tauri::command(async)]
 pub fn split_pdf(
     path: String,
     ranges: Vec<PageRange>,
@@ -198,7 +200,8 @@ pub fn split_pdf(
 /// content in each file: a 100 MB scan split into 300 files of ~100 MB).
 /// The page tree is not flattened, so attributes a page inherits from
 /// intermediate /Pages nodes (MediaBox, Resources, Rotate) are kept.
-#[tauri::command]
+// Off the main thread: a full parse and save of a large file froze the window.
+#[tauri::command(async)]
 pub fn split_pdf_per_page(path: String, output_dir: Option<String>) -> AppResult<Vec<String>> {
     let _t = crate::utils::timing::Timer::start("split_pdf_per_page", String::new());
     let doc = Document::load(&path)?;

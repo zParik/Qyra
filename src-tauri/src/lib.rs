@@ -32,11 +32,13 @@ pub fn run() {
     }
 
     // Tauri's default async runtime starts one worker per logical core (28 on a
-    // desktop CPU), yet commands only await IPC replies and hand heavy work to
-    // spawn_blocking, whose pool is separate and grows on demand. Two workers
-    // are plenty. The runtime must outlive the app, so it is leaked.
+    // desktop CPU), yet most commands only await IPC replies and hand heavy
+    // work to spawn_blocking, whose pool is separate and grows on demand. The
+    // `#[tauri::command(async)]` file operations do run on a worker, so four
+    // leave IPC responsive even with two of them going; idle workers cost
+    // nothing. The runtime must outlive the app, so it is leaked.
     let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
+        .worker_threads(4)
         .thread_name("qyra-async")
         .enable_all()
         .build()

@@ -41,7 +41,8 @@ pub fn show_in_folder(path: String, app_handle: tauri::AppHandle) -> AppResult<(
 }
 
 /// Write raw bytes to a file path. Used by the frontend to save rendered images.
-#[tauri::command]
+// Off the main thread: a full parse and save of a large file froze the window.
+#[tauri::command(async)]
 pub fn write_bytes(path: String, data: Vec<u8>) -> AppResult<()> {
     fs::write(&path, &data)?;
     Ok(())

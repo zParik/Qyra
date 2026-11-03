@@ -261,7 +261,8 @@ pub fn add_page_numbers_core(
 
 /// Remove page-number overlay streams previously added by `add_page_numbers`.
 /// Streams are identified by the `PageNumOverlay` tag written into their dict.
-#[tauri::command]
+// Off the main thread: a full parse and save of a large file froze the window.
+#[tauri::command(async)]
 pub fn remove_page_numbers(
     path: String,
     output: Option<String>,

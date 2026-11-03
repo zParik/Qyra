@@ -3,7 +3,8 @@ use crate::utils::paths::temp_output_path;
 use crate::error::{AppError, AppResult};
 
 /// Remove pages from a PDF. Pages are 1-indexed.
-#[tauri::command]
+// Off the main thread: a full parse and save of a large file froze the window.
+#[tauri::command(async)]
 pub fn remove_pages(
     path: String,
     pages: Vec<u32>,

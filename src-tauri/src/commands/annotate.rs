@@ -455,7 +455,8 @@ fn append_stream_to_page(doc: &mut Document, page_id: ObjectId, stream_id: Objec
     Ok(())
 }
 
-#[tauri::command]
+// Off the main thread: a full parse and save of a large file froze the window.
+#[tauri::command(async)]
 pub fn bake_annotations(
     path: String,
     annotations: Vec<PageAnnotationData>,

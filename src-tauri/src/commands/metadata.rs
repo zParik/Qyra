@@ -61,7 +61,8 @@ pub async fn get_pdf_info(path: String) -> AppResult<PdfInfo> {
     .map_err(|e| AppError::Other(e.to_string()))?
 }
 
-#[tauri::command]
+// Off the main thread: a full parse and save of a large file froze the window.
+#[tauri::command(async)]
 pub fn get_metadata(path: String) -> AppResult<PdfMetadata> {
     let doc = crate::commands::lopdf_cache::load(&path)?;
     let d = doc.as_ref();
@@ -127,7 +128,8 @@ fn algorithm_name(v: i64) -> &'static str {
 
 /// Read the permission flags from /Encrypt /P. Returns defaults (everything
 /// allowed) when the document is not encrypted.
-#[tauri::command]
+// Off the main thread: a full parse and save of a large file froze the window.
+#[tauri::command(async)]
 pub fn get_pdf_permissions(path: String) -> AppResult<PdfPermissions> {
     let doc = crate::commands::lopdf_cache::load(&path)?;
     let Ok(encrypt_ref) = doc.trailer.get(b"Encrypt") else {
@@ -176,7 +178,8 @@ pub fn get_pdf_permissions(path: String) -> AppResult<PdfPermissions> {
     })
 }
 
-#[tauri::command]
+// Off the main thread: a full parse and save of a large file froze the window.
+#[tauri::command(async)]
 pub fn set_metadata(
     path: String,
     metadata: PdfMetadata,

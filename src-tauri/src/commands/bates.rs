@@ -249,7 +249,8 @@ pub fn bates_core(
 }
 
 /// Remove BatesOverlay streams added by `add_bates_numbers`.
-#[tauri::command]
+// Off the main thread: a full parse and save of a large file froze the window.
+#[tauri::command(async)]
 pub fn remove_bates_numbers(path: String, output: Option<String>) -> AppResult<String> {
     let mut doc = Document::load(&path)?;
     let page_ids: Vec<(u32, (u32, u16))> = doc.get_pages().into_iter().collect();
