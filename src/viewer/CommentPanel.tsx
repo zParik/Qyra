@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { Comment, useCommentsStore } from "../store/useCommentsStore";
 
-import { UI, MONO } from "../lib/tokens";
+import { UI } from "../lib/tokens";
 
 interface CommentPanelProps {
   docPath: string;
@@ -51,14 +51,14 @@ function CommentRow({
         {/* Page badge */}
         <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 2 }}>
           <span style={{
-            fontFamily: MONO, fontSize: 10, color: "var(--accent)",
+            fontFamily: UI, fontSize: "var(--fs-label)", color: "var(--accent)",
             background: "var(--accent-soft)", borderRadius: 3,
             padding: "0 4px", lineHeight: "16px",
           }}>
             p.{comment.pageIndex}
           </span>
           {comment.resolved && (
-            <span style={{ fontFamily: UI, fontSize: 10, color: "var(--viewer-text-muted)" }}>
+            <span style={{ fontFamily: UI, fontSize: "var(--fs-label)", color: "var(--viewer-text-muted)" }}>
               resolved
             </span>
           )}
@@ -66,7 +66,7 @@ function CommentRow({
 
         {/* Comment text */}
         <p style={{
-          fontFamily: UI, fontSize: 12, color: "var(--viewer-text)",
+          fontFamily: UI, fontSize: "var(--fs-body)", color: "var(--viewer-text)",
           margin: 0, lineHeight: 1.45,
           overflow: "hidden", display: "-webkit-box",
           WebkitLineClamp: 3, WebkitBoxOrient: "vertical",
@@ -146,7 +146,7 @@ export function CommentPanel({ docPath, onPageSelect, isCommentMode, onToggleMod
           <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
         </svg>
         <p style={{
-          fontFamily: UI, fontSize: 12, color: "var(--viewer-text-muted)",
+          fontFamily: UI, fontSize: "var(--fs-body)", color: "var(--viewer-text-muted)",
           textAlign: "center", margin: 0,
         }}>
           No comments yet.<br />Activate <strong>Comment</strong> mode and click on a page.
@@ -162,7 +162,7 @@ export function CommentPanel({ docPath, onPageSelect, isCommentMode, onToggleMod
               border: "none",
               borderRadius: 6,
               fontFamily: UI,
-              fontSize: 12,
+              fontSize: "var(--fs-body)",
               fontWeight: 600,
               cursor: "pointer",
             }}
@@ -182,7 +182,7 @@ export function CommentPanel({ docPath, onPageSelect, isCommentMode, onToggleMod
         padding: "7px 12px", borderBottom: "1px solid var(--viewer-border-sub)",
         flexShrink: 0,
       }}>
-        <span style={{ fontFamily: UI, fontSize: 11, color: "var(--viewer-text-muted)" }}>
+        <span style={{ fontFamily: UI, fontSize: "var(--fs-label)", color: "var(--viewer-text-muted)" }}>
           {allComments.length} comment{allComments.length !== 1 ? "s" : ""}
         </span>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -191,7 +191,7 @@ export function CommentPanel({ docPath, onPageSelect, isCommentMode, onToggleMod
               onClick={() => setShowResolved((s) => !s)}
               style={{
                 background: "none", border: "none", cursor: "pointer",
-                fontFamily: UI, fontSize: 11,
+                fontFamily: UI, fontSize: "var(--fs-label)",
                 color: showResolved ? "var(--accent)" : "var(--viewer-text-muted)",
               }}
             >
@@ -209,7 +209,7 @@ export function CommentPanel({ docPath, onPageSelect, isCommentMode, onToggleMod
                 padding: "3px 8px",
                 borderRadius: 4,
                 fontFamily: UI,
-                fontSize: 11,
+                fontSize: "var(--fs-label)",
                 fontWeight: 500,
                 cursor: "pointer",
               }}
@@ -224,7 +224,7 @@ export function CommentPanel({ docPath, onPageSelect, isCommentMode, onToggleMod
       <div style={{ flex: 1, overflowY: "auto" }}>
         {visible.length === 0 ? (
           <p style={{
-            fontFamily: UI, fontSize: 12, color: "var(--viewer-text-muted)",
+            fontFamily: UI, fontSize: "var(--fs-body)", color: "var(--viewer-text-muted)",
             textAlign: "center", padding: "20px 12px", margin: 0,
           }}>
             All comments are resolved.

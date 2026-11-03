@@ -15,7 +15,7 @@ export function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
         <p style={{ margin: "0 0 6px", fontSize: 15, fontWeight: 600, color: "var(--fg0)" }}>
           Something went wrong
         </p>
-        <p style={{ margin: 0, fontSize: 12, color: "var(--fg2)", fontFamily: "'JetBrains Mono', ui-monospace, monospace", wordBreak: "break-all" }}>
+        <p style={{ margin: 0, fontSize: "var(--fs-body)", color: "var(--fg2)", wordBreak: "break-all" }}>
           {(error instanceof Error ? error.message : null) ?? "Unknown error"}
         </p>
       </div>
@@ -44,7 +44,7 @@ export function ViewerErrorFallback({ error, resetErrorBoundary }: FallbackProps
         <p style={{ margin: "0 0 6px", fontSize: 14, fontWeight: 600 }}>
           Failed to load document
         </p>
-        <p style={{ margin: 0, fontSize: 11.5, color: "var(--viewer-text-sec)", fontFamily: "'JetBrains Mono', ui-monospace, monospace", wordBreak: "break-all" }}>
+        <p style={{ margin: 0, fontSize: "var(--fs-label)", color: "var(--viewer-text-sec)", wordBreak: "break-all" }}>
           {(error instanceof Error ? error.message : null) ?? "Unknown error"}
         </p>
       </div>

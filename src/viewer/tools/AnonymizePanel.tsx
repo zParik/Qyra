@@ -131,7 +131,7 @@ export function AnonymizePanel({ file, onApplied }: Props) {
             borderRadius: 6,
             padding: "8px 10px",
             color: "var(--v-ok-text)",
-            fontSize: 11.5,
+            fontSize: "var(--fs-label)",
             lineHeight: 1.55,
           }}
         >

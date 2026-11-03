@@ -91,11 +91,11 @@ export function LinksPanel({ file, onApplied, currentPage }: Props) {
           display: "flex", flexDirection: "column", gap: 6,
         }}
       >
-        <div style={{ fontSize: 11, fontWeight: 600, color: "var(--viewer-text-sec)" }}>
+        <div style={{ fontSize: "var(--fs-label)", fontWeight: 600, color: "var(--viewer-text-sec)" }}>
           New link
         </div>
 
-        <div style={{ display: "flex", gap: 6, fontSize: 11 }}>
+        <div style={{ display: "flex", gap: 6, fontSize: "var(--fs-label)" }}>
           <label style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
             <input type="radio" checked={target === "uri"} onChange={() => setTarget("uri")} />
             URL
@@ -131,13 +131,13 @@ export function LinksPanel({ file, onApplied, currentPage }: Props) {
         </div>
       </div>
 
-      <div style={{ marginTop: 12, fontSize: 11, fontWeight: 600, color: "var(--viewer-text-sec)" }}>
+      <div style={{ marginTop: 12, fontSize: "var(--fs-label)", fontWeight: 600, color: "var(--viewer-text-sec)" }}>
         Existing links on this page
       </div>
       {loading ? (
-        <div style={{ fontSize: 11, color: "var(--viewer-text-muted)" }}>Loading…</div>
+        <div style={{ fontSize: "var(--fs-label)", color: "var(--viewer-text-muted)" }}>Loading…</div>
       ) : links.length === 0 ? (
-        <div style={{ fontSize: 11, color: "var(--viewer-text-muted)" }}>None</div>
+        <div style={{ fontSize: "var(--fs-label)", color: "var(--viewer-text-muted)" }}>None</div>
       ) : (
         <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 4 }}>
           {links.map((link, idx) => (
@@ -148,7 +148,7 @@ export function LinksPanel({ file, onApplied, currentPage }: Props) {
                 padding: "4px 8px",
                 border: "1px solid var(--viewer-border)",
                 borderRadius: 4,
-                fontSize: 11,
+                fontSize: "var(--fs-label)",
               }}
             >
               <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--viewer-text)" }}>
@@ -162,7 +162,7 @@ export function LinksPanel({ file, onApplied, currentPage }: Props) {
                   background: "transparent",
                   color: "var(--v-bad-text)",
                   border: "1px solid var(--v-bad-border)",
-                  borderRadius: 4, fontSize: 10.5,
+                  borderRadius: 4, fontSize: "var(--fs-label)",
                   cursor: isProcessing ? "not-allowed" : "pointer",
                 }}
               >
@@ -182,13 +182,13 @@ const inputStyle: React.CSSProperties = {
   color: "var(--viewer-text)",
   border: "1px solid var(--viewer-border)",
   borderRadius: 4,
-  fontSize: 11.5,
+  fontSize: "var(--fs-label)",
 };
 
 function NumField({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      <span style={{ fontSize: 10, color: "var(--viewer-text-muted)" }}>{label}</span>
+      <span style={{ fontSize: "var(--fs-label)", color: "var(--viewer-text-muted)" }}>{label}</span>
       <input
         type="number"
         step={0.01}

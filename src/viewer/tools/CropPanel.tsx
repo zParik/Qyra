@@ -117,7 +117,7 @@ export function CropPanel({ file, onApplied }: Props) {
     width: "100%",
     borderRadius: 6,
     padding: "5px 8px",
-    fontSize: 12,
+    fontSize: "var(--fs-body)",
     background: "var(--viewer-bg)",
     border: "1px solid var(--viewer-border)",
     color: "var(--viewer-text)",
@@ -160,7 +160,7 @@ export function CropPanel({ file, onApplied }: Props) {
               width: "100%",
               borderRadius: 6,
               padding: "5px 10px",
-              fontSize: 12,
+              fontSize: "var(--fs-body)",
               background: "var(--viewer-bg)",
               border: "1px solid var(--viewer-border)",
               color: "var(--viewer-text)",
@@ -290,7 +290,7 @@ export function CropPanel({ file, onApplied }: Props) {
               onClick={() => setSelectedPreset(i)}
               style={{
                 padding: "7px 12px",
-                fontSize: 12,
+                fontSize: "var(--fs-body)",
                 textAlign: "left",
                 borderRadius: 7,
                 border: "1px solid",

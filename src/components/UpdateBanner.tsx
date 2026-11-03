@@ -18,7 +18,7 @@ export function UpdateBanner({ state, onInstall, onRestart, onDismiss }: UpdateB
         background: "var(--bg1)", border: "1px solid var(--line)",
         boxShadow: "0 4px 16px rgba(0,0,0,0.2)",
         display: "flex", alignItems: "center", gap: 10,
-        fontFamily: "'Inter', system-ui, sans-serif", fontSize: 12,
+        fontSize: "var(--fs-body)",
         color: "var(--fg2)",
       }}>
         <span>Update check failed</span>
@@ -46,7 +46,7 @@ export function UpdateBanner({ state, onInstall, onRestart, onDismiss }: UpdateB
             width: 8, height: 8, borderRadius: "50%",
             background: "var(--accent)", flexShrink: 0, display: "inline-block",
           }} />
-          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--fg0)", fontFamily: "'Inter', system-ui, sans-serif" }}>
+          <span style={{ fontSize: "var(--fs-body)", fontWeight: 600, color: "var(--fg0)", }}>
             {state.status === "available" && "Update available"}
             {state.status === "downloading" && "Downloading update…"}
             {state.status === "ready" && "Ready to install"}
@@ -74,9 +74,8 @@ export function UpdateBanner({ state, onInstall, onRestart, onDismiss }: UpdateB
       {/* Version info */}
       {state.status === "available" && (
         <p style={{
-          margin: 0, fontSize: 11.5, color: "var(--fg2)",
-          fontFamily: "'JetBrains Mono', ui-monospace, monospace",
-        }}>
+          margin: 0, fontSize: "var(--fs-label)", color: "var(--fg2)",
+          }}>
           v{state.update.version}
         </p>
       )}
@@ -92,7 +91,7 @@ export function UpdateBanner({ state, onInstall, onRestart, onDismiss }: UpdateB
               transition: "width 200ms ease",
             }} />
           </div>
-          <span style={{ fontSize: 10.5, color: "var(--fg2)", fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}>
+          <span style={{ fontSize: "var(--fs-label)", color: "var(--fg2)", }}>
             {state.progress}%
           </span>
         </div>

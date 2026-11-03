@@ -1,5 +1,5 @@
 import { Dialog } from "./ui/Dialog";
-import { UI, MONO } from "../lib/tokens";
+import { UI } from "../lib/tokens";
 
 interface Shortcut {
   keys: string;
@@ -78,7 +78,7 @@ export function ShortcutsModal({ open, onOpenChange }: {
           gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
           gap: 20,
           fontFamily: UI,
-          fontSize: 12,
+          fontSize: "var(--fs-body)",
           color: "var(--fg1, #cdd6f4)",
           minWidth: 560,
         }}
@@ -88,7 +88,7 @@ export function ShortcutsModal({ open, onOpenChange }: {
             <h3
               style={{
                 margin: "0 0 8px",
-                fontSize: 11,
+                fontSize: "var(--fs-label)",
                 fontWeight: 600,
                 textTransform: "uppercase",
                 letterSpacing: 0.5,
@@ -104,8 +104,8 @@ export function ShortcutsModal({ open, onOpenChange }: {
                     <td
                       style={{
                         padding: "4px 8px 4px 0",
-                        fontFamily: MONO,
-                        fontSize: 11,
+                        fontFamily: UI,
+                        fontSize: "var(--fs-label)",
                         color: "var(--fg0, #cdd6f4)",
                         whiteSpace: "nowrap",
                         verticalAlign: "top",

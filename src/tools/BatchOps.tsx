@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { ToolLayout } from "../components/ToolLayout";
 import { pickDirectory } from "../lib/tauri";
-import { UI, MONO } from "../lib/tokens";
+import { UI } from "../lib/tokens";
 
 type Op =
   | "compress"
@@ -155,7 +155,7 @@ export default function BatchOps() {
   const failed = rows.filter((r) => r.status === "error").length;
 
   return (
-    <ToolLayout title="Batch operations" description="Apply one operation to many PDFs">
+    <ToolLayout title="Batch operations" description="Apply one operation to many PDFs at once." family="compress">
       <section style={{ display: "flex", flexDirection: "column", gap: 14, fontFamily: UI }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button onClick={pickFiles} disabled={running} className="btn-secondary">Add PDFs…</button>
@@ -176,13 +176,13 @@ export default function BatchOps() {
         </div>
 
         {destDir && (
-          <div style={{ fontFamily: MONO, fontSize: 11, color: "var(--fg2)" }}>
+          <div style={{ fontFamily: UI, fontSize: "var(--fs-label)", color: "var(--fg2)" }}>
             Output → {destDir}
           </div>
         )}
 
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <label style={{ fontSize: 11, color: "var(--fg2)" }}>Operation</label>
+          <label style={{ fontSize: "var(--fs-label)", color: "var(--fg2)" }}>Operation</label>
           <select
             value={op}
             onChange={(e) => setOp(e.target.value as Op)}
@@ -193,12 +193,12 @@ export default function BatchOps() {
               border: "1px solid var(--line)",
               borderRadius: 6,
               color: "var(--fg0)",
-              fontSize: 13,
+              fontSize: "var(--fs-body)",
             }}
           >
             {OPS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
           </select>
-          <p style={{ margin: "2px 0 0", fontSize: 11.5, color: "var(--fg2)" }}>
+          <p style={{ margin: "2px 0 0", fontSize: "var(--fs-label)", color: "var(--fg2)" }}>
             {OPS.find((o) => o.id === op)?.desc}
           </p>
         </div>
@@ -209,7 +209,7 @@ export default function BatchOps() {
               padding: "32px 16px",
               border: "1px dashed var(--line)",
               borderRadius: 8,
-              fontSize: 12.5, color: "var(--fg2)", textAlign: "center",
+              fontSize: "var(--fs-body)", color: "var(--fg2)", textAlign: "center",
               background: "var(--bg1)",
             }}
           >
@@ -229,14 +229,14 @@ export default function BatchOps() {
                   border: "1px solid var(--line)",
                   borderRadius: 6,
                   background: "var(--bg1)",
-                  fontSize: 12.5,
+                  fontSize: "var(--fs-body)",
                 }}
               >
                 <StatusDot status={row.status} />
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {row.name}
                 </span>
-                <span style={{ fontFamily: MONO, fontSize: 10.5, color: "var(--fg2)" }}>
+                <span style={{ fontFamily: UI, fontSize: "var(--fs-label)", color: "var(--fg2)" }}>
                   {row.status === "error" ? row.message : row.status === "done" ? "OK" : row.status}
                 </span>
                 <button
@@ -258,7 +258,7 @@ export default function BatchOps() {
         )}
 
         {rows.length > 0 && (
-          <div style={{ fontSize: 11.5, color: "var(--fg2)", fontFamily: MONO }}>
+          <div style={{ fontSize: "var(--fs-label)", color: "var(--fg2)", fontFamily: UI }}>
             {done} done · {failed} failed · {rows.length - done - failed} pending
           </div>
         )}

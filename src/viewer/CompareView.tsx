@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { MONO } from "../lib/tokens";
 import { FitPage } from "./FitPage";
+import { UI } from "../lib/tokens";
 
 interface Props {
   pathA: string;
@@ -70,8 +70,8 @@ export function CompareView({ pathA, pathB, onClose }: Props) {
           padding: "10px 16px",
           borderBottom: "1px solid rgba(255,255,255,0.08)",
           color: "rgba(255,255,255,0.85)",
-          fontFamily: MONO,
-          fontSize: 12,
+          fontFamily: UI,
+          fontSize: "var(--fs-body)",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -114,8 +114,8 @@ function btnStyle(disabled: boolean): React.CSSProperties {
     color: "rgba(255,255,255,0.85)",
     padding: "3px 10px",
     borderRadius: 4,
-    fontFamily: MONO,
-    fontSize: 12,
+    fontFamily: UI,
+    fontSize: "var(--fs-body)",
     cursor: disabled ? "default" : "pointer",
     opacity: disabled ? 0.35 : 1,
   };
@@ -141,8 +141,8 @@ function Pane({ label, path, page, overflow }: {
       <div
         style={{
           padding: "6px 12px",
-          fontFamily: MONO,
-          fontSize: 11,
+          fontFamily: UI,
+          fontSize: "var(--fs-label)",
           color: "rgba(255,255,255,0.6)",
           borderBottom: "1px solid rgba(255,255,255,0.05)",
           position: "sticky",
@@ -163,7 +163,7 @@ function Pane({ label, path, page, overflow }: {
         }}
       >
         {overflow ? (
-          <span style={{ color: "rgba(255,255,255,0.35)", fontFamily: MONO, fontSize: 12 }}>
+          <span style={{ color: "rgba(255,255,255,0.35)", fontFamily: UI, fontSize: "var(--fs-body)" }}>
             (no page at this index)
           </span>
         ) : (

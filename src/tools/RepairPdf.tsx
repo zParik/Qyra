@@ -2,7 +2,7 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { ToolLayout } from "../components/ToolLayout";
-import { UI, MONO } from "../lib/tokens";
+import { UI } from "../lib/tokens";
 
 interface RepairReport {
   output: string;
@@ -56,7 +56,7 @@ export default function RepairPdf() {
   }
 
   return (
-    <ToolLayout title="Repair PDF" description="Try to recover a malformed or unreadable PDF">
+    <ToolLayout title="Repair PDF" description="Try to recover a damaged or unreadable file." family="pages">
       <section style={{ display: "flex", flexDirection: "column", gap: 12, fontFamily: UI }}>
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={pick} className="btn-secondary" disabled={running}>
@@ -73,7 +73,7 @@ export default function RepairPdf() {
         </div>
 
         {path && (
-          <div style={{ fontFamily: MONO, fontSize: 11, color: "var(--fg2)", wordBreak: "break-all" }}>
+          <div style={{ fontFamily: UI, fontSize: "var(--fs-label)", color: "var(--fg2)", wordBreak: "break-all" }}>
             Input → {path}
           </div>
         )}
@@ -87,8 +87,8 @@ export default function RepairPdf() {
           }}
           disabled={running}
         >
-          <legend style={{ padding: "0 6px", fontSize: 11, color: "var(--fg2)" }}>Fallback</legend>
-          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
+          <legend style={{ padding: "0 6px", fontSize: "var(--fs-label)", color: "var(--fg2)" }}>Fallback</legend>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "var(--fs-body)" }}>
             <input
               type="checkbox"
               checked={allowRasterize}
@@ -102,7 +102,7 @@ export default function RepairPdf() {
             </span>
           </label>
           {allowRasterize && (
-            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "var(--fs-body)" }}>
               <span>DPI</span>
               <input
                 type="number"
@@ -116,7 +116,7 @@ export default function RepairPdf() {
                   border: "1px solid var(--line)",
                   borderRadius: 4,
                   color: "var(--fg0)",
-                  fontSize: 12,
+                  fontSize: "var(--fs-body)",
                 }}
               />
             </label>
@@ -131,7 +131,7 @@ export default function RepairPdf() {
               background: "var(--bad-bg)",
               color: "var(--bad-text)",
               borderRadius: 6,
-              fontSize: 12.5,
+              fontSize: "var(--fs-body)",
             }}
           >
             {err}
@@ -147,12 +147,12 @@ export default function RepairPdf() {
               color: "var(--ok-text)",
               borderRadius: 6,
               display: "flex", flexDirection: "column", gap: 4,
-              fontSize: 12.5,
+              fontSize: "var(--fs-body)",
             }}
           >
             <strong>Repair succeeded — {report.mode} mode</strong>
-            <span style={{ fontFamily: MONO, fontSize: 11 }}>{report.output}</span>
-            <span style={{ fontSize: 11.5 }}>
+            <span style={{ fontFamily: UI, fontSize: "var(--fs-label)" }}>{report.output}</span>
+            <span style={{ fontSize: "var(--fs-label)" }}>
               {report.pageCount} pages · {formatBytes(report.bytesBefore)} → {formatBytes(report.bytesAfter)}
             </span>
           </div>

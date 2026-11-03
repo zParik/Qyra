@@ -6,7 +6,7 @@ import { imagesToPdf } from "../lib/tauri";
 import { open } from "@tauri-apps/plugin-dialog";
 import { isAndroid, pickFilesAndroid } from "../lib/androidFileUtils";
 
-import { UI, MONO } from "../lib/tokens";
+import { UI } from "../lib/tokens";
 
 const SWATCHES = ["#c87a52","#5e7a8a","#7a5e8a","#5e8a7a","#8a7a5e","#5e7a5e"];
 function imgSwatch(name: string): string {
@@ -50,7 +50,7 @@ export default function ImagesToPdf() {
   }
 
   return (
-    <ToolLayout title="Images → PDF" description="Bundle PNG, JPG, or WebP images into a PDF">
+    <ToolLayout title="Images to PDF" description="Bundle JPG, PNG, HEIC or WebP images into one paginated PDF." family="export">
       {/* Drop zone */}
       <div
         onClick={handleBrowse}
@@ -78,10 +78,10 @@ export default function ImagesToPdf() {
           <path d="M3 11l3-3 3 3 2-2 2 2" />
         </svg>
         <div>
-          <p style={{ fontFamily: UI, fontSize: 13, fontWeight: 500, color: "var(--fg0)", margin: 0 }}>
+          <p style={{ fontFamily: UI, fontSize: "var(--fs-body)", fontWeight: 500, color: "var(--fg0)", margin: 0 }}>
             Drop images here or click to browse
           </p>
-          <p style={{ fontFamily: MONO, fontSize: 10.5, color: "var(--fg2)", margin: "4px 0 0" }}>
+          <p style={{ fontFamily: UI, fontSize: "var(--fs-label)", color: "var(--fg2)", margin: "4px 0 0" }}>
             JPG · PNG · WebP supported
           </p>
         </div>
@@ -90,14 +90,14 @@ export default function ImagesToPdf() {
       {files.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span style={{ fontFamily: MONO, fontSize: 10.5, color: "var(--fg1)" }}>
+            <span style={{ fontFamily: UI, fontSize: "var(--fs-label)", color: "var(--fg1)" }}>
               {files.length} image{files.length !== 1 ? "s" : ""} queued
             </span>
             <button
               onClick={clearFiles}
               style={{
                 background: "transparent", border: "none",
-                fontFamily: MONO, fontSize: 10.5, color: "var(--fg2)", cursor: "pointer", padding: 0,
+                fontFamily: UI, fontSize: "var(--fs-label)", color: "var(--fg2)", cursor: "pointer", padding: 0,
               }}
               onMouseEnter={(e) => (e.currentTarget.style.color = "var(--danger)")}
               onMouseLeave={(e) => (e.currentTarget.style.color = "var(--fg2)")}
@@ -120,13 +120,13 @@ export default function ImagesToPdf() {
                 }} />
                 <div style={{
                   position: "absolute", top: 5, left: 6,
-                  fontFamily: MONO, fontSize: 8.5, color: "rgba(255,255,255,0.85)",
+                  fontFamily: UI, fontSize: "var(--fs-label)", color: "rgba(255,255,255,0.85)",
                 }}>
                   {String(i + 1).padStart(3, "0")}
                 </div>
                 <div style={{
                   position: "absolute", bottom: 5, left: 6, right: 24,
-                  fontFamily: UI, fontSize: 9.5, color: "rgba(255,255,255,0.8)",
+                  fontFamily: UI, fontSize: "var(--fs-label)", color: "rgba(255,255,255,0.8)",
                   overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                 }}>
                   {file.name}
@@ -156,7 +156,7 @@ export default function ImagesToPdf() {
                 border: "1px dashed var(--line)", borderRadius: 4, color: "var(--fg2)",
                 cursor: "pointer", display: "flex", flexDirection: "column",
                 alignItems: "center", justifyContent: "center", gap: 4,
-                fontFamily: UI, fontSize: 11,
+                fontFamily: UI, fontSize: "var(--fs-label)",
               }}
               onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--fg2)")}
               onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--line)")}
@@ -176,7 +176,7 @@ export default function ImagesToPdf() {
               background: isProcessing ? "var(--action-dim)" : "var(--accent)",
               color: "var(--accent-text)",
               border: "none", borderRadius: 4, padding: "0 16px", height: 32,
-              fontFamily: UI, fontSize: 13, fontWeight: 600,
+              fontFamily: UI, fontSize: "var(--fs-body)", fontWeight: 600,
               cursor: isProcessing ? "not-allowed" : "pointer",
               width: "100%", transition: "background 120ms",
             }}

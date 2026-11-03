@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "../store/useAppStore";
 import { useTheme } from "../lib/useTheme";
-import { UI, MONO } from "../lib/tokens";
+import { UI } from "../lib/tokens";
 import type { RecentFile } from "../lib/schemas";
 import { RecentFileSchema } from "../lib/schemas";
 
@@ -234,17 +234,17 @@ export function CommandPalette() {
             <div style={{
               padding: "20px 16px",
               color: "var(--fg2)",
-              fontSize: 13, textAlign: "center",
+              fontSize: "var(--fs-body)", textAlign: "center",
             }}>No matches</div>
           )}
           {[...groups.entries()].map(([group, items]) => (
             <div key={group}>
               <div style={{
                 padding: "6px 12px 2px",
-                fontSize: 10.5, fontWeight: 600,
+                fontSize: "var(--fs-label)", fontWeight: 600,
                 color: "var(--fg2)",
                 textTransform: "uppercase", letterSpacing: 0.5,
-                fontFamily: MONO,
+                fontFamily: UI,
               }}>{group}</div>
               {items.map((cmd) => {
                 runningIndex++;
@@ -263,14 +263,14 @@ export function CommandPalette() {
                       background: active ? "var(--bg3)" : "transparent",
                       color: "var(--fg0)",
                       cursor: "pointer",
-                      fontSize: 13,
+                      fontSize: "var(--fs-body)",
                     }}
                   >
                     <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {cmd.label}
                     </span>
                     {cmd.hint && (
-                      <span style={{ marginLeft: 12, color: "var(--fg2)", fontFamily: MONO, fontSize: 11 }}>
+                      <span style={{ marginLeft: 12, color: "var(--fg2)", fontFamily: UI, fontSize: "var(--fs-label)" }}>
                         {cmd.hint}
                       </span>
                     )}
@@ -283,7 +283,7 @@ export function CommandPalette() {
         <div style={{
           borderTop: "1px solid var(--line2)",
           padding: "6px 12px",
-          fontSize: 10.5, color: "var(--fg2)", fontFamily: MONO,
+          fontSize: "var(--fs-label)", color: "var(--fg2)", fontFamily: UI,
           display: "flex", gap: 12, justifyContent: "flex-end",
         }}>
           <span>↑↓ navigate</span>

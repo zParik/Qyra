@@ -85,7 +85,7 @@ export function MetadataPanel({ file, onApplied }: MetadataPanelProps) {
           <div
             style={{
               display: "flex", alignItems: "center", gap: 6,
-              fontSize: 11.5, fontWeight: 600,
+              fontSize: "var(--fs-label)", fontWeight: 600,
               color: "var(--viewer-text-sec)",
               textTransform: "uppercase", letterSpacing: 0.4,
               marginBottom: 8,
@@ -95,7 +95,7 @@ export function MetadataPanel({ file, onApplied }: MetadataPanelProps) {
             <span
               style={{
                 fontWeight: 500,
-                fontSize: 10.5,
+                fontSize: "var(--fs-label)",
                 padding: "1px 6px",
                 borderRadius: 3,
                 background: perms.encrypted ? "var(--v-warn-bg)" : "var(--v-ok-bg)",
@@ -115,7 +115,7 @@ export function MetadataPanel({ file, onApplied }: MetadataPanelProps) {
               display: "grid",
               gridTemplateColumns: "1fr auto",
               gap: "4px 12px",
-              fontSize: 12,
+              fontSize: "var(--fs-body)",
               color: "var(--viewer-text)",
             }}
           >
@@ -132,7 +132,7 @@ export function MetadataPanel({ file, onApplied }: MetadataPanelProps) {
               style={{
                 marginTop: 8,
                 fontFamily: "var(--font-mono, ui-monospace, monospace)",
-                fontSize: 10.5,
+                fontSize: "var(--fs-label)",
                 color: "var(--viewer-text-muted)",
               }}
             >
@@ -152,7 +152,7 @@ function PermRow({ label, allowed }: { label: string; allowed: boolean }) {
       <span
         style={{
           color: allowed ? "var(--v-ok-text)" : "var(--v-bad-text)",
-          fontSize: 11.5,
+          fontSize: "var(--fs-label)",
           fontWeight: 500,
           display: "inline-flex", alignItems: "center", gap: 4,
         }}

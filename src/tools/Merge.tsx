@@ -6,8 +6,6 @@ import { useAppStore } from "../store/useAppStore";
 import { usePdfCommand } from "../hooks/usePdfCommand";
 import { mergePdfs, showSaveDialog } from "../lib/tauri";
 
-import { UI, MONO } from "../lib/tokens";
-
 export default function Merge() {
   // Per-field selectors: avoid re-rendering on unrelated store writes (e.g.
   // progress ticks fired by other code paths) — only `files`/`isProcessing` here change.
@@ -32,58 +30,27 @@ export default function Merge() {
   }
 
   return (
-    <ToolLayout title="Merge PDFs" description="Combine multiple PDF files into one">
-      <DropZone multiple label="Drop PDF files here or click to browse" />
+    <ToolLayout title="Merge PDFs" description="Combine several PDFs into one, in the order you choose." family="pages">
+      <DropZone multiple label="Drop PDF files here, or click to browse" />
 
       {files.length > 0 && (
-        <>
+        <section className="section">
+          <header className="section-head">
+            <h2>Order</h2>
+            <span className="t-meta">{files.length} {files.length === 1 ? "file" : "files"} · drag to reorder</span>
+            <span className="spacer" />
+            <button type="button" onClick={clearFiles} className="btn-ghost btn-sm">Clear all</button>
+          </header>
           <PageGrid files={files} onRemove={removeFile} onReorder={reorderFiles} />
-
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <button
-              onClick={clearFiles}
-              style={{
-                background: "transparent", border: "none",
-                fontFamily: MONO, fontSize: 10.5, color: "var(--fg2)", cursor: "pointer",
-                padding: "4px 0",
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = "var(--danger)")}
-              onMouseLeave={(e) => (e.currentTarget.style.color = "var(--fg2)")}
-            >
-              Clear all
-            </button>
-            <span style={{ fontFamily: MONO, fontSize: 10.5, color: "var(--fg2)" }}>
-              {files.length} file{files.length !== 1 ? "s" : ""} queued
+          <div className="card" style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", padding: "var(--space-3) var(--space-4)" }}>
+            <span style={{ flex: 1, color: "var(--fg1)" }}>
+              {files.length < 2 ? "Add at least two files to merge." : `Merge into one PDF of ${files.length} documents.`}
             </span>
+            <button type="button" disabled={files.length < 2 || isProcessing} onClick={handleMerge} className="btn-primary">
+              Merge {files.length} {files.length === 1 ? "PDF" : "PDFs"}
+            </button>
           </div>
-        </>
-      )}
-
-      {files.length > 0 && (
-        <div style={{
-          padding: 16, background: "var(--bg1)",
-          border: "1px solid var(--line)", borderRadius: 6,
-          display: "flex", flexDirection: "column", gap: 10,
-        }}>
-          <button
-            disabled={files.length < 2 || isProcessing}
-            onClick={handleMerge}
-            style={{
-              background: files.length < 2 || isProcessing ? "var(--action-dim)" : "var(--accent)",
-              color: "var(--accent-text)",
-              border: "none", borderRadius: 4, padding: "0 16px", height: 32,
-              fontFamily: UI, fontSize: 13, fontWeight: 600, cursor: files.length < 2 || isProcessing ? "not-allowed" : "pointer",
-              width: "100%", transition: "background 120ms",
-            }}
-          >
-            Merge {files.length} PDF{files.length !== 1 ? "s" : ""}
-          </button>
-          {files.length < 2 && (
-            <p style={{ fontFamily: MONO, fontSize: 10.5, color: "var(--fg2)", textAlign: "center", margin: 0 }}>
-              Add at least 2 files to merge
-            </p>
-          )}
-        </div>
+        </section>
       )}
     </ToolLayout>
   );

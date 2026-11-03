@@ -2,8 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getPdfInfo } from "../lib/tauri";
 import { useAppStore } from "../store/useAppStore";
-import { isAndroid, pickFilesAndroid } from "../lib/androidFileUtils";
-import { useIsPhone } from "../hooks/useMediaQuery";
+import { IcUpload } from "./Icons";
 
 interface DropZoneProps {
   accept?: string[];
@@ -11,6 +10,7 @@ interface DropZoneProps {
   label?: string;
 }
 
+/** A smaller counter for the tool pages: drop files here, or click to browse. */
 export function DropZone({ accept = [".pdf"], multiple = true, label }: DropZoneProps) {
   // Action selectors are stable references, so this component never re-renders
   // from store writes (a bare useAppStore() would re-render on every write).
@@ -18,7 +18,6 @@ export function DropZone({ accept = [".pdf"], multiple = true, label }: DropZone
   const setError = useAppStore((s) => s.setError);
   const [dragging, setDragging] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  const isPhone = useIsPhone();
 
   async function handlePaths(paths: string[]) {
     for (const path of paths) {
@@ -34,15 +33,6 @@ export function DropZone({ accept = [".pdf"], multiple = true, label }: DropZone
 
   const handleBrowse = useCallback(async () => {
     try {
-      if (isAndroid()) {
-        const mimeAccept = accept.includes(".pdf")
-          ? "application/pdf,.pdf"
-          : "image/png,image/jpeg,image/webp,.heic";
-        const picked = await pickFilesAndroid(mimeAccept, multiple);
-        if (!picked.length) return;
-        await handlePaths(picked.map((f) => f.path));
-        return;
-      }
       const selected = await open({
         multiple,
         filters: accept.includes(".pdf")
@@ -96,67 +86,26 @@ export function DropZone({ accept = [".pdf"], multiple = true, label }: DropZone
     return () => { unlisten?.(); };
   }, [accept, multiple]);
 
+  const kinds = accept.includes(".pdf") ? (multiple ? "PDF files" : "a PDF") : (multiple ? "images" : "an image");
+  const text = label ?? `Drop ${kinds} here, or click to browse`;
+
   return (
     <div
       ref={containerRef}
       role="button"
       tabIndex={0}
-      aria-label={label ?? `Drop ${accept.join(", ")} files here or click to browse`}
+      aria-label={text}
+      className="dropzone"
+      data-drag={dragging ? "true" : undefined}
       onClick={handleBrowse}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleBrowse(); } }}
       onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
       onDragLeave={() => setDragging(false)}
       onDrop={handleDrop}
-      style={{
-        position: "relative", borderRadius: 6,
-        border: `1px ${dragging ? "solid" : "dashed"} ${dragging ? "var(--accent)" : "var(--line)"}`,
-        background: dragging ? "var(--accent-soft)" : "var(--bg1)",
-        padding: isPhone ? "40px 20px" : "32px 24px",
-        minHeight: isPhone ? 180 : undefined,
-        textAlign: "center", cursor: "pointer",
-        transition: "all 120ms ease",
-        overflow: "hidden",
-        WebkitTapHighlightColor: "transparent",
-      }}
-      onMouseEnter={(e) => {
-        if (!dragging) (e.currentTarget as HTMLDivElement).style.borderColor = "var(--fg2)";
-      }}
-      onMouseLeave={(e) => {
-        if (!dragging) (e.currentTarget as HTMLDivElement).style.borderColor = "var(--line)";
-      }}
     >
-      {/* Subtle stripe */}
-      <div style={{
-        position: "absolute", inset: 0, pointerEvents: "none",
-        opacity: dragging ? 0.12 : 0.03,
-        background: "repeating-linear-gradient(45deg, transparent 0 11px, var(--fg1) 11px 12px)",
-        transition: "opacity 120ms",
-      }} />
-
-      <div style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: isPhone ? 14 : 10 }}>
-        <svg width={isPhone ? 44 : 32} height={isPhone ? 44 : 32} fill="none" stroke="currentColor" strokeWidth={1.5}
-          strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"
-          aria-hidden="true"
-          style={{ color: dragging ? "var(--accent)" : "var(--fg2)" }}>
-          <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-        </svg>
-        <div>
-          <p style={{
-            fontFamily: "'Inter', system-ui, sans-serif",
-            fontSize: isPhone ? 15 : 13, fontWeight: 500, color: "var(--fg0)", margin: 0,
-          }}>
-            {isPhone
-              ? (label?.replace(/^Drop\s/, "Tap to add ").replace(/here or click to browse$/i, "").trim() || `Tap to add ${accept.join(", ")}`)
-              : (label ?? `Drop ${accept.join(", ")} files here or click to browse`)}
-          </p>
-          <p style={{
-            fontFamily: "'JetBrains Mono', ui-monospace, monospace",
-            fontSize: isPhone ? 12 : 10.5, color: "var(--fg2)", margin: "4px 0 0",
-          }}>
-            Files never leave your device
-          </p>
-        </div>
-      </div>
+      <span className="dropzone-icon" aria-hidden="true"><IcUpload size={20} /></span>
+      <span className="dropzone-text">{dragging ? "Let go to add" : text}</span>
+      <span className="t-meta">Files never leave this computer</span>
     </div>
   );
 }

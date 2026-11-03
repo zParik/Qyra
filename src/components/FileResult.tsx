@@ -1,8 +1,6 @@
 import { useNavigate } from "react-router-dom";
-import { openFile as openFilePath, showInFolder, exportFile } from "../lib/tauri";
-import { isAndroid } from "../lib/androidFileUtils";
-
-import { UI, MONO } from "../lib/tokens";
+import { openFile as openFilePath, showInFolder } from "../lib/tauri";
+import { IcCheck, IcFile } from "./Icons";
 
 interface FileResultProps {
   result?: string | null;
@@ -11,6 +9,12 @@ interface FileResultProps {
   onDoMore?: () => void;
 }
 
+function splitPath(path: string): { name: string; dir: string } {
+  const i = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return i === -1 ? { name: path, dir: "" } : { name: path.slice(i + 1), dir: path.slice(0, i) };
+}
+
+/** The finished sheet: what was written, where, and what to do next. */
 export function FileResult({ result, resultFiles = [], message, onDoMore }: FileResultProps) {
   const navigate = useNavigate();
   const allFiles = result ? [result, ...resultFiles] : resultFiles;
@@ -23,67 +27,43 @@ export function FileResult({ result, resultFiles = [], message, onDoMore }: File
     try { await showInFolder(path); } catch { /* ignore */ }
   }
 
+  const isMac = /mac/i.test(navigator.platform);
+
   return (
-    <div style={{
-      borderRadius: 6, border: "1px solid var(--ok-border)",
-      background: "var(--ok-bg)", padding: "12px 14px",
-      display: "flex", flexDirection: "column", gap: 10,
-    }}>
-      {/* Success header */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <svg width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.5}
-          strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"
-          style={{ color: "var(--ok-text)", flexShrink: 0 }}>
-          <path d="M5 13l4 4L19 7" />
-        </svg>
-        <span style={{ fontFamily: UI, fontSize: 12, fontWeight: 600, color: "var(--ok-text)" }}>
-          {message ?? (allFiles.length > 1 ? `Done — ${allFiles.length} files saved` : "Done")}
+    <section className="result" role="status" aria-live="polite">
+      <div className="result-head">
+        <span className="result-check" aria-hidden="true"><IcCheck size={14} /></span>
+        <span className="result-title">
+          {message ?? (allFiles.length > 1 ? `Done. ${allFiles.length} files saved.` : "Done. File saved.")}
         </span>
       </div>
 
-      {/* File paths */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-        {allFiles.slice(0, 5).map((path) => (
-          <p key={path} style={{
-            fontFamily: MONO, fontSize: 10.5, color: "var(--fg2)",
-            margin: 0, wordBreak: "break-all", lineHeight: 1.4,
-          }} title={path}>{path}</p>
-        ))}
-        {allFiles.length > 5 && (
-          <p style={{ fontFamily: MONO, fontSize: 10.5, color: "var(--fg3)", margin: 0 }}>
-            + {allFiles.length - 5} more
-          </p>
-        )}
-      </div>
+      <ul className="result-list">
+        {allFiles.slice(0, 5).map((path) => {
+          const { name, dir } = splitPath(path);
+          return (
+            <li key={path} className="result-file" title={path}>
+              <IcFile size={16} style={{ color: "var(--fg2)", flexShrink: 0 }} />
+              <span className="result-name">{name}</span>
+              {dir && <span className="result-dir">{dir}</span>}
+            </li>
+          );
+        })}
+        {allFiles.length > 5 && <li className="t-meta">and {allFiles.length - 5} more</li>}
+      </ul>
 
-      {/* Actions */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {isAndroid() ? (
-          <ActionBtn onClick={() => exportFile(allFiles[0]!).catch(() => {})}>Save</ActionBtn>
-        ) : (
-          <>
-            <ActionBtn onClick={() => openFile(allFiles[0]!)}>Open file</ActionBtn>
-            <ActionBtn onClick={() => openFolder(allFiles[0]!)}>
-              {/mac/i.test(navigator.platform) ? "Reveal in Finder" : "Show in Explorer"}
-            </ActionBtn>
-          </>
-        )}
+      <div className="result-actions">
+        <button type="button" className="btn-secondary" onClick={() => openFile(allFiles[0]!)}>Open file</button>
+        <button type="button" className="btn-secondary" onClick={() => openFolder(allFiles[0]!)}>
+          {isMac ? "Reveal in Finder" : "Show in folder"}
+        </button>
+        <span style={{ flex: 1 }} />
         {onDoMore ? (
-          <ActionBtn primary onClick={onDoMore}>Do more</ActionBtn>
+          <button type="button" className="btn-primary" onClick={onDoMore}>Do more</button>
         ) : (
-          <ActionBtn primary onClick={() => navigate("/")}>Back to Home</ActionBtn>
+          <button type="button" className="btn-primary" onClick={() => navigate("/")}>Back to library</button>
         )}
       </div>
-    </div>
-  );
-}
-
-function ActionBtn({ children, onClick, primary }: {
-  children: React.ReactNode; onClick: () => void; primary?: boolean;
-}) {
-  return (
-    <button onClick={onClick} className={primary ? "btn-primary" : "btn-secondary"}>
-      {children}
-    </button>
+    </section>
   );
 }

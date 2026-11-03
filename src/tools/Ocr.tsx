@@ -9,7 +9,7 @@ import { ocrImage, getOcrWorker } from "../lib/ocrEngine";
 import { renderPageRgba, rgbaToCanvas } from "../render/renderClient";
 import type { OcrPage } from "../lib/tauri";
 
-import { UI, MONO } from "../lib/tokens";
+import { UI } from "../lib/tokens";
 
 type Status = "idle" | "processing" | "done" | "error";
 
@@ -110,7 +110,7 @@ export default function Ocr() {
   }
 
   return (
-    <ToolLayout title="Make Searchable" description="Add OCR text layer to scanned PDFs">
+    <ToolLayout title="Make searchable" description="Add an OCR text layer to a scanned PDF, fully offline." family="export">
       {!file ? (
         <DropZone multiple={false} label="Drop a scanned PDF here or click to browse" />
       ) : (
@@ -126,10 +126,10 @@ export default function Ocr() {
           {/* File header */}
           <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
             <div>
-              <div style={{ fontFamily: UI, fontSize: 13.5, fontWeight: 600, color: "var(--fg0)" }}>
+              <div style={{ fontFamily: UI, fontSize: "var(--fs-body)", fontWeight: 600, color: "var(--fg0)" }}>
                 {file.name}
               </div>
-              <div style={{ fontFamily: MONO, fontSize: 10.5, color: "var(--fg2)", marginTop: 3 }}>
+              <div style={{ fontFamily: UI, fontSize: "var(--fs-label)", color: "var(--fg2)", marginTop: 3 }}>
                 {file.info?.page_count != null ? `${file.info.page_count} pages` : ""}
                 {file.info?.file_size != null ? ` · ${formatBytes(file.info.file_size)}` : ""}
               </div>
@@ -139,7 +139,7 @@ export default function Ocr() {
                 onClick={clearFiles}
                 style={{
                   background: "none", border: "none", cursor: "pointer",
-                  fontFamily: MONO, fontSize: 10.5, color: "var(--fg2)",
+                  fontFamily: UI, fontSize: "var(--fs-label)", color: "var(--fg2)",
                   padding: "2px 6px",
                 }}
               >
@@ -153,10 +153,10 @@ export default function Ocr() {
           {status === "processing" && progress && (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontFamily: UI, fontSize: 12.5, color: "var(--fg1)" }}>
+                <span style={{ fontFamily: UI, fontSize: "var(--fs-body)", color: "var(--fg1)" }}>
                   {progress.stage}
                 </span>
-                <span style={{ fontFamily: MONO, fontSize: 11, color: "var(--fg2)" }}>
+                <span style={{ fontFamily: UI, fontSize: "var(--fs-label)", color: "var(--fg2)" }}>
                   {Math.round(progress.pct)}%
                 </span>
               </div>
@@ -176,7 +176,7 @@ export default function Ocr() {
               </div>
               {progress.total > 0 && progress.page > 0 && (
                 <div style={{
-                  fontFamily: MONO, fontSize: 10, color: "var(--fg3)",
+                  fontFamily: UI, fontSize: "var(--fs-label)", color: "var(--fg3)",
                   textAlign: "right", textTransform: "uppercase", letterSpacing: 0.5,
                 }}>
                   Page {progress.page} / {progress.total}
@@ -192,7 +192,7 @@ export default function Ocr() {
               background: "rgba(239,68,68,0.08)",
               border: "1px solid rgba(239,68,68,0.25)",
               borderRadius: 4,
-              fontFamily: MONO, fontSize: 11, color: "#ef4444",
+              fontFamily: UI, fontSize: "var(--fs-label)", color: "#ef4444",
               lineHeight: 1.5,
             }}>
               {error}
@@ -223,13 +223,13 @@ export default function Ocr() {
                     borderRadius: 4,
                   }}>
                     <div style={{
-                      fontFamily: MONO, fontSize: 9, color: "var(--fg3)",
+                      fontFamily: UI, fontSize: "var(--fs-label)", color: "var(--fg3)",
                       textTransform: "uppercase", letterSpacing: 0.6,
                     }}>
                       {label}
                     </div>
                     <div style={{
-                      fontFamily: MONO, fontSize: 14, fontWeight: 600,
+                      fontFamily: UI, fontSize: 14, fontWeight: 600,
                       color: label === "Status" ? "var(--accent)" : "var(--fg0)",
                       marginTop: 2,
                     }}>

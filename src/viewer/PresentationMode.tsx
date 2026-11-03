@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { UI, MONO } from "../lib/tokens";
+import { UI } from "../lib/tokens";
 import { FitPage } from "./FitPage";
 
 interface Props {
@@ -67,8 +67,8 @@ export function PresentationMode({ path, pageCount, startPage = 1, onClose }: Pr
           left: "50%",
           transform: "translateX(-50%)",
           color: "rgba(255,255,255,0.35)",
-          fontFamily: MONO,
-          fontSize: 12,
+          fontFamily: UI,
+          fontSize: "var(--fs-body)",
           pointerEvents: "none",
           userSelect: "none",
         }}
@@ -131,7 +131,7 @@ export function PresentationMode({ path, pageCount, startPage = 1, onClose }: Pr
           color: "rgba(255,255,255,0.6)",
           padding: "5px 10px",
           cursor: "pointer",
-          fontSize: 12,
+          fontSize: "var(--fs-body)",
           fontFamily: UI,
           display: "flex",
           alignItems: "center",
