@@ -55,5 +55,18 @@ export class TileCache {
   }
 }
 
-/** App-wide tile cache: 256 MB of canvas backing. */
-export const tileCache = new TileCache(256 * 1024 * 1024);
+const MB = 1024 * 1024;
+
+/**
+ * Canvas bytes to keep: about three screens of device pixels (what is on screen
+ * plus the prefetch band, with room to scroll back), within 48–192 MB.
+ */
+export function tileBudget(screenW: number, screenH: number, dpr: number): number {
+  const screen = screenW * dpr * screenH * dpr * 4;
+  return Math.min(192 * MB, Math.max(48 * MB, screen * 3));
+}
+
+/** App-wide tile cache, sized to the screen the app starts on. */
+export const tileCache = new TileCache(
+  tileBudget(window.screen.width, window.screen.height, window.devicePixelRatio || 1),
+);

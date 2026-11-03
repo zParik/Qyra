@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TileCache, tileKey, tileKeyPrefix } from "./tileCache";
+import { TileCache, tileBudget, tileKey, tileKeyPrefix } from "./tileCache";
 
 function canvas(w: number, h: number): HTMLCanvasElement {
   const c = document.createElement("canvas");
@@ -51,5 +51,22 @@ describe("TileCache", () => {
     expect(cache.get("shown")).toBe(shown);
     expect(shown.width).toBe(10);
     shown.remove();
+  });
+});
+
+describe("tileBudget", () => {
+  const MB = 1024 * 1024;
+
+  it("holds about three screens of pixels", () => {
+    // 3440x1440 at 1x is ~20 MB of RGBA per screen.
+    expect(tileBudget(3440, 1440, 1)).toBe(3440 * 1440 * 4 * 3);
+  });
+
+  it("never drops below a floor on small screens", () => {
+    expect(tileBudget(1280, 720, 1)).toBe(48 * MB);
+  });
+
+  it("caps very large HiDPI screens", () => {
+    expect(tileBudget(3840, 2160, 2)).toBe(192 * MB);
   });
 });
