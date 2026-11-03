@@ -177,8 +177,11 @@ pub async fn repair_pdf(
         let (raster_out, page_count) = rasterize_pages(&path, dpi)?;
         let final_out = match output {
             Some(custom) => {
-                std::fs::rename(&raster_out, &custom)
+                // Not fs::rename: the temp dir is often another filesystem
+                // (tmpfs), where rename fails with EXDEV.
+                crate::utils::paths::replace_file_with_copy(raster_out.as_ref(), custom.as_ref(), || {})
                     .map_err(|e| AppError::Other(format!("move output: {}", e)))?;
+                let _ = std::fs::remove_file(&raster_out);
                 custom
             }
             None => raster_out,

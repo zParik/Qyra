@@ -2,6 +2,7 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { ToolLayout } from "../components/ToolLayout";
+import { showSaveDialog } from "../lib/tauri";
 import { UI } from "../lib/tokens";
 
 interface RepairReport {
@@ -39,6 +40,11 @@ export default function RepairPdf() {
 
   async function run() {
     if (!path) return;
+    // Ask where to save first: without an output the repaired file went to
+    // the temp dir and was shown as the result.
+    const stem = (path.split(/[\\/]/).pop() ?? "document.pdf").replace(/\.pdf$/i, "");
+    const output = await showSaveDialog(`${stem}_repaired.pdf`);
+    if (!output) return;
     setRunning(true);
     setReport(null);
     setErr(null);
@@ -46,6 +52,7 @@ export default function RepairPdf() {
       const r = await invoke<RepairReport>("repair_pdf", {
         path,
         options: { allowRasterize, rasterizeDpi: dpi },
+        output,
       });
       setReport(r);
     } catch (e: any) {

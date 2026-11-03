@@ -2,7 +2,7 @@ import { useCallback, useEffect } from "react";
 import { ToolLayout } from "../components/ToolLayout";
 import { useAppStore, LoadedFile } from "../store/useAppStore";
 import { usePdfCommand } from "../hooks/usePdfCommand";
-import { imagesToPdf } from "../lib/tauri";
+import { imagesToPdf, showSaveDialog } from "../lib/tauri";
 import { open } from "@tauri-apps/plugin-dialog";
 
 import { UI } from "../lib/tokens";
@@ -40,7 +40,10 @@ export default function ImagesToPdf() {
 
   async function handleConvert() {
     if (files.length === 0) return;
-    await run(() => imagesToPdf(files.map((f) => f.path)));
+    // Ask where to save first: without an output the PDF went to the temp dir.
+    const savePath = await showSaveDialog("images.pdf");
+    if (!savePath) return;
+    await run(() => imagesToPdf(files.map((f) => f.path), savePath));
   }
 
   return (
