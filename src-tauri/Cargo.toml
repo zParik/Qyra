@@ -38,7 +38,6 @@ rand = "0.10"
 # Windows + Android builds simple). The native compressor recompresses every
 # Flate stream, so this speeds the hot path 2-3x. Output stays standard zlib.
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
-printpdf = "0.7"
 image = { version = "0.25", features = ["png", "jpeg", "webp"] }
 # Memory-map PDF inputs so huge files are not read into the heap (no OOM at read,
 # especially on Android). Pure-Rust, supports Windows/unix/Android.

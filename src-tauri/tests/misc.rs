@@ -45,6 +45,32 @@ async fn images_to_pdf_makes_a_one_page_document() {
 }
 
 #[tokio::test]
+async fn images_to_pdf_embeds_jpeg_bytes_unchanged() {
+    let (dir, out) = temp_output("fromjpeg.pdf");
+    let jpg = dir.path().join("photo.jpg");
+    image::RgbImage::from_fn(40, 20, |x, _| image::Rgb([(x * 6) as u8, 80, 160]))
+        .save(&jpg)
+        .expect("write jpeg");
+    let original = std::fs::read(&jpg).unwrap();
+
+    images_to_pdf(
+        vec![jpg.to_string_lossy().into_owned(), fixture_str("sample.png")],
+        Some(out.clone()),
+    )
+    .expect("images to pdf");
+
+    assert_eq!(page_count(&out), 2);
+    let doc = lopdf::Document::load(&out).unwrap();
+    let jpeg_stream = doc
+        .objects
+        .values()
+        .filter_map(|o| o.as_stream().ok())
+        .find(|s| matches!(s.dict.get(b"Filter"), Ok(lopdf::Object::Name(n)) if n == b"DCTDecode"))
+        .expect("a DCTDecode image");
+    assert_eq!(jpeg_stream.content, original, "JPEG must not be re-encoded");
+}
+
+#[tokio::test]
 async fn remove_bates_is_a_safe_noop_when_absent() {
     let (_d, out) = temp_output("nobates.pdf");
     remove_bates_numbers(fixture_str("multipage.pdf"), Some(out.clone()))
