@@ -2,7 +2,6 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { useEffect } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { useAppStore } from "./store/useAppStore";
-import Home from "./tools/Home";
 import Merge from "./tools/Merge";
 import ImagesToPdf from "./tools/ImagesToPdf";
 import Ocr from "./tools/Ocr";
@@ -48,7 +47,7 @@ export default function App() {
         onDismiss={dismiss}
       />
       <Routes>
-        <Route path="/" element={<Home />} />
+        <Route path="/" element={<ViewerShell />} />
         <Route path="/view" element={<ViewerShell />} />
         <Route path="/merge" element={<Merge />} />
         <Route path="/images-to-pdf" element={<ImagesToPdf />} />

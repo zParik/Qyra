@@ -36,13 +36,13 @@ export default function ViewerShell() {
     loadSetting(Settings.reopenTabsOnLaunch).then((reopen) => {
       if (!alive) return;
       if (!reopen) {
-        openTab({ type: "home", path: "__home__0", name: "New Tab" });
+        openTab({ type: "home", path: "__home__0", name: "Library" });
         return;
       }
       invoke<[TabEntry[], number]>("get_tab_session").then(([tabs, active]) => {
         if (!alive) return;
         if (tabs.length === 0) {
-          openTab({ type: "home", path: "__home__0", name: "New Tab" });
+          openTab({ type: "home", path: "__home__0", name: "Library" });
           return;
         }
         tabs.forEach((t) =>
@@ -54,7 +54,7 @@ export default function ViewerShell() {
         );
         activateTab(active);
       }).catch(() => {
-        openTab({ type: "home", path: "__home__0", name: "New Tab" });
+        openTab({ type: "home", path: "__home__0", name: "Library" });
       });
     });
     return () => { alive = false; };
@@ -86,7 +86,7 @@ export default function ViewerShell() {
 
   // Open a new home tab (Ctrl+T, + button)
   const handleNewTab = useCallback(() => {
-    openTab({ type: "home", path: `__home__${Date.now()}`, name: "New Tab" });
+    openTab({ type: "home", path: `__home__${Date.now()}`, name: "Library" });
   }, [openTab]);
 
   const handleCloseTab = useCallback((index: number) => {
@@ -97,9 +97,11 @@ export default function ViewerShell() {
     closeTab(index);
     if (openTabs.length <= 1) {
       invoke("clear_tab_session").catch(console.error);
+      // The shell never goes blank: closing the last sheet leaves the library open.
+      openTab({ type: "home", path: `__home__${Date.now()}`, name: "Library" });
       navigate("/");
     }
-  }, [openTabs, tabDirty, closeTab, navigate]);
+  }, [openTabs, tabDirty, closeTab, openTab, navigate]);
 
   // Called by the singleton Home when user opens a PDF from a home tab
   const handleHomePdfOpen = useCallback((path: string, name: string) => {
