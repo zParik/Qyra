@@ -211,7 +211,7 @@ impl PdfStream {
         };
 
         match filter_name {
-            b"FlateDecode" | b"Fl" => decode_flate(&self.raw_bytes, self.decode_parms(0)),
+            b"FlateDecode" | b"Fl" => decode_flate(&self.raw_bytes, self.decode_parms(0)?),
             b"DCTDecode" | b"DCT" => {
                 // JPEG — raw bytes are already the JPEG payload
                 Ok(self.raw_bytes.clone())
@@ -230,7 +230,7 @@ impl PdfStream {
                 .as_name()
                 .ok_or_else(|| PdfError::ParseError("Filter chain element is not a Name".into()))?;
             data = match name {
-                b"FlateDecode" | b"Fl" => decode_flate(&data, self.decode_parms(i))?,
+                b"FlateDecode" | b"Fl" => decode_flate(&data, self.decode_parms(i)?)?,
                 b"DCTDecode" | b"DCT" => data,
                 b"Identity" => data,
                 other => {
@@ -245,36 +245,65 @@ impl PdfStream {
 
     /// The `/DecodeParms` dict for the filter at `index`. A single dict applies
     /// to every filter; an array holds one entry (dict or null) per filter.
-    fn decode_parms(&self, index: usize) -> Option<&PdfDict> {
-        match self.dict.get(b"DecodeParms")? {
-            PdfObject::Dictionary(d) => Some(d),
-            PdfObject::Array(arr) => arr.get(index)?.as_dict(),
-            _ => None,
+    /// Anything else (an indirect reference, which cannot be resolved here) is
+    /// an error: decoding without its predictor would leave predictor bytes in
+    /// the data, and the stream must then be left untouched.
+    fn decode_parms(&self, index: usize) -> Result<Option<&PdfDict>, PdfError> {
+        let unsupported = || PdfError::UnsupportedFilter("indirect or malformed /DecodeParms".into());
+        match self.dict.get(b"DecodeParms") {
+            None | Some(PdfObject::Null) => Ok(None),
+            Some(PdfObject::Dictionary(d)) => Ok(Some(d)),
+            Some(PdfObject::Array(arr)) => match arr.get(index) {
+                None | Some(PdfObject::Null) => Ok(None),
+                Some(PdfObject::Dictionary(d)) => Ok(Some(d)),
+                Some(_) => Err(unsupported()),
+            },
+            Some(_) => Err(unsupported()),
         }
     }
 }
+
+/// Largest inflated size of one stream that is decoded (512 MiB).
+const MAX_INFLATED_BYTES: u64 = 512 * 1024 * 1024;
 
 fn decode_flate(raw: &[u8], parms: Option<&PdfDict>) -> Result<Vec<u8>, PdfError> {
     use flate2::read::ZlibDecoder;
     use std::io::Read;
 
-    let mut decoder = ZlibDecoder::new(raw);
+    // A few hundred KB can inflate to gigabytes (a Flate bomb); past the cap
+    // the stream is treated as undecodable and left untouched.
+    let mut decoder = ZlibDecoder::new(raw).take(MAX_INFLATED_BYTES + 1);
     let mut out = Vec::new();
     decoder.read_to_end(&mut out).map_err(|e| {
         PdfError::ParseError(format!("FlateDecode decompression failed: {}", e))
     })?;
+    if out.len() as u64 > MAX_INFLATED_BYTES {
+        return Err(PdfError::ParseError("FlateDecode output exceeds the size limit".into()));
+    }
 
     let Some(parms) = parms else { return Ok(out) };
-    let int = |key: &[u8], default: i64| parms.get(key).and_then(|v| v.as_integer()).unwrap_or(default);
-    match int(b"Predictor", 1) {
+    // A parameter that is present but not an integer (or a whole real) is
+    // malformed: falling back to the default would mis-decode silently.
+    let int = |key: &[u8], default: i64| -> Result<i64, PdfError> {
+        match parms.get(key) {
+            None => Ok(default),
+            Some(PdfObject::Integer(n)) => Ok(*n),
+            Some(PdfObject::Real(r)) if r.fract() == 0.0 => Ok(*r as i64),
+            Some(_) => Err(PdfError::UnsupportedFilter(format!(
+                "non-integer /{} in /DecodeParms",
+                String::from_utf8_lossy(key)
+            ))),
+        }
+    };
+    match int(b"Predictor", 1)? {
         p if p <= 1 => Ok(out),
         // TIFF predictor 2 is not implemented. Passing the still-predicted
         // bytes on as "decoded" would corrupt the stream when rewritten.
         2 => Err(PdfError::UnsupportedFilter("TIFF predictor 2".into())),
         p if p >= 10 => {
-            let colors = int(b"Colors", 1).max(1) as usize;
-            let bpc = int(b"BitsPerComponent", 8).max(1) as usize;
-            let columns = int(b"Columns", 1).max(1) as usize;
+            let colors = int(b"Colors", 1)?.max(1) as usize;
+            let bpc = int(b"BitsPerComponent", 8)?.max(1) as usize;
+            let columns = int(b"Columns", 1)?.max(1) as usize;
             // Sizes come from the file: overflow or a row wider than the data
             // is malformed, and must not size an allocation.
             let bits = colors
@@ -443,6 +472,33 @@ mod tests {
     fn a_huge_predictor_row_on_empty_data_does_not_allocate_it() {
         let s = flate_stream(b"", PdfObject::Dictionary(parms(1, 8, 4_000_000_000_000, 12)), PdfObject::Name(b"FlateDecode".to_vec()));
         let _ = s.decode();
+    }
+
+    #[test]
+    fn indirect_decode_parms_refuse_to_decode_instead_of_dropping_the_predictor() {
+        // /DecodeParms 12 0 R cannot be resolved here; "decoding" without it
+        // would leave predictor bytes in the data.
+        let filtered = [1u8, 10, 20, 30, 1, 2, 3];
+        let s = flate_stream(&filtered, PdfObject::Reference((12, 0)), PdfObject::Name(b"FlateDecode".to_vec()));
+        assert!(s.decode().is_err());
+        let s = flate_stream(
+            &filtered,
+            PdfObject::Array(vec![PdfObject::Reference((12, 0))]),
+            PdfObject::Array(vec![PdfObject::Name(b"FlateDecode".to_vec())]),
+        );
+        assert!(s.decode().is_err());
+    }
+
+    #[test]
+    fn a_whole_real_predictor_parameter_counts_and_a_fraction_is_an_error() {
+        let filtered = [1u8, 10, 20, 30, 1, 2, 3];
+        let mut d = parms(3, 8, 2, 15);
+        d.set(b"Columns", PdfObject::Real(2.0));
+        let s = flate_stream(&filtered, PdfObject::Dictionary(d.clone()), PdfObject::Name(b"FlateDecode".to_vec()));
+        assert_eq!(s.decode().unwrap(), vec![10, 20, 30, 11, 22, 33]);
+        d.set(b"Columns", PdfObject::Real(2.5));
+        let s = flate_stream(&filtered, PdfObject::Dictionary(d), PdfObject::Name(b"FlateDecode".to_vec()));
+        assert!(s.decode().is_err());
     }
 
     #[test]
