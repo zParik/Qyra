@@ -165,3 +165,34 @@ async fn highlight_on_rotated_page_reads_back_where_it_was_drawn() {
     let n = |o: &lopdf::Object| o.as_float().unwrap() as f64;
     assert!(n(&r[3]) - n(&r[1]) > n(&r[2]) - n(&r[0]), "rect {r:?} should be taller than wide");
 }
+
+#[test]
+fn signature_is_drawn_over_the_page_upright() {
+    use qyra_lib::commands::signatures::{stamp_images, ImageStamp};
+    // A 2×1 red PNG.
+    let mut png = Vec::new();
+    image::RgbaImage::from_pixel(2, 1, image::Rgba([255, 0, 0, 255]))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    use base64::Engine;
+    let data_url = format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(&png));
+    let (_d, rotated) = temp_output("rotated.pdf");
+    qyra_lib::commands::rotate::rotate_pages(fixture_str("simple.pdf"), vec![1], 90, Some(rotated.clone()))
+        .expect("rotate");
+    let (_d2, out) = temp_output("signed.pdf");
+    stamp_images(
+        rotated,
+        vec![ImageStamp { page: 1, x: 0.5, y: 0.5, width: 0.2, height: 0.1, data_url }],
+        Some(out.clone()),
+    )
+    .expect("stamp");
+
+    let doc = common::load_lopdf(&out);
+    let page_id = doc.get_pages()[&1];
+    let content = String::from_utf8_lossy(&doc.get_page_content(page_id).unwrap()).to_string();
+    // On a page turned 90° clockwise the image's x axis runs up user space.
+    let line = content.lines().find(|l| l.contains("/QySig0 Do")).expect("signature drawn");
+    let nums: Vec<f64> = line.split_whitespace().skip(1).take(6).map(|n| n.parse().unwrap()).collect();
+    assert!(nums[0].abs() < 1e-6 && nums[1] > 0.0 && nums[2] < 0.0, "{line}");
+    assert!(content.trim_end().ends_with("/QySig0 Do Q"), "drawn last, over the page");
+}

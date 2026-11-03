@@ -83,7 +83,7 @@ pub fn images_to_pdf(
 
 /// The image XObject for `bytes`, plus its pixel size. Any alpha channel is
 /// added to `doc` as a soft mask.
-fn image_xobject(doc: &mut Document, bytes: &[u8]) -> Result<(Stream, u32, u32), String> {
+pub(crate) fn image_xobject(doc: &mut Document, bytes: &[u8]) -> Result<(Stream, u32, u32), String> {
     if let Some((w, h, components)) = jpeg_header(bytes) {
         // CMYK JPEGs often store inverted ink values (Adobe), which a plain
         // DCTDecode embed would show as a negative, so they take the decode path.

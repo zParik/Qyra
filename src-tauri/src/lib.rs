@@ -210,6 +210,7 @@ pub fn run() {
             outline_edit::set_outline,
             forms::get_form_fields,
             forms::fill_form,
+            signatures::stamp_images,
             pdf_annotations::get_page_annotations,
             pdf_annotations::add_pdf_annotation,
             pdf_annotations::export_annotations,

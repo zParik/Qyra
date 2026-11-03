@@ -39,6 +39,8 @@ rand = "0.10"
 # Flate stream, so this speeds the hot path 2-3x. Output stays standard zlib.
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 image = { version = "0.25", features = ["png", "jpeg", "webp"] }
+# Signature images arrive from the webview as data URLs.
+base64 = "0.22"
 # Memory-map PDF inputs so huge files are not read into the heap (no OOM at read).
 memmap2 = "0.9"
 tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread", "macros"] }

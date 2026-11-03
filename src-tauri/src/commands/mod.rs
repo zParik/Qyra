@@ -23,6 +23,7 @@ pub mod ocr;
 pub mod watermark;
 pub mod outline;
 pub mod forms;
+pub mod signatures;
 pub mod pdf_annotations;
 pub mod redact;
 pub mod crop;

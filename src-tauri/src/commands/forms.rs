@@ -549,38 +549,6 @@ fn numbers(doc: &Document, o: Option<&Object>, n: usize) -> Option<Vec<f64>> {
     }
 }
 
-/// Add `xobj` to the page's /XObject resources under a fresh name.
-fn add_page_xobject(doc: &mut Document, page_id: ObjectId, xobj: ObjectId) -> lopdf::Result<String> {
-    if !doc.get_dictionary(page_id)?.has(b"Resources") {
-        doc.get_dictionary_mut(page_id)?.set("Resources", Dictionary::new());
-    }
-    let res_ref = doc.get_dictionary(page_id)?.get(b"Resources")?.as_reference().ok();
-    fn res_mut(doc: &mut Document, page_id: ObjectId, r: Option<ObjectId>) -> lopdf::Result<&mut Dictionary> {
-        match r {
-            Some(r) => doc.get_dictionary_mut(r),
-            None => doc.get_dictionary_mut(page_id)?.get_mut(b"Resources")?.as_dict_mut(),
-        }
-    }
-    let xo_ref = {
-        let res = res_mut(doc, page_id, res_ref)?;
-        match res.get(b"XObject") {
-            Ok(Object::Reference(r)) => Some(*r),
-            Ok(Object::Dictionary(_)) => None,
-            _ => {
-                res.set("XObject", Dictionary::new());
-                None
-            }
-        }
-    };
-    let xo = match xo_ref {
-        Some(r) => doc.get_dictionary_mut(r)?,
-        None => res_mut(doc, page_id, res_ref)?.get_mut(b"XObject")?.as_dict_mut()?,
-    };
-    let name = (0..).map(|i| format!("QyFlat{i}")).find(|n| !xo.has(n.as_bytes())).unwrap_or_default();
-    xo.set(name.clone(), Object::Reference(xobj));
-    Ok(name)
-}
-
 /// Draw every widget's appearance into its page and remove the form.
 /// Only setting ReadOnly and dropping /AcroForm left the widgets as
 /// annotations, and fields without an appearance came out blank.
@@ -642,7 +610,7 @@ pub(crate) fn flatten_form(doc: &mut Document) -> AppResult<()> {
                     s.dict.set("Subtype", "Form");
                 }
             }
-            let name = add_page_xobject(doc, page_id, ap_id)?;
+            let name = crate::utils::add_page_xobject(doc, page_id, "QyFlat", ap_id)?;
             ops.push_str(&format!(
                 "q {sx:.5} 0 0 {sy:.5} {:.3} {:.3} cm /{name} Do Q\n",
                 rx0 - tx0 * sx,

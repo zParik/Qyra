@@ -133,3 +133,43 @@ pub fn own_inherited_resources(doc: &mut lopdf::Document) {
         }
     }
 }
+
+/// Add `xobj` to the page's /XObject resources under a fresh name starting
+/// with `prefix`, and return the name. Handles inline and indirect
+/// /Resources and /XObject dictionaries.
+pub fn add_page_xobject(
+    doc: &mut lopdf::Document,
+    page_id: lopdf::ObjectId,
+    prefix: &str,
+    xobj: lopdf::ObjectId,
+) -> lopdf::Result<String> {
+    use lopdf::{Dictionary, Document, Object, ObjectId};
+    if !doc.get_dictionary(page_id)?.has(b"Resources") {
+        doc.get_dictionary_mut(page_id)?.set("Resources", Dictionary::new());
+    }
+    let res_ref = doc.get_dictionary(page_id)?.get(b"Resources")?.as_reference().ok();
+    fn res_mut(doc: &mut Document, page_id: ObjectId, r: Option<ObjectId>) -> lopdf::Result<&mut Dictionary> {
+        match r {
+            Some(r) => doc.get_dictionary_mut(r),
+            None => doc.get_dictionary_mut(page_id)?.get_mut(b"Resources")?.as_dict_mut(),
+        }
+    }
+    let xo_ref = {
+        let res = res_mut(doc, page_id, res_ref)?;
+        match res.get(b"XObject") {
+            Ok(Object::Reference(r)) => Some(*r),
+            Ok(Object::Dictionary(_)) => None,
+            _ => {
+                res.set("XObject", Dictionary::new());
+                None
+            }
+        }
+    };
+    let xo = match xo_ref {
+        Some(r) => doc.get_dictionary_mut(r)?,
+        None => res_mut(doc, page_id, res_ref)?.get_mut(b"XObject")?.as_dict_mut()?,
+    };
+    let name = (0..).map(|i| format!("{prefix}{i}")).find(|n| !xo.has(n.as_bytes())).unwrap_or_default();
+    xo.set(name.clone(), Object::Reference(xobj));
+    Ok(name)
+}
