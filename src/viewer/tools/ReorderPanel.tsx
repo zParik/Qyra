@@ -91,7 +91,7 @@ export function ReorderPanel({ file, onApplied }: ReorderPanelProps) {
   return (
     <ToolPanelLayout
       onSubmit={handle}
-      submitLabel="Apply New Order"
+      submitLabel="Apply new order"
       isProcessing={isProcessing}
       result={result}
       error={error}

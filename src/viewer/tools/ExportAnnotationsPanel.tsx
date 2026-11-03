@@ -25,7 +25,7 @@ export function ExportAnnotationsPanel({ file }: Props) {
   return (
     <ToolPanelLayout
       onSubmit={handleExport}
-      submitLabel="Export Annotations (.csv)"
+      submitLabel="Export annotations (.csv)"
       submitClassName="v-btn-primary w-full"
       isProcessing={isProcessing}
       result={result}

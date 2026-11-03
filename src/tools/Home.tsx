@@ -8,8 +8,8 @@ import { useStarred, useArchived, useSetStarred, useSetArchived } from "../lib/q
 import { IcAlert, IcClose } from "../components/Icons";
 import { LeftRail } from "./home/LeftRail";
 import { DropCounter } from "./home/DropHero";
-import { SectionHead, ViewToggle, EmptyShelf, ToolCardItem, FamilyNote, SheetCard, SheetList, ViewAll } from "./home/RecentFiles";
-import { STANDALONE_TOOLS, IN_DOCUMENT } from "./home/tools";
+import { SectionHead, ViewToggle, EmptyShelf, ToolRow, ToolFamily, FamilyNote, SheetCard, SheetList, ViewAll } from "./home/RecentFiles";
+import { TOOL_FAMILIES, STANDALONE_TOOLS, IN_DOCUMENT } from "./home/tools";
 import { matchHomeShortcut } from "./home/shortcuts";
 import type { Section } from "./home/types";
 
@@ -226,9 +226,13 @@ export default function Home({ onOpenPdf }: HomeProps = {}) {
           {isHome && (
             <section className="section">
               <SectionHead title="Tools" meta={`${STANDALONE_TOOLS.length} tools`} />
-              <div className="tool-grid">
-                {STANDALONE_TOOLS.map((t) => (
-                  <ToolCardItem key={t.id} tool={t} onClick={() => navigate(t.route)} />
+              <div className="family-grid">
+                {TOOL_FAMILIES.map((g) => (
+                  <ToolFamily key={g.family} family={g.family}>
+                    {g.tools.map((t) => (
+                      <ToolRow key={t.id} tool={t} onClick={() => navigate(t.route)} />
+                    ))}
+                  </ToolFamily>
                 ))}
               </div>
               <div className="family-row" aria-label="What you can do inside a document">

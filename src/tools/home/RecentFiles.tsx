@@ -39,20 +39,31 @@ export function EmptyShelf({ title, note }: { title: string; note: string }) {
   );
 }
 
-export function ToolCardItem({ tool, onClick }: { tool: StandaloneTool; onClick: () => void }) {
+/** One tool as a row in its family group: icon, name and what it does, shortcut at the edge. */
+export function ToolRow({ tool, onClick }: { tool: StandaloneTool; onClick: () => void }) {
   const { Icon } = tool;
   return (
-    <button type="button" className="tool-card" onClick={onClick} style={chipStyle(tool.family) as CSSProperties}>
-      <span className="tool-card-icon" aria-hidden="true"><Icon size={18} /></span>
-      <span className="tool-card-text">
-        <span className="tool-card-title">{tool.title}</span>
-        <span className="tool-card-desc">{tool.desc}</span>
+    <button type="button" className="row tool-row" onClick={onClick}>
+      <span className="tool-row-icon" aria-hidden="true"><Icon size={16} /></span>
+      <span className="tool-row-text">
+        <span className="tool-row-title">{tool.title}</span>
+        <span className="tool-row-desc">{tool.desc}</span>
       </span>
-      <span className="tool-card-side">
-        <span className="chip" style={chipStyle(tool.family) as CSSProperties}>{FAMILY[tool.family].label}</span>
-        {tool.shortcut ? <kbd className="kbd">{shortcutLabel(tool.shortcut)}</kbd> : <span />}
-      </span>
+      {tool.shortcut && <kbd className="kbd">{shortcutLabel(tool.shortcut)}</kbd>}
     </button>
+  );
+}
+
+/** A family of tools with its chip and thumb-index tab. */
+export function ToolFamily({ family, children }: { family: Family; children: React.ReactNode }) {
+  return (
+    <section className="family-col" style={chipStyle(family) as CSSProperties} aria-label={FAMILY[family].label}>
+      <div className="family-col-head">
+        <span className="chip">{FAMILY[family].label}</span>
+        <span className="thumb-tab" aria-hidden="true" />
+      </div>
+      {children}
+    </section>
   );
 }
 

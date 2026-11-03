@@ -2,31 +2,29 @@ import type { CSSProperties, ReactElement } from "react";
 import { useNavigate } from "react-router-dom";
 import { IcHome, IcRecent, IcStar, IcArchive, IcFolder, IcGear, type IconProps } from "../../components/Icons";
 import { ThemeToggle } from "../../components/ThemeToggle";
-import { chipStyle, type Family } from "../../lib/families";
-import { STANDALONE_TOOLS } from "./tools";
+import { chipStyle, FAMILY } from "../../lib/families";
+import { TOOL_FAMILIES } from "./tools";
 import type { Section } from "./types";
 
-function RailItem({ label, Icon, count, active, onClick, family }: {
+function RailItem({ label, Icon, count, active, onClick }: {
   label: string;
   Icon: (p: IconProps) => ReactElement;
   count?: number;
   active?: boolean;
   onClick: () => void;
-  family?: Family;
 }) {
   return (
     <button type="button" onClick={onClick} aria-current={active ? "page" : undefined} className="rail-item">
       <span className="rail-icon"><Icon /></span>
       <span className="rail-text">{label}</span>
       {typeof count === "number" && count > 0 && <span className="rail-count">{count}</span>}
-      {family && <span className="thumb-tab" style={chipStyle(family) as CSSProperties} aria-hidden="true" />}
     </button>
   );
 }
 
 /**
- * The sample book: the library on top, the tool families below, each tool
- * carrying its family colour on the outer edge like a thumb index.
+ * The sample book: the library on top, then the tools filed by family, each
+ * family carrying its colour on the outer edge like a thumb index.
  */
 export function LeftRail({ active, onPick, recentCount, starredCount, archivedCount }: {
   active: Section;
@@ -49,8 +47,16 @@ export function LeftRail({ active, onPick, recentCount, starredCount, archivedCo
 
       <div className="rail-section">
         <div className="t-label rail-label">Tools</div>
-        {STANDALONE_TOOLS.map((t) => (
-          <RailItem key={t.id} label={t.title} Icon={t.Icon} family={t.family} onClick={() => navigate(t.route)} />
+        {TOOL_FAMILIES.map((g) => (
+          <section key={g.family} className="rail-family" style={chipStyle(g.family) as CSSProperties} aria-label={FAMILY[g.family].label}>
+            <div className="rail-family-head">
+              <span className="chip">{FAMILY[g.family].label}</span>
+              <span className="thumb-tab" aria-hidden="true" />
+            </div>
+            {g.tools.map((t) => (
+              <RailItem key={t.id} label={t.title} Icon={t.Icon} onClick={() => navigate(t.route)} />
+            ))}
+          </section>
         ))}
       </div>
 

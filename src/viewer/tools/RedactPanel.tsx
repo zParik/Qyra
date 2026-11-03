@@ -177,7 +177,7 @@ export function RedactPanel({
               className="text-xs"
               style={{ color: "var(--viewer-text-muted)", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}
             >
-              Clear All
+              Clear all
             </button>
           </div>
 

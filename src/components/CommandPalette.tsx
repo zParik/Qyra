@@ -6,6 +6,7 @@ import { useTheme } from "../lib/useTheme";
 import type { RecentFile } from "../lib/schemas";
 import { RecentFileSchema } from "../lib/schemas";
 import { IcSearch } from "./Icons";
+import { shortenMiddle } from "../lib/paths";
 
 const RECENT_KEY = "qyra-recent";
 
@@ -236,7 +237,7 @@ export function CommandPalette() {
                     </span>
                     {cmd.hint && (
                       cmd.group === "Recent files"
-                        ? <span className="palette-path">{cmd.hint}</span>
+                        ? <span className="palette-path" title={cmd.hint}>{shortenMiddle(cmd.hint, 44)}</span>
                         : <kbd className="kbd">{cmd.hint}</kbd>
                     )}
                   </div>

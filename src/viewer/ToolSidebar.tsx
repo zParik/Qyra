@@ -38,6 +38,8 @@ import {
 } from "./icons";
 import { IcPlus, IcClose, IcArrowLeft } from "../components/Icons";
 import { chipStyle, FAMILY, type Family } from "../lib/families";
+import { useFileMeasure } from "../tools/home/useFileMeasure";
+import { formatBytes } from "../tools/home/types";
 
 export type ViewerTool =
   | "rotate" | "remove" | "reorder" | "split"
@@ -183,6 +185,16 @@ export function ToolSidebar({ file, onApplied, activeTool, onToolChange, selecte
   const activeDef = activeTool ? ALL_TOOLS.find((t) => t.id === activeTool) : undefined;
   const activeFamily = activeTool ? FAMILY_OF[activeTool] : undefined;
 
+  // Each family's index tab carries the document's own measure where one exists.
+  const { data: measure } = useFileMeasure(file.path);
+  const pageCount = file.info?.page_count ?? measure?.pages;
+  function familyMeasure(family: Family, toolCount: number): string {
+    if (family === "pages" && pageCount != null) return `${pageCount} ${pageCount === 1 ? "page" : "pages"}`;
+    if (family === "compress" && measure) return formatBytes(measure.bytes);
+    if (family === "redact") { const n = redactRegions?.length ?? 0; return `${n} ${n === 1 ? "mark" : "marks"}`; }
+    return `${toolCount} ${toolCount === 1 ? "tool" : "tools"}`;
+  }
+
   return (
     <div className="vside">
       <div className="panel-head vside-head">
@@ -225,12 +237,12 @@ export function ToolSidebar({ file, onApplied, activeTool, onToolChange, selecte
             </div>
           </div>
         ) : (
-          <div className="vside-scroll">
+          <div className="vside-scroll vside-index">
             {GROUPS.map((g) => (
               <section key={g.family} className="vside-group" style={chipStyle(g.family) as CSSProperties} aria-label={FAMILY[g.family].label}>
                 <div className="vside-group-head">
                   <span className="chip">{FAMILY[g.family].label}</span>
-                  <span className="t-meta">{g.tools.length} {g.tools.length === 1 ? "tool" : "tools"}</span>
+                  <span className="t-meta">{familyMeasure(g.family, g.tools.length)}</span>
                   <span className="thumb-tab" aria-hidden="true" />
                 </div>
                 {g.tools.map((tool) => (

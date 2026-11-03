@@ -230,7 +230,7 @@ export function SignaturePanel({ onSignatureCreated, onClose }: SignaturePanelPr
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <span style={{ fontSize: "var(--fs-body)", fontWeight: 600, color: "var(--viewer-text-sec)" }}>
-          Create Signature
+          Create signature
         </span>
         <button
           onClick={onClose}

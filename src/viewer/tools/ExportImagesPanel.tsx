@@ -223,7 +223,7 @@ export function ExportImagesPanel({ file }: ExportImagesPanelProps) {
           onClick={handleExport}
           className="v-btn-primary flex-1"
         >
-          Export Images
+          Export images
         </button>
         {isExporting && (
           <button

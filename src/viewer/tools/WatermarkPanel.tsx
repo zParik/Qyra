@@ -224,7 +224,7 @@ export function WatermarkPanel({ file, onApplied }: Props) {
         disabled={isProcessing || !text.trim()}
         className="v-btn-primary w-full"
       >
-        Apply Watermark
+        Apply watermark
       </button>
 
       {isProcessing && (

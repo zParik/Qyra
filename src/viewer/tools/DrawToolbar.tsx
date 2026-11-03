@@ -305,11 +305,11 @@ export function DrawToolbar({
 
         <button
           onClick={onSaveAs}
-          title="Save As (Ctrl+Shift+S)"
+          title="Save as… (Ctrl+Shift+S)"
           className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs transition-colors shrink-0"
           style={{ background: "transparent", border: "1px solid transparent", color: "var(--viewer-text-sec)" }}
         >
-          Save As
+          Save as…
         </button>
 
         <Divider />

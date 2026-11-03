@@ -1,17 +1,13 @@
 import { useNavigate } from "react-router-dom";
 import { openFile as openFilePath, showInFolder } from "../lib/tauri";
 import { IcCheck, IcFile } from "./Icons";
+import { splitPath, shortenMiddle } from "../lib/paths";
 
 interface FileResultProps {
   result?: string | null;
   resultFiles?: string[];
   message?: string;
   onDoMore?: () => void;
-}
-
-function splitPath(path: string): { name: string; dir: string } {
-  const i = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return i === -1 ? { name: path, dir: "" } : { name: path.slice(i + 1), dir: path.slice(0, i) };
 }
 
 /** The finished sheet: what was written, where, and what to do next. */
@@ -45,7 +41,7 @@ export function FileResult({ result, resultFiles = [], message, onDoMore }: File
             <li key={path} className="result-file" title={path}>
               <IcFile size={16} style={{ color: "var(--fg2)", flexShrink: 0 }} />
               <span className="result-name">{name}</span>
-              {dir && <span className="result-dir">{dir}</span>}
+              {dir && <span className="result-dir" title={dir}>{shortenMiddle(dir, 56)}</span>}
             </li>
           );
         })}

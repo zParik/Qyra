@@ -20,14 +20,13 @@ function ContinueSheet({ file, onOpen }: { file: RecentFile; onOpen: () => void 
   useDocVersion(file.path);
   const thumb = failed ? null : thumbUrl(file.path, 1, 256);
   return (
-    <button type="button" className="continue" onClick={onOpen} title={file.path}>
+    <button type="button" className="continue" onClick={onOpen} title={`Open ${file.name} again`}>
       <span className="sheet-thumb continue-thumb" aria-hidden="true">
         {thumb && <img src={thumb} alt="" loading="lazy" onError={() => setFailed(true)} />}
       </span>
       <span className="continue-text">
-        <span className="t-label">Continue reading</span>
         <span className="continue-name">{file.name.replace(/\.pdf$/i, "")}</span>
-        <span className="t-meta">{formatRelativeTime(file.openedAt)}</span>
+        <span className="t-meta">Opened {formatRelativeTime(file.openedAt)} · pick up where you left off</span>
       </span>
     </button>
   );

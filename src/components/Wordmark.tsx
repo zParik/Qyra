@@ -1,9 +1,28 @@
 import { useNavigate } from "react-router-dom";
 
-/**
- * The shop sign: a white peacock eye-feather and the name, set on the indigo
- * shell. Click returns to the library.
- */
+/** A white peacock, tail fanned: five feathers with their eyes, over the bird. */
+export function PeacockMark({ size = 20 }: { size?: number }) {
+  // Feather tips on an arc above the body; each carries an eye.
+  const tips: [number, number][] = [[3.5, 9], [7, 4.5], [12, 2.5], [17, 4.5], [20.5, 9]];
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      {tips.map(([x, y], i) => (
+        <path key={i} d={`M12 15.5 L${x} ${y}`} stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" opacity={0.85} />
+      ))}
+      {tips.map(([x, y], i) => (
+        <g key={`e${i}`}>
+          <circle cx={x} cy={y} r={2.1} fill="currentColor" />
+          <circle cx={x} cy={y} r={0.75} fill="var(--shell, oklch(0.36 0.09 265))" />
+        </g>
+      ))}
+      <path d="M12 9.5c2.1 0 3.2 2.4 3.2 5.6 0 2.6-1.2 4.8-3.2 7-2-2.2-3.2-4.4-3.2-7 0-3.2 1.1-5.6 3.2-5.6z" fill="currentColor" />
+      <circle cx="12" cy="9" r="1.9" fill="currentColor" />
+      <path d="M12 7V5.2M10.4 7.3l-.9-1.6M13.6 7.3l.9-1.6" stroke="currentColor" strokeWidth={1.1} strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** The shop sign on the indigo shell. Click returns to the library. */
 export function Wordmark({ onClick }: { onClick?: () => void }) {
   const navigate = useNavigate();
   return (
@@ -14,13 +33,7 @@ export function Wordmark({ onClick }: { onClick?: () => void }) {
       title="Qyra — Library"
       aria-label="Qyra, go to library"
     >
-      <svg width={18} height={18} viewBox="0 0 20 20" fill="none" aria-hidden="true">
-        {/* eye feather: outer vane, inner eye, stem */}
-        <path d="M10 1.5c3.6 0 6 3.2 6 7.2 0 3.6-2.6 6.3-6 6.3s-6-2.7-6-6.3c0-4 2.4-7.2 6-7.2z" stroke="currentColor" strokeWidth={1.4} />
-        <ellipse cx="10" cy="8.8" rx="2.6" ry="3.2" fill="currentColor" opacity="0.9" />
-        <circle cx="10" cy="8.4" r="1" fill="var(--shell, oklch(0.36 0.09 265))" />
-        <path d="M10 15v3.5" stroke="currentColor" strokeWidth={1.4} strokeLinecap="round" />
-      </svg>
+      <PeacockMark size={20} />
       <span>Qyra</span>
     </button>
   );

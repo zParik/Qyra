@@ -167,7 +167,7 @@ export function CommentPanel({ docPath, onPageSelect, isCommentMode, onToggleMod
               cursor: "pointer",
             }}
           >
-            {isCommentMode ? "Exit Comment Mode" : "Add Comment"}
+            {isCommentMode ? "Exit comment mode" : "Add comment"}
           </button>
         )}
       </div>

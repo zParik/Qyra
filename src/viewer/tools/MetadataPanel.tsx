@@ -59,7 +59,7 @@ export function MetadataPanel({ file, onApplied }: MetadataPanelProps) {
   return (
     <ToolPanelLayout
       onSubmit={handle}
-      submitLabel="Save Metadata"
+      submitLabel="Save metadata"
       submitDisabled={!loaded}
       isProcessing={isProcessing}
       result={result}
