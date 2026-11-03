@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useGoToLibrary } from "../hooks/useGoToLibrary";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "../store/useAppStore";
 import { useTheme } from "../lib/useTheme";
@@ -46,6 +47,7 @@ export function CommandPalette() {
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const navigate = useNavigate();
+  const goToLibrary = useGoToLibrary();
   const { cycle: cycleTheme } = useTheme();
 
   const openTabs = useAppStore((s) => s.openTabs);
@@ -114,7 +116,7 @@ export function CommandPalette() {
 
   const commands: Command[] = useMemo(() => {
     const list: Command[] = [
-      { id: "nav:home", label: "Go to the library", group: "Navigate", run: () => navigate("/") },
+      { id: "nav:home", label: "Go to the library", group: "Navigate", run: goToLibrary },
       { id: "nav:view", label: "Go to the viewer", group: "Navigate", run: () => navigate("/view") },
       { id: "nav:merge", label: "Merge PDFs", group: "Navigate", hint: "Ctrl+M", run: () => navigate("/merge") },
       { id: "nav:images-to-pdf", label: "Images to PDF", group: "Navigate", hint: "Ctrl+I", run: () => navigate("/images-to-pdf") },
@@ -149,7 +151,7 @@ export function CommandPalette() {
     });
 
     return list;
-  }, [openTabs, navigate, cycleTheme]);
+  }, [openTabs, navigate, goToLibrary, cycleTheme]);
 
   const filtered = useMemo(() => {
     if (!query) return commands;

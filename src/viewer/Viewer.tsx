@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useGoToLibrary } from "../hooks/useGoToLibrary";
 import { useAppStore } from "../store/useAppStore";
 import { useNotesStore, PageTemplate, VirtualPage } from "../store/useNotesStore";
 
@@ -117,14 +118,14 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
 
-  // Viewer UI: chrome visibility, reading/presentation modes, back-confirm overlay
+  // Viewer UI: chrome visibility, reading/presentation modes
   const {
     showStrip, setShowStrip,
     showTools, setShowTools,
     readingMode, setReadingMode,
     showPresentation, setShowPresentation,
-    confirmingBack, setConfirmingBack,
   } = useViewerUI();
+  const goToLibrary = useGoToLibrary();
 
   // ToolSidebar (full-screen on phone) dispatches this when its × is tapped
   useEffect(() => {
@@ -694,11 +695,6 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
         return;
       }
 
-      if (e.key === "Escape" && confirmingBack) {
-        e.preventDefault();
-        setConfirmingBack(false);
-        return;
-      }
 
       const mod = e.metaKey || e.ctrlKey;
 
@@ -777,7 +773,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [isActive, isViewerDirty, confirmingBack, findOpen, currentPage, pageCount, viewerFile, undoViewerFile, originalViewerPath, zoom, activeTool, undoStroke, readingMode, showPresentation]);
+  }, [isActive, isViewerDirty, findOpen, currentPage, pageCount, viewerFile, undoViewerFile, originalViewerPath, zoom, activeTool, undoStroke, readingMode, showPresentation]);
 
   // Hidden tab: free its tiles (previews stay); they re-render on return.
   useEffect(() => {
@@ -826,21 +822,6 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
     ? originalViewerPath.split(/[\\/]/).pop() ?? originalViewerPath
     : viewerFile.name;
 
-  function handleBack() {
-    if (isViewerDirty) {
-      setConfirmingBack(true);
-      return;
-    }
-    doBack();
-  }
-
-  function doBack() {
-    setViewerFile(null);
-    setUndoViewerFile(null);
-    setOriginalViewerPath(null);
-    setIsViewerDirty(false);
-    navigate("/");
-  }
 
   function handleScroll() {
     const container = scrollContainerRef.current;
@@ -1271,7 +1252,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
 
       {/* Toolbar — the kiri-wood counter above the page */}
       <header className="toolbar" style={{ display: readingMode ? "none" : undefined }}>
-        <button onClick={handleBack} className="btn-ghost" title="Back to library">
+        <button onClick={goToLibrary} className="btn-ghost" title="Back to library">
           <IcArrowLeft size={16} />
           Library
         </button>
@@ -1461,38 +1442,6 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
           </button>
         </div>
       </header>
-
-      {/* Discard-changes confirmation overlay */}
-      {confirmingBack && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center"
-          style={{ background: "oklch(0.15 0.03 265 / 0.45)" }}
-          onClick={() => setConfirmingBack(false)}
-        >
-          <div
-            role="alertdialog"
-            aria-labelledby="discard-title"
-            className="pop"
-            style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)", padding: "var(--space-6)", width: 360, boxShadow: "var(--shadow-dialog)" }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div>
-              <p id="discard-title" className="t-title" style={{ margin: 0 }}>Discard unsaved changes?</p>
-              <p style={{ margin: "var(--space-2) 0 0", color: "var(--fg1)" }}>
-                Your changes to this sheet will be lost. This cannot be undone.
-              </p>
-            </div>
-            <div style={{ display: "flex", gap: "var(--space-2)", justifyContent: "flex-end" }}>
-              <button onClick={() => setConfirmingBack(false)} className="btn-secondary" autoFocus>
-                Keep editing
-              </button>
-              <button onClick={doBack} className="btn-danger">
-                Discard changes
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Save error banner */}
       {saveError && (
@@ -1783,7 +1732,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
                     Unlock PDF…
                   </button>
                 )}
-                <button onClick={doBack} className="btn-secondary">
+                <button onClick={goToLibrary} className="btn-secondary">
                   Back to library
                 </button>
               </div>

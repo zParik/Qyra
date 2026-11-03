@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { useNavigate } from "react-router-dom";
+import { useGoToLibrary } from "../hooks/useGoToLibrary";
 import { useAppStore } from "../store/useAppStore";
 import { ProgressBar, Spinner } from "./ProgressBar";
 import { FileResult } from "./FileResult";
@@ -20,7 +20,7 @@ interface ToolLayoutProps {
  * tool's name and family, then a single reading column of work.
  */
 export function ToolLayout({ title, description, family = "library", children }: ToolLayoutProps) {
-  const navigate = useNavigate();
+  const goToLibrary = useGoToLibrary();
   // Per-field selectors: only re-render when a field this component reads
   // actually changes. A bare useAppStore() subscribes to the whole store and
   // re-renders on every unrelated write (tab open/close, dirty toggles, etc.).
@@ -35,7 +35,7 @@ export function ToolLayout({ title, description, family = "library", children }:
   return (
     <div className="tool-shell" style={chipStyle(family) as CSSProperties}>
       <header className="panel-head tool-head">
-        <button type="button" className="btn-ghost" onClick={() => navigate("/")} title="Back to library">
+        <button type="button" className="btn-ghost" onClick={goToLibrary} title="Back to library">
           <IcArrowLeft size={16} />
           Library
         </button>

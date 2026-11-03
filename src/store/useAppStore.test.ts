@@ -37,6 +37,26 @@ describe("multi-file actions", () => {
   });
 });
 
+describe("showLibrary", () => {
+  const home = (path: string) => ({ path, name: "Library", type: "home" as const });
+
+  it("activates the existing Library tab", () => {
+    get().openTab(home("__home__0"));
+    get().openTab(tab("a.pdf"));
+    get().showLibrary();
+    expect(get().activeTabIndex).toBe(0);
+    expect(get().openTabs).toHaveLength(2);
+  });
+
+  it("opens a Library tab when none is open", () => {
+    get().openTab(tab("a.pdf"));
+    get().showLibrary();
+    const active = get().openTabs[get().activeTabIndex];
+    expect(active?.type).toBe("home");
+    expect(get().openTabs.map((t) => t.path)).toContain("a.pdf");
+  });
+});
+
 describe("tab actions", () => {
   it("opens a tab and syncs the legacy viewerFile", () => {
     get().openTab(tab("x.pdf"));

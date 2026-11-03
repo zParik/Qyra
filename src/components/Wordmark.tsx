@@ -1,4 +1,4 @@
-import { useNavigate } from "react-router-dom";
+import { useGoToLibrary } from "../hooks/useGoToLibrary";
 
 /**
  * A white peacock, tail fanned: a scalloped fan of feathers with their eyes,
@@ -37,12 +37,12 @@ export function PeacockMark({ size = 20 }: { size?: number }) {
 
 /** The shop sign on the indigo shell. Click returns to the library. */
 export function Wordmark({ onClick }: { onClick?: () => void }) {
-  const navigate = useNavigate();
+  const goToLibrary = useGoToLibrary();
   return (
     <button
       type="button"
       className="wordmark"
-      onClick={onClick ?? (() => navigate("/"))}
+      onClick={onClick ?? goToLibrary}
       title="Qyra — Library"
       aria-label="Qyra, go to library"
     >

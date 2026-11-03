@@ -1,4 +1,4 @@
-import { useNavigate } from "react-router-dom";
+import { useGoToLibrary } from "../hooks/useGoToLibrary";
 import { openFile as openFilePath, showInFolder } from "../lib/tauri";
 import { IcCheck, IcFile } from "./Icons";
 import { splitPath, shortenMiddle } from "../lib/paths";
@@ -12,7 +12,7 @@ interface FileResultProps {
 
 /** The finished sheet: what was written, where, and what to do next. */
 export function FileResult({ result, resultFiles = [], message, onDoMore }: FileResultProps) {
-  const navigate = useNavigate();
+  const goToLibrary = useGoToLibrary();
   const allFiles = result ? [result, ...resultFiles] : resultFiles;
   if (allFiles.length === 0) return null;
 
@@ -57,7 +57,7 @@ export function FileResult({ result, resultFiles = [], message, onDoMore }: File
         {onDoMore ? (
           <button type="button" className="btn-primary" onClick={onDoMore}>Do more</button>
         ) : (
-          <button type="button" className="btn-primary" onClick={() => navigate("/")}>Back to library</button>
+          <button type="button" className="btn-primary" onClick={goToLibrary}>Back to library</button>
         )}
       </div>
     </section>

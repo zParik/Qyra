@@ -69,6 +69,8 @@ interface AppState {
   openTab: (entry: TabEntry) => void;
   closeTab: (index: number) => void;
   activateTab: (index: number) => void;
+  /** Bring the Library forward: its tab if one is open, else a new one. */
+  showLibrary: () => void;
   reorderTab: (from: number, to: number) => void;
   replaceTab: (index: number, entry: TabEntry) => void;
   reopenClosedTab: () => TabEntry | undefined;
@@ -190,6 +192,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       const next: SyncSlice = { ...s, activeTabIndex: index };
       return { activeTabIndex: index, ...legacySync(next) };
     }),
+
+  showLibrary: () => {
+    const home = get().openTabs.find((t) => t.type === "home");
+    get().openTab(home ?? { type: "home", path: `__home__${Date.now()}`, name: "Library" });
+  },
 
   reorderTab: (from, to) =>
     set((s) => {
