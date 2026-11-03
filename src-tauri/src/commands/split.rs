@@ -192,13 +192,16 @@ pub fn split_pdf(
 }
 
 /// Split into individual pages.
-/// Uses direct page-tree manipulation instead of clone+delete_pages for each page,
-/// avoiding O(N²) deletions. Each output file contains only the target page in its
-/// page tree (other page objects are technically unreferenced but PDF viewers ignore them).
+/// Each output is a copy of the document with every other page deleted and the
+/// objects nothing refers to any more pruned, so a page's file holds only that
+/// page (swapping the page tree's /Kids and saving left every other page's
+/// content in each file: a 100 MB scan split into 300 files of ~100 MB).
+/// The page tree is not flattened, so attributes a page inherits from
+/// intermediate /Pages nodes (MediaBox, Resources, Rotate) are kept.
 #[tauri::command]
 pub fn split_pdf_per_page(path: String, output_dir: Option<String>) -> AppResult<Vec<String>> {
     let _t = crate::utils::timing::Timer::start("split_pdf_per_page", String::new());
-    let mut doc = Document::load(&path)?;
+    let doc = Document::load(&path)?;
     let total = doc.get_pages().len() as u32;
 
     let stem = Path::new(&path)
@@ -207,52 +210,15 @@ pub fn split_pdf_per_page(path: String, output_dir: Option<String>) -> AppResult
         .unwrap_or("page");
     let dir = output_dir.unwrap_or_else(temp_dir_str);
 
-    // Collect page ObjectIds once.
-    let pages_map = doc.get_pages();
-
-    // Locate the Pages root from the catalog.
-    let pages_root_id = {
-        let catalog = doc.catalog()?;
-        catalog
-            .get(b"Pages")
-            .and_then(|obj| obj.as_reference())?
-    };
-
-    // Ensure every page's Parent already points to the root (flatten any nested tree).
-    for (_, &page_obj_id) in &pages_map {
-        if let Some(Object::Dictionary(page_dict)) = doc.objects.get_mut(&page_obj_id) {
-            page_dict.set("Parent", Object::Reference(pages_root_id));
-        }
-    }
-
     let mut output_paths = Vec::new();
     for page_num in 1..=total {
-        let page_obj_id = pages_map[&page_num];
-
-        // Swap the Kids array to contain only this page, then save, then restore.
-        // This avoids N full document clones while producing correct output.
-        let single_kids = Object::Array(vec![Object::Reference(page_obj_id)]);
-
-        let old_kids = if let Some(Object::Dictionary(dict)) = doc.objects.get_mut(&pages_root_id) {
-            let old = dict.get(b"Kids").ok().cloned();
-            dict.set("Kids", single_kids);
-            dict.set("Count", Object::Integer(1));
-            old
-        } else {
-            return Err(AppError::Pdf("Could not find Pages root dictionary".to_string()));
-        };
-
+        let mut single = doc.clone();
+        let others: Vec<u32> = (1..=total).filter(|&n| n != page_num).collect();
+        single.delete_pages(&others);
+        single.prune_objects();
         let out = format!("{}/{}_page{:04}.pdf", dir, stem, page_num);
-        doc.save(&out)?;
+        single.save(&out)?;
         output_paths.push(out);
-
-        // Restore the original Kids and Count for the next iteration.
-        if let Some(Object::Dictionary(dict)) = doc.objects.get_mut(&pages_root_id) {
-            if let Some(kids) = old_kids {
-                dict.set("Kids", kids);
-            }
-            dict.set("Count", Object::Integer(total as i64));
-        }
     }
 
     Ok(output_paths)

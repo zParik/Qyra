@@ -46,3 +46,25 @@ async fn split_by_bookmarks_splits_at_each_top_level_entry() {
     // outline.pdf has three top-level bookmarks (Chapter 1/2/3) at pages 1,2,3.
     assert_eq!(parts.len(), 3);
 }
+
+#[tokio::test]
+async fn each_single_page_file_holds_only_its_own_page() {
+    let src = fixture_str("multipage.pdf");
+    let d = temp_dir();
+    let parts = split_pdf_per_page(src, Some(d.path().to_string_lossy().into_owned())).expect("split per page");
+    for (i, part) in parts.iter().enumerate() {
+        let doc = common::load_lopdf(part);
+        // Every page's caption is "Page K"; only this file's own may be in it.
+        let all_content: Vec<u8> = doc
+            .objects
+            .values()
+            .filter_map(|o| o.as_stream().ok())
+            .flat_map(|s| s.decompressed_content().unwrap_or_else(|_| s.content.clone()))
+            .collect();
+        let text = String::from_utf8_lossy(&all_content);
+        for k in 1..=parts.len() {
+            let has = text.contains(&format!("(Page {k})"));
+            assert_eq!(has, k == i + 1, "file {} contains page {k}: {has}", i + 1);
+        }
+    }
+}
