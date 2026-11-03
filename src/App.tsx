@@ -47,14 +47,17 @@ export default function App() {
         onDismiss={dismiss}
       />
       <Routes>
-        <Route path="/" element={<ViewerShell />} />
-        <Route path="/view" element={<ViewerShell />} />
-        <Route path="/merge" element={<Merge />} />
-        <Route path="/images-to-pdf" element={<ImagesToPdf />} />
-        <Route path="/ocr" element={<Ocr />} />
-        <Route path="/repair" element={<RepairPdf />} />
-        <Route path="/batch" element={<BatchOps />} />
-        <Route path="/settings" element={<Settings />} />
+        {/* One shell: the tab bar stays on top of the library, the viewer and every tool page. */}
+        <Route element={<ViewerShell />}>
+          <Route path="/" element={null} />
+          <Route path="/view" element={null} />
+          <Route path="/merge" element={<Merge />} />
+          <Route path="/images-to-pdf" element={<ImagesToPdf />} />
+          <Route path="/ocr" element={<Ocr />} />
+          <Route path="/repair" element={<RepairPdf />} />
+          <Route path="/batch" element={<BatchOps />} />
+          <Route path="/settings" element={<Settings />} />
+        </Route>
       </Routes>
     </BrowserRouter>
     </ErrorBoundary>

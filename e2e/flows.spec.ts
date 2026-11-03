@@ -7,8 +7,8 @@ test.describe("home", () => {
     await expect(
       page.getByRole("heading", { name: /drop a pdf here/i }),
     ).toBeVisible();
-    // Merge is reachable twice: from the rail and from the tool card.
-    await expect(page.locator(".tool-card", { hasText: /merge pdfs/i })).toBeVisible();
+    // Merge is reachable twice: from the rail and from the tool row.
+    await expect(page.locator(".tool-row", { hasText: /merge pdfs/i })).toBeVisible();
   });
 
   test("shows the empty recents state", async ({ page }) => {
@@ -20,7 +20,7 @@ test.describe("home", () => {
 test.describe("navigation", () => {
   test("opening the Merge tool routes to /merge", async ({ page }) => {
     await page.goto("/");
-    await page.locator(".tool-card", { hasText: /merge pdfs/i }).click();
+    await page.locator(".tool-row", { hasText: /merge pdfs/i }).click();
     await expect(page).toHaveURL(/\/merge$/);
   });
 

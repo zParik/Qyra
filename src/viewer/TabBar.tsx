@@ -153,10 +153,12 @@ function TabTag({
   );
 }
 
-export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile }: {
+export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile, onActivateTab }: {
   onOpenFile: () => void;
   onCloseTab: (index: number) => void;
   onOpenExternalFile: (path: string, name: string) => void;
+  /** Called after a tab is activated by click or keyboard. */
+  onActivateTab?: () => void;
 }) {
   const openTabs = useAppStore((s) => s.openTabs);
   const activeTabIndex = useAppStore((s) => s.activeTabIndex);
@@ -247,7 +249,7 @@ export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile }: {
                 active={i === activeTabIndex}
                 dirty={tabDirty[tab.path] ?? false}
                 isPdfPath={tab.type !== "home"}
-                onActivate={() => activateTab(i)}
+                onActivate={() => { activateTab(i); onActivateTab?.(); }}
                 onClose={() => onCloseTab(i)}
                 onContextMenu={(x, y) => setCtxMenu({ x, y, index: i })}
               />

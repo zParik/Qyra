@@ -4,7 +4,6 @@ import { useAppStore } from "../store/useAppStore";
 import { ProgressBar, Spinner } from "./ProgressBar";
 import { FileResult } from "./FileResult";
 import { ErrorBanner } from "./ErrorBanner";
-import { Wordmark } from "./Wordmark";
 import { IcArrowLeft } from "./Icons";
 import { chipStyle, FAMILY, type Family } from "../lib/families";
 
@@ -35,15 +34,11 @@ export function ToolLayout({ title, description, family = "library", children }:
 
   return (
     <div className="tool-shell" style={chipStyle(family) as CSSProperties}>
-      <div className="tabbar tool-top">
-        <Wordmark />
-        <button type="button" className="shell-btn tool-back" onClick={() => navigate("/")} title="Back to library">
-          <IcArrowLeft size={16} />
-          <span>Library</span>
-        </button>
-      </div>
-
       <header className="panel-head tool-head">
+        <button type="button" className="btn-ghost" onClick={() => navigate("/")} title="Back to library">
+          <IcArrowLeft size={16} />
+          Library
+        </button>
         <div className="tool-head-text">
           <h1 className="t-title" style={{ margin: 0 }}>{title}</h1>
           {description && <p className="tool-desc">{description}</p>}

@@ -1,7 +1,6 @@
 import { useState, type ReactElement } from "react";
 import { useNavigate } from "react-router-dom";
 import { isAndroid } from "../lib/androidFileUtils";
-import { Wordmark } from "../components/Wordmark";
 import { IcArrowLeft, IcSun, IcFolder, IcRecent, IcConvert, IcInfo, type IconProps } from "../components/Icons";
 import { AppearanceSection } from "./settings/AppearanceSection";
 import { FilesSection } from "./settings/FilesSection";
@@ -36,13 +35,13 @@ export default function Settings() {
 
   return (
     <div className="tool-shell">
-      <div className="tabbar tool-top">
-        <Wordmark />
-        <button type="button" className="shell-btn tool-back" onClick={() => navigate(-1)} title="Back">
+      <header className="panel-head tool-head">
+        <button type="button" className="btn-ghost" onClick={() => navigate(-1)} title="Back">
           <IcArrowLeft size={16} />
-          <span>Back</span>
+          Back
         </button>
-      </div>
+        <h1 className="t-title" style={{ margin: 0, flex: 1 }}>Settings</h1>
+      </header>
 
       <div className="settings">
         <aside className="rail settings-nav" aria-label="Settings sections">

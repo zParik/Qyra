@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, useOutlet } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore, TabEntry } from "../store/useAppStore";
 import { TabBar } from "./TabBar";
@@ -25,8 +25,13 @@ export default function ViewerShell() {
   const tabDirty = useAppStore((s) => s.tabDirty);
   const [showShortcuts, setShowShortcuts] = useState(false);
 
+  // A tool page or Settings renders through the outlet, over the tabs, which stay mounted and hidden.
+  // (The outlet element exists even for the library and viewer routes, so the path decides.)
+  const outlet = useOutlet();
+  const { pathname } = useLocation();
+  const onToolRoute = pathname !== "/" && pathname !== "/view";
   const activeTab = openTabs[activeTabIndex];
-  const homeVisible = activeTab?.type === "home";
+  const homeVisible = activeTab?.type === "home" && !onToolRoute;
 
   // Load persisted session on first mount (only if no tabs already open),
   // gated on the reopen-tabs-on-launch preference.
@@ -87,7 +92,13 @@ export default function ViewerShell() {
   // Open a new home tab (Ctrl+T, + button)
   const handleNewTab = useCallback(() => {
     openTab({ type: "home", path: `__home__${Date.now()}`, name: "Library" });
-  }, [openTab]);
+    if (onToolRoute) navigate("/");
+  }, [openTab, onToolRoute, navigate]);
+
+  // Clicking a tab while a tool page is up returns to the sheets.
+  const handleActivateTab = useCallback(() => {
+    if (onToolRoute) navigate("/view");
+  }, [onToolRoute, navigate]);
 
   const handleCloseTab = useCallback((index: number) => {
     const tab = openTabs[index];
@@ -162,7 +173,8 @@ export default function ViewerShell() {
       <TabBar
         onOpenFile={handleNewTab}
         onCloseTab={handleCloseTab}
-        onOpenExternalFile={(path, name) => openTab({ type: "pdf", path, name })}
+        onOpenExternalFile={(path, name) => { openTab({ type: "pdf", path, name }); if (onToolRoute) navigate("/view"); }}
+        onActivateTab={handleActivateTab}
       />
       <ShortcutsModal open={showShortcuts} onOpenChange={setShowShortcuts} />
       <div style={{ position: "relative", flex: 1, overflow: "hidden" }}>
@@ -185,15 +197,21 @@ export default function ViewerShell() {
               style={{
                 position: "absolute",
                 inset: 0,
-                visibility: i === activeTabIndex ? "visible" : "hidden",
-                pointerEvents: i === activeTabIndex ? "auto" : "none",
+                visibility: i === activeTabIndex && !onToolRoute ? "visible" : "hidden",
+                pointerEvents: i === activeTabIndex && !onToolRoute ? "auto" : "none",
               }}
             >
               <ErrorBoundary FallbackComponent={ViewerErrorFallback} key={tab.path}>
-                <Viewer tabPath={tab.path} isActive={i === activeTabIndex} />
+                <Viewer tabPath={tab.path} isActive={i === activeTabIndex && !onToolRoute} />
               </ErrorBoundary>
             </div>
           )
+        )}
+        {/* Tool pages and Settings, on top of the sheets */}
+        {onToolRoute && (
+          <div style={{ position: "absolute", inset: 0, overflow: "hidden", background: "var(--bg0)" }}>
+            {outlet}
+          </div>
         )}
       </div>
     </div>
