@@ -7,7 +7,7 @@ edition = "2021"
 
 [lib]
 name = "qyra_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -19,7 +19,7 @@ tauri-build = { version = "2", features = [] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 tempfile = "3"
 lopdf = "0.40"
-mupdf = "0.6"
+mupdf = { version = "0.6", default-features = false, features = ["system-fonts", "tesseract"] }
 serde_json = "1"
 image = { version = "0.25", features = ["png", "jpeg", "webp"] }
 
@@ -52,7 +52,10 @@ sysinfo = { version = "0.33", default-features = false, features = ["disk"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 docx-rs = "0.4"
 quick-xml = "0.36"
-mupdf = "0.6"
+# Only PDFs are opened, so MuPDF's other document handlers (XPS, SVG, CBZ,
+# HTML, EPUB, image files) and its JavaScript engine are left out.
+# tesseract stays for OCR.
+mupdf = { version = "0.6", default-features = false, features = ["system-fonts", "tesseract"] }
 
 # Updater only makes sense on desktop (Play Store handles app-store updates on Android).
 # mupdf-sys 0.6.0 ships wrapper/context.c which #includes "androidfonts.c" on Android
