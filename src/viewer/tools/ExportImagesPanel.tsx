@@ -1,7 +1,6 @@
 import { useState, useRef } from "react";
 import { LoadedFile } from "../../store/useAppStore";
-import { pickDirectory, showInFolder, exportFile } from "../../lib/tauri";
-import { isAndroid } from "../../lib/androidFileUtils";
+import { pickDirectory, showInFolder } from "../../lib/tauri";
 import { invoke } from "@tauri-apps/api/core";
 import { parsePages } from "../../lib/pageRange";
 
@@ -106,11 +105,7 @@ export function ExportImagesPanel({ file }: ExportImagesPanelProps) {
 
     setIsExporting(false);
     if (!cancelRef.current && outputPaths.length > 0) {
-      if (isAndroid()) {
-        exportFile(outputPaths[0]!).catch(() => {});
-      } else {
-        showInFolder(outputPaths[0]!).catch(() => {});
-      }
+      showInFolder(outputPaths[0]!).catch(() => {});
     }
   }
 

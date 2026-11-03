@@ -4,7 +4,6 @@ import { useAppStore, LoadedFile } from "../store/useAppStore";
 import { usePdfCommand } from "../hooks/usePdfCommand";
 import { imagesToPdf } from "../lib/tauri";
 import { open } from "@tauri-apps/plugin-dialog";
-import { isAndroid, pickFilesAndroid } from "../lib/androidFileUtils";
 
 import { UI } from "../lib/tokens";
 
@@ -27,11 +26,6 @@ export default function ImagesToPdf() {
   const { run } = usePdfCommand();
 
   const handleBrowse = useCallback(async () => {
-    if (isAndroid()) {
-      const picked = await pickFilesAndroid("image/png,image/jpeg,image/webp", true);
-      for (const { path, name } of picked) addFile({ path, name } as LoadedFile);
-      return;
-    }
     const selected = await open({
       multiple: true,
       filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] }],

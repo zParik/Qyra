@@ -1,6 +1,5 @@
 import { useState, type ReactElement } from "react";
 import { useNavigate } from "react-router-dom";
-import { isAndroid } from "../lib/androidFileUtils";
 import { IcArrowLeft, IcSun, IcFolder, IcRecent, IcConvert, IcInfo, type IconProps } from "../components/Icons";
 import { AppearanceSection } from "./settings/AppearanceSection";
 import { FilesSection } from "./settings/FilesSection";
@@ -25,9 +24,7 @@ export default function Settings() {
     { id: "appearance", label: "Appearance", Icon: IcSun,     render: () => <AppearanceSection /> },
     { id: "files",      label: "Files",      Icon: IcFolder,  render: () => <FilesSection /> },
     { id: "session",    label: "Session",    Icon: IcRecent,  render: () => <SessionSection /> },
-    ...(isAndroid()
-      ? []
-      : [{ id: "updates" as const, label: "Updates", Icon: IcConvert, render: () => <UpdatesSection /> }]),
+    { id: "updates",    label: "Updates",    Icon: IcConvert, render: () => <UpdatesSection /> },
     { id: "about",      label: "About",      Icon: IcInfo,    render: () => <AboutSection /> },
   ];
 

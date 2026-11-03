@@ -1,6 +1,5 @@
 import { useSetting } from "../../hooks/useSetting";
 import { Settings, CompressLevel } from "../../lib/settings";
-import { isAndroid, pickSaveFolderAndroid, saveFolderLabel } from "../../lib/androidFileUtils";
 import { pickDirectory } from "../../lib/tauri";
 import { SectionTitle, SettingRow, Toggle, Segmented } from "./ui";
 
@@ -11,13 +10,12 @@ const LEVELS: { value: CompressLevel; label: string }[] = [
 ];
 
 export function FilesSection() {
-  const android = isAndroid();
   const [level, setLevel] = useSetting(Settings.defaultCompressLevel);
   const [confirmOverwrite, setConfirmOverwrite] = useSetting(Settings.confirmBeforeOverwrite);
   const [saveFolder, setSaveFolder] = useSetting(Settings.defaultSaveFolder);
 
   async function browseFolder() {
-    const picked = android ? await pickSaveFolderAndroid() : await pickDirectory();
+    const picked = await pickDirectory();
     if (picked) setSaveFolder(picked);
   }
 
@@ -38,13 +36,11 @@ export function FilesSection() {
 
       <SettingRow
         label="Default save folder"
-        description={android
-          ? "Saved and exported PDFs go here instead of Downloads."
-          : "The folder the Save dialog opens in."}
+        description="The folder the Save dialog opens in."
       >
         <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
           <span className="t-meta" style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={saveFolder || undefined}>
-            {saveFolderLabel(saveFolder)}
+            {saveFolder || "Not set"}
           </span>
           <button type="button" onClick={browseFolder} className="btn-secondary btn-sm">
             Choose…
