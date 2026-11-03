@@ -674,14 +674,18 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Auto-fit zoom on small screens so the PDF isn't wider than the viewport
-  // (needs the page sizes, so it runs once they arrive).
+  // On open, fit the page to the pane when it would not fit at 100% (a narrow
+  // window), so it is not cut off at the right. Needs the page sizes and the
+  // pane width, so it waits for both; once per file, and a saved zoom wins.
+  const fittedPathRef = useRef<string | null>(null);
   useEffect(() => {
-    if (window.innerWidth >= 640 || !docInfo) return;
-    setZoom(Math.max(0.25, Math.min(1.0, fitWidthZoom(slotSizes, window.innerWidth))));
-  // Run once per document load, not on every zoom-driven slotSizes identity.
+    if (!docInfo || !containerWidth || !viewerFile || fittedPathRef.current === viewerFile.path) return;
+    fittedPathRef.current = viewerFile.path;
+    const fit = fitWidthZoom(slotSizes, containerWidth);
+    if (fit < 1 && zoomRef.current === 1) setZoom(Math.max(0.25, fit));
+  // Not on every zoom-driven slotSizes identity or later resize.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [docInfo]);
+  }, [docInfo, containerWidth]);
 
   // Keyboard shortcuts
   useEffect(() => {
