@@ -77,3 +77,21 @@ async fn remove_bates_is_a_safe_noop_when_absent() {
         .expect("remove bates");
     assert_eq!(page_count(&out), 5);
 }
+
+#[tokio::test]
+async fn anonymize_drops_the_stripped_xmp_stream_from_the_file() {
+    let mut doc = common::load_lopdf(&fixture_str("simple.pdf"));
+    let xmp = doc.add_object(lopdf::Stream::new(
+        lopdf::dictionary! { "Type" => "Metadata", "Subtype" => "XML" },
+        b"<x:xmpmeta><dc:creator>Secret Author</dc:creator></x:xmpmeta>".to_vec(),
+    ));
+    doc.catalog_mut().unwrap().set("Metadata", lopdf::Object::Reference(xmp));
+    let (_d, src) = temp_output("with-xmp.pdf");
+    doc.save(&src).unwrap();
+
+    let (_d2, out) = temp_output("anon.pdf");
+    anonymize_pdf(src, AnonymizeOptions { strip_xmp_metadata: true, ..Default::default() }, Some(out.clone()))
+        .expect("anonymize");
+    let bytes = std::fs::read(&out).unwrap();
+    assert!(!String::from_utf8_lossy(&bytes).contains("Secret Author"), "XMP still in the file");
+}

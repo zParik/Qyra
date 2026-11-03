@@ -143,6 +143,9 @@ pub fn anonymize_pdf(
         }
     }
 
+    // Stripping only unlinks objects; lopdf saves every object it holds, so
+    // without pruning the XMP stream and attachments stayed in the file.
+    doc.prune_objects();
     let out = output.unwrap_or_else(|| temp_output_path(&path, "anon"));
     doc.save(&out)?;
     report.output = out;
