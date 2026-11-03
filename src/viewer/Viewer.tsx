@@ -1149,7 +1149,8 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
   async function handleSaveAs() {
     if (!viewerFile) return;
     setSaveError(null);
-    const chosenPath = await showSaveDialog(viewerFile.path);
+    // The working copy of an edited document lives in the temp folder.
+    const chosenPath = await showSaveDialog(originalViewerPath ?? viewerFile.path);
     if (!chosenPath) return;
     setSaveStatus("saving");
     try {

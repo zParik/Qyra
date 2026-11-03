@@ -120,6 +120,14 @@ export const showSaveDialog = async (defaultPath?: string): Promise<string | nul
   return save({ defaultPath: effectivePath, filters: [{ name: "PDF", extensions: ["pdf"] }] });
 };
 
+/** `<name>_<suffix>.pdf` for a file named `name`: a bare name, so the save
+ *  dialog opens in the default save folder rather than the temp folder an
+ *  edited document's working copy lives in. */
+export function suggestedName(name: string, suffix: string): string {
+  const base = name.split(/[\\/]/).pop() ?? name;
+  return `${base.replace(/\.pdf$/i, "")}_${suffix}.pdf`;
+}
+
 export const writeBytes = (path: string, data: number[]) =>
   invoke<void>("write_bytes", { path, data });
 

@@ -3,7 +3,7 @@ import { ToolLayout } from "../components/ToolLayout";
 import { DropZone } from "../components/DropZone";
 import { useAppStore } from "../store/useAppStore";
 import { invoke } from "@tauri-apps/api/core";
-import { makeSearchable, ocrPage, showSaveDialog, openFile, copyFile } from "../lib/tauri";
+import { makeSearchable, ocrPage, showSaveDialog, openFile, copyFile, suggestedName } from "../lib/tauri";
 import type { OcrPage } from "../lib/tauri";
 
 import { UI } from "../lib/tokens";
@@ -83,9 +83,15 @@ export default function Ocr() {
   }
 
   async function handleSaveAs() {
-    if (!result) return;
-    const dest = await showSaveDialog(result.outputPath);
-    if (dest) await copyFile(result.outputPath, dest);
+    if (!result || !file) return;
+    // The result lives in the temp folder; offer a name next to the input's.
+    const dest = await showSaveDialog(suggestedName(file.name, "searchable"));
+    if (!dest) return;
+    try {
+      await copyFile(result.outputPath, dest);
+    } catch (e) {
+      setError(`Couldn't save the file: ${String(e)}`);
+    }
   }
 
   return (
@@ -165,7 +171,7 @@ export default function Ocr() {
           )}
 
           {/* Error */}
-          {status === "error" && error && (
+          {error && (
             <div style={{
               padding: "10px 12px",
               background: "var(--bad-soft)",
