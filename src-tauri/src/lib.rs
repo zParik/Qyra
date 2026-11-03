@@ -201,6 +201,7 @@ pub fn run() {
             page_count::get_file_size,
             disk::get_disk_space,
             ocr::make_searchable,
+            ocr::ocr_page,
             watermark::add_watermark,
             outline::get_outline,
             outline::detect_outline,

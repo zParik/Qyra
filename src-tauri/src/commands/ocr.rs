@@ -1,13 +1,15 @@
+use std::path::Path;
+
 use lopdf::{Dictionary, Document, Object, Stream};
-use serde::Deserialize;
-use tauri::Emitter;
+use serde::{Deserialize, Serialize};
+use tauri::{Emitter, Manager};
 
 use crate::utils::paths::temp_output_path;
 use crate::utils::progress::Progress;
 use crate::utils::get_page_dims;
 use crate::error::{AppError, AppResult};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct OcrWord {
     pub text: String,
     /// Normalized horizontal position [0, 1] from left edge
@@ -15,15 +17,102 @@ pub struct OcrWord {
     /// Normalized vertical position [0, 1] from top edge (image coords)
     pub y: f64,
     /// Normalized width [0, 1]
-    #[allow(dead_code)] // part of the deserialized JS contract
     pub w: f64,
     /// Normalized height [0, 1]
     pub h: f64,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct OcrPage {
     pub words: Vec<OcrWord>,
+}
+
+/// Raster resolution the page is recognized at. 300 DPI is tesseract's sweet
+/// spot for body text.
+const OCR_DPI: u32 = 300;
+
+/// Recognize the words on 1-based `page` of `path`, offline, with the English
+/// model bundled under the app's `resources/tessdata`.
+#[tauri::command]
+pub async fn ocr_page(path: String, page: u32, app_handle: tauri::AppHandle) -> AppResult<OcrPage> {
+    let tessdata = app_handle
+        .path()
+        .resolve("resources/tessdata", tauri::path::BaseDirectory::Resource)
+        .map_err(|e| AppError::Other(format!("OCR language data not found: {e}")))?;
+    tokio::task::spawn_blocking(move || ocr_page_core(&path, page, &tessdata))
+        .await
+        .map_err(|e| AppError::Other(e.to_string()))?
+}
+
+/// OCR core (no Tauri runtime). MuPDF's built-in tesseract rasterizes the page
+/// into a throwaway PDF with an invisible text layer; that layer is then read
+/// back as word boxes normalized to the page, top-left origin.
+pub fn ocr_page_core(path: &str, page: u32, tessdata: &Path) -> AppResult<OcrPage> {
+    let _t = crate::utils::timing::Timer::start("ocr_page", format!("p{page}"));
+    let datadir = tessdata.to_str().ok_or_else(|| AppError::Invalid("OCR data path is not UTF-8".into()))?;
+    if datadir.contains(',') {
+        return Err(AppError::Invalid("OCR data path must not contain a comma".into()));
+    }
+    let doc = mupdf::Document::open(path)?;
+    let src = doc.load_page(page as i32 - 1)?;
+    let bounds = src.bounds()?;
+
+    let tmp = tempfile::Builder::new().suffix(".pdf").tempfile()?;
+    let tmp_path = tmp.path().to_str().ok_or_else(|| AppError::Other("temp path is not UTF-8".into()))?;
+    {
+        let options = format!("compression=flate,resolution={OCR_DPI},ocr-language=eng,ocr-datadir={datadir}");
+        let mut writer = mupdf::DocumentWriter::with_ocr(tmp_path, &options)?;
+        let device = writer.begin_page(bounds)?;
+        src.run(&device, &mupdf::Matrix::IDENTITY)?;
+        writer.end_page(device)?;
+    } // dropping the writer finishes the file
+
+    let ocr = mupdf::Document::open(tmp_path)?;
+    let p = ocr.load_page(0)?;
+    let b = p.bounds()?;
+    let (pw, ph) = ((b.x1 - b.x0) as f64, (b.y1 - b.y0) as f64);
+    if pw <= 0.0 || ph <= 0.0 {
+        return Ok(OcrPage { words: vec![] });
+    }
+
+    let mut words = Vec::new();
+    let stext = p.to_text_page(mupdf::TextPageFlags::empty())?;
+    for block in stext.blocks() {
+        for line in block.lines() {
+            // Split the line into words at whitespace, each with the union of
+            // its glyph boxes.
+            let mut text = String::new();
+            let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+            let mut flush = |text: &mut String, x0: &mut f64, y0: &mut f64, x1: &mut f64, y1: &mut f64| {
+                if !text.is_empty() && *x1 > *x0 && *y1 > *y0 {
+                    words.push(OcrWord {
+                        text: std::mem::take(text),
+                        x: ((*x0 - b.x0 as f64) / pw).clamp(0.0, 1.0),
+                        y: ((*y0 - b.y0 as f64) / ph).clamp(0.0, 1.0),
+                        w: (*x1 - *x0) / pw,
+                        h: (*y1 - *y0) / ph,
+                    });
+                }
+                text.clear();
+                (*x0, *y0, *x1, *y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+            };
+            for ch in line.chars() {
+                let Some(c) = ch.char() else { continue };
+                if c.is_whitespace() {
+                    flush(&mut text, &mut x0, &mut y0, &mut x1, &mut y1);
+                    continue;
+                }
+                let q = ch.quad();
+                text.push(c);
+                x0 = x0.min(q.ul.x.min(q.ll.x) as f64);
+                y0 = y0.min(q.ul.y.min(q.ur.y) as f64);
+                x1 = x1.max(q.ur.x.max(q.lr.x) as f64);
+                y1 = y1.max(q.ll.y.max(q.lr.y) as f64);
+            }
+            flush(&mut text, &mut x0, &mut y0, &mut x1, &mut y1);
+        }
+    }
+    Ok(OcrPage { words })
 }
 
 /// Embed an invisible OCR text layer into each page of the PDF, making it
