@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { ToolLayout } from "../components/ToolLayout";
 import { pickDirectory } from "../lib/tauri";
+import { loadSetting, Settings } from "../lib/settings";
 import { UI } from "../lib/tokens";
 
 type Op =
@@ -92,7 +93,9 @@ export default function BatchOps() {
   async function runOne(row: RowState, output: string): Promise<string> {
     switch (op) {
       case "compress":
-        await invoke("compress_pdf", { path: row.path, output, level: 2 });
+        // The level chosen in Settings (lossless by default); a fixed level 2
+        // silently degraded every image in the batch.
+        await invoke("compress_pdf", { path: row.path, output, level: await loadSetting(Settings.defaultCompressLevel) });
         return output;
       case "flatten":
         await invoke("flatten_pdf", { path: row.path, output });
@@ -111,7 +114,8 @@ export default function BatchOps() {
       case "page-numbers":
         await invoke("add_page_numbers", {
           path: row.path,
-          options: { startAt: 1, position: "bottom-center", fontSize: 10, margin: 20 },
+          // snake_case: PageNumberOptions has no serde rename.
+          options: { start_at: 1, position: "bottom-center", font_size: 10, margin: 20 },
           output,
         });
         return output;
