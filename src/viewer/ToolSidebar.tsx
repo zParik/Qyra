@@ -136,9 +136,13 @@ function ToolSidebarImpl({ file, onApplied, activeTool, onToolChange, selectedPa
     if (forceCommentsTab) setTab("comments");
   }, [forceCommentsTab]);
 
-  // Close panel on Esc
+  // Close panel on Esc — only in the visible tab: hidden tabs stay mounted,
+  // and visibility is inherited, so this sidebar's own computed style says.
+  const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      const root = rootRef.current;
+      if (!root || getComputedStyle(root).visibility !== "visible") return;
       if (e.key === "Escape" && activeTool) setActiveTool(null);
     }
     window.addEventListener("keydown", onKey);
@@ -197,7 +201,7 @@ function ToolSidebarImpl({ file, onApplied, activeTool, onToolChange, selectedPa
   }
 
   return (
-    <div className="vside">
+    <div className="vside" ref={rootRef}>
       <div className="panel-head vside-head">
         <div className="seg seg-full" role="tablist" aria-label="Sidebar">
           {(["tools", "outline", "comments"] as SidebarTab[]).map((t) => (
