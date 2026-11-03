@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "../store/useAppStore";
@@ -140,6 +140,10 @@ export default function Home({ onOpenPdf }: HomeProps = {}) {
     e.preventDefault(); setDragging(false);
   }, []);
 
+  // Home stays mounted, hidden, under documents and tool pages; a drop meant
+  // for those (Merge's drop zone, say) must not also open a file here.
+  // Visibility is inherited, so the root's computed style says if it shows.
+  const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     (async () => {
@@ -147,6 +151,8 @@ export default function Home({ onOpenPdf }: HomeProps = {}) {
         const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
         const webview = getCurrentWebviewWindow();
         unlisten = await webview.onDragDropEvent(async (event) => {
+          const root = rootRef.current;
+          if (!root || getComputedStyle(root).visibility !== "visible") return;
           if (event.payload.type === "over") {
             setDragging(true);
           } else if (event.payload.type === "leave") {
@@ -182,7 +188,7 @@ export default function Home({ onOpenPdf }: HomeProps = {}) {
   const last = nonArchived[0] ?? null;
 
   return (
-    <div className="home">
+    <div className="home" ref={rootRef}>
       <LeftRail
         active={activeSection}
         onPick={handleRailPick}
