@@ -51,7 +51,7 @@ v1.4.0 came out on 30 June 2026. Then uni happened xd, and the repo didn't move 
 - page text looked like 144p next to Firefox's viewer;
 - printing on Linux only gave you print-to-file.
 
-So I rewrote most of it: 124 commits on the `revamp` branch, all but one of them between 11 October and 3 November. None of it is in a release yet; v1.4.0 on the Releases page is the old app.
+So I rewrote most of it: 130 commits on the `revamp` branch, all but one of them between 11 October and 4 November. It shipped as v2.0.0.
 
 ### Sharper pages
 
@@ -94,16 +94,35 @@ The UI was cramped (10 to 12 px text) and the viewer and tool pages looked like 
 
 ### Still to do
 
-Printing still goes through the web view. On Windows that works; on Linux you mostly get print-to-file. A native print path is next, then a release with all of the above.
+Printing still goes through the web view. On Windows that works; on Linux you mostly get print-to-file. A native print path is next.
 
 ## Download
 
-Get a build from [Releases](https://github.com/zParik/Qyra/releases), or a nightly from the latest [Actions run](https://github.com/zParik/Qyra/actions). The revamp is not in a release yet.
+Get a build from [Releases](https://github.com/zParik/Qyra/releases), or a nightly from the latest [Actions run](https://github.com/zParik/Qyra/actions).
 
 | Platform | Formats                       |
 |----------|-------------------------------|
 | Windows  | `.msi`, `.exe` (NSIS)         |
 | Linux    | `.AppImage`, `.deb`, `.rpm`   |
+
+### Linux install script
+
+This puts the latest AppImage in `~/.local/bin/qyra`, checks its sha256 against the release, and adds a menu entry that opens PDFs. Run it again to update.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zParik/Qyra/main/scripts/install.sh | bash
+```
+
+Add `-s -- --default` after `bash` to also make Qyra your default PDF app, or `-s -- --uninstall` to remove it. AppImages need FUSE 2 (`fuse2` on Arch); the script tells you if it's missing.
+
+### Arch Linux
+
+`packaging/aur/PKGBUILD` builds a `qyra-bin` package from the release `.deb`:
+
+```bash
+git clone https://github.com/zParik/Qyra && cd Qyra/packaging/aur
+makepkg -si
+```
 
 ### Linux on Wayland
 
