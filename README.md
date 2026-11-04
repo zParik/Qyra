@@ -49,9 +49,9 @@ v1.4.0 came out on 30 June 2026. Then uni happened xd, and the repo didn't move 
 - the compressor was garbling some images, even at its lossless level;
 - opening a 60 MB PDF could take 2.2 GB of RAM;
 - page text looked like 144p next to Firefox's viewer;
-- printing on Linux only gave you print-to-file.
+- printing a long PDF took minutes, and on Linux it printed a blank page.
 
-So I rewrote most of it: 130 commits on the `revamp` branch, all but one of them between 11 October and 4 November. It shipped as v2.0.0.
+So I rewrote most of it: 133 commits on the `revamp` branch, all but one of them between 11 October and 4 November. It shipped as v2.0.0.
 
 ### Sharper pages
 
@@ -92,9 +92,9 @@ The UI was cramped (10 to 12 px text) and the viewer and tool pages looked like 
 - **PDF to Word export.** It pulled in heavy dependencies and Qyra stays a PDF tool.
 - **Tesseract.js.** OCR now uses MuPDF's built-in Tesseract, with English data bundled, so it still works offline.
 
-### Still to do
+### Printing
 
-Printing still goes through the web view. On Windows that works; on Linux you mostly get print-to-file. A native print path is next.
+Printing used to render every page into the web view before any dialog showed up: about five minutes for a long PDF, with the window frozen meanwhile, and then a blank page on Linux. On Linux, Ctrl+P now opens GTK's own print dialog straight away and MuPDF renders each page at 200 dpi as it prints. On Windows it still uses the web view's dialog, but the pages render in Rust off the UI thread, with a progress toast.
 
 ## Download
 
@@ -137,6 +137,7 @@ WEBKIT_DISABLE_DMABUF_RENDERER=1 ./Qyra.AppImage
 ### Viewer
 - Tabs that survive a restart; opening a PDF while Qyra runs adds a tab to the open window
 - Page strip with drag-to-reorder, find (Ctrl+F), zoom (Ctrl+wheel or pinch)
+- Print, through GTK's native dialog on Linux
 - Outline, metadata, recent-files library, command palette, light and dark theme
 
 ### Mark up

@@ -63,6 +63,11 @@ curl -fsSL https://raw.githubusercontent.com/zParik/Qyra/main/scripts/install.sh
 
 ### Desktop
 
+- **Native printing on Linux.** Ctrl+P opens GTK's print dialog straight
+  away, with preview, and MuPDF renders each page at 200 dpi as it prints.
+  Printing used to prepare every page first (minutes on a long PDF, with the
+  window frozen meanwhile) and then print a blank page on Linux. On Windows
+  the pages now render off the UI thread, with a progress toast and Cancel.
 - Opening a PDF while Qyra runs adds a tab to the running window instead of
   starting a second copy.
 - "Open with Qyra" from a Linux file manager now passes the file.
@@ -78,10 +83,10 @@ curl -fsSL https://raw.githubusercontent.com/zParik/Qyra/main/scripts/install.sh
 
 ---
 
-### What comes next
+### Install on Linux
 
-- Native printing. Printing still goes through the web view, which on Linux
-  mostly offers print-to-file.
+- `scripts/install.sh` installs the AppImage for your user and adds a menu
+  entry; `packaging/aur/PKGBUILD` builds a `qyra-bin` package for Arch.
 
 ## [1.4.0] — 2026-06-30 · Inline Markup
 
