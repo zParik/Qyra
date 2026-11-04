@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { LoadedFile } from "../../store/useAppStore";
-import { addWatermark, showSaveDialog, copyFile } from "../../lib/tauri";
+import { addWatermark, showSaveDialog, copyFile, suggestedName } from "../../lib/tauri";
 import type { WatermarkOptions } from "../../lib/tauri";
 import { ProgressBar, Spinner } from "../../components/ProgressBar";
 import { sanitizeError, type ProgressData } from "../usePanelCommand";
@@ -76,8 +76,13 @@ export function WatermarkPanel({ file, onApplied }: Props) {
 
   async function handleSaveAs() {
     if (!outputPath) return;
-    const dest = await showSaveDialog(outputPath);
-    if (dest) await copyFile(outputPath, dest);
+    const dest = await showSaveDialog(suggestedName(file.name, "watermarked"));
+    if (!dest) return;
+    try {
+      await copyFile(outputPath, dest);
+    } catch (e) {
+      setError(sanitizeError(e));
+    }
   }
 
   return (
@@ -224,7 +229,7 @@ export function WatermarkPanel({ file, onApplied }: Props) {
         disabled={isProcessing || !text.trim()}
         className="v-btn-primary w-full"
       >
-        Apply Watermark
+        Apply watermark
       </button>
 
       {isProcessing && (

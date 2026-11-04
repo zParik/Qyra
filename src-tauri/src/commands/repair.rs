@@ -28,7 +28,6 @@ fn file_size(path: &str) -> u64 {
     std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
 }
 
-#[cfg(not(target_os = "android"))]
 fn rasterize_pages(path: &str, dpi: u32) -> AppResult<(String, usize)> {
     use lopdf::content::{Content, Operation};
     use lopdf::{dictionary, Dictionary, Object, Stream};
@@ -132,13 +131,8 @@ fn rasterize_pages(path: &str, dpi: u32) -> AppResult<(String, usize)> {
     doc.trailer.set("Root", Object::Reference(catalog_id));
 
     let out = temp_output_path(path, "repaired");
-    doc.save(&out)?;
+    crate::utils::save_pdf(&mut doc, &out)?;
     Ok((out, page_count))
-}
-
-#[cfg(target_os = "android")]
-fn rasterize_pages(_path: &str, _dpi: u32) -> AppResult<(String, usize)> {
-    Err(AppError::Other("rasterize repair unavailable on Android".into()))
 }
 
 #[tauri::command]
@@ -158,7 +152,7 @@ pub async fn repair_pdf(
                 let page_count = doc.get_pages().len();
                 let mut doc = doc;
                 let out = output.clone().unwrap_or_else(|| temp_output_path(&path, "repaired"));
-                match doc.save(&out) {
+                match crate::utils::save_pdf(&mut doc, &out) {
                     Ok(_) => {
                         return Ok(RepairReport {
                             output: out.clone(),
@@ -183,8 +177,11 @@ pub async fn repair_pdf(
         let (raster_out, page_count) = rasterize_pages(&path, dpi)?;
         let final_out = match output {
             Some(custom) => {
-                std::fs::rename(&raster_out, &custom)
+                // Not fs::rename: the temp dir is often another filesystem
+                // (tmpfs), where rename fails with EXDEV.
+                crate::utils::paths::replace_file_with_copy(raster_out.as_ref(), custom.as_ref(), || {})
                     .map_err(|e| AppError::Other(format!("move output: {}", e)))?;
+                let _ = std::fs::remove_file(&raster_out);
                 custom
             }
             None => raster_out,

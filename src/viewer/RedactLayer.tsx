@@ -58,6 +58,11 @@ export function RedactLayer({
       if (!layer) return;
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+      // Only a selection made in this tab's pages. Hidden tabs keep their
+      // layout, so without this a background tab in redact mode captured the
+      // visible tab's selection as marks on its own document.
+      const pages = layer.closest("[data-viewer-pages]");
+      if (!pages || !sel.anchorNode || !pages.contains(sel.anchorNode)) return;
       const layerRect = layer.getBoundingClientRect();
       if (layerRect.width <= 0 || layerRect.height <= 0) return;
 

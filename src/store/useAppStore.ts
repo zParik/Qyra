@@ -69,6 +69,10 @@ interface AppState {
   openTab: (entry: TabEntry) => void;
   closeTab: (index: number) => void;
   activateTab: (index: number) => void;
+  /** Open a PDF: focus its tab if already open, else replace the Library tab in front or add a tab. */
+  openDocument: (path: string, name: string) => void;
+  /** Bring the Library forward: its tab if one is open, else a new one. */
+  showLibrary: () => void;
   reorderTab: (from: number, to: number) => void;
   replaceTab: (index: number, entry: TabEntry) => void;
   reopenClosedTab: () => TabEntry | undefined;
@@ -123,7 +127,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setCancelFn: (cancelFn) => set({ cancelFn }),
   setFiles: (files) => set({ files }),
-  addFile: (file) => set((s) => ({ files: [...s.files, file] })),
+  // A file already in the list (dropped or picked twice) is not added again.
+  addFile: (file) => set((s) => (s.files.some((f) => f.path === file.path) ? s : { files: [...s.files, file] })),
   removeFile: (path) => set((s) => ({ files: s.files.filter((f) => f.path !== path) })),
   reorderFiles: (fromIndex, toIndex) =>
     set((s) => {
@@ -166,6 +171,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       const tab = s.openTabs[index];
       const newTabs = s.openTabs.filter((_, i) => i !== index);
       let newActive = s.activeTabIndex;
+      // A tab to the left closing shifts the active one down a place.
+      if (index < newActive) newActive--;
       if (newActive >= newTabs.length) newActive = newTabs.length - 1;
       const tabFiles = { ...s.tabFiles };
       const tabUndo = { ...s.tabUndo };
@@ -190,6 +197,29 @@ export const useAppStore = create<AppState>((set, get) => ({
       const next: SyncSlice = { ...s, activeTabIndex: index };
       return { activeTabIndex: index, ...legacySync(next) };
     }),
+
+  openDocument: (path, name) => {
+    const s = get();
+    const active = s.openTabs[s.activeTabIndex];
+    if (s.openTabs.some((t) => t.path === path)) {
+      // Already open: bring that tab forward with its unsaved state intact. A
+      // Library tab it was opened from closes rather than becoming a duplicate.
+      if (active?.type === "home") s.closeTab(s.activeTabIndex);
+      const after = get();
+      after.activateTab(after.openTabs.findIndex((t) => t.path === path));
+      return;
+    }
+    s.setTabOriginal(path, path);
+    s.setTabDirty(path, false);
+    s.setTabUndo(path, null);
+    if (active?.type === "home") s.replaceTab(s.activeTabIndex, { type: "pdf", path, name });
+    else s.openTab({ type: "pdf", path, name });
+  },
+
+  showLibrary: () => {
+    const home = get().openTabs.find((t) => t.type === "home");
+    get().openTab(home ?? { type: "home", path: `__home__${Date.now()}`, name: "Library" });
+  },
 
   reorderTab: (from, to) =>
     set((s) => {

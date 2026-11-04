@@ -1,7 +1,7 @@
 use lopdf::{Dictionary, Document, Object, ObjectId, Stream};
 use lopdf::content::{Content, Operation};
 use crate::utils::paths::temp_output_path;
-use crate::utils::get_page_dims;
+use crate::utils::geometry::PageGeom;
 use crate::error::{AppError, AppResult};
 
 #[allow(dead_code)]
@@ -41,7 +41,7 @@ pub(crate) fn hex_to_rgb_f32(hex: &str) -> (f32, f32, f32) {
 }
 
 fn parse_page_annots(doc: &Document, page: u32, page_id: ObjectId) -> Vec<PdfAnnotation> {
-    let (pw, ph) = get_page_dims(doc, page_id);
+    let geom = PageGeom::of(doc, page_id);
 
     enum AnnotsKind {
         Inline(Vec<ObjectId>),
@@ -112,10 +112,7 @@ fn parse_page_annots(doc: &Document, page: u32, page_id: ObjectId) -> Vec<PdfAnn
             _ => continue,
         };
 
-        let norm_x0 = rx0 / pw;
-        let norm_y0 = (ph - ry1) / ph;
-        let norm_x1 = rx1 / pw;
-        let norm_y1 = (ph - ry0) / ph;
+        let [norm_x0, norm_y0, norm_x1, norm_y1] = geom.rect_to_norm([rx0, ry0, rx1, ry1]);
         let rect = [
             norm_x0.clamp(0.0, 1.0),
             norm_y0.clamp(0.0, 1.0),
@@ -129,7 +126,7 @@ fn parse_page_annots(doc: &Document, page: u32, page_id: ObjectId) -> Vec<PdfAnn
         };
 
         let contents = match annot_dict.get(b"Contents") {
-            Ok(Object::String(bytes, _)) => Some(String::from_utf8_lossy(bytes).to_string()),
+            Ok(Object::String(bytes, _)) => Some(crate::utils::pdf_text::decode(bytes)),
             _ => None,
         };
 
@@ -138,8 +135,7 @@ fn parse_page_annots(doc: &Document, page: u32, page_id: ObjectId) -> Vec<PdfAnn
                 let pts: Vec<f64> = arr.chunks(2)
                     .flat_map(|pair| {
                         if pair.len() == 2 {
-                            let qx = obj_to_f64(&pair[0]) / pw;
-                            let qy = (ph - obj_to_f64(&pair[1])) / ph;
+                            let (qx, qy) = geom.to_norm(obj_to_f64(&pair[0]), obj_to_f64(&pair[1]));
                             vec![qx.clamp(0.0, 1.0), qy.clamp(0.0, 1.0)]
                         } else {
                             vec![]
@@ -257,14 +253,13 @@ pub async fn add_pdf_annotation(
         let page_id = page_map.get(&annotation.page).copied()
             .ok_or_else(|| AppError::NotFound(format!("Page {} not found", annotation.page)))?;
 
-        let (pw, ph) = get_page_dims(&doc, page_id);
+        let geom = PageGeom::of(&doc, page_id);
 
-        // Convert normalized screen coords back to PDF coords (bottom-left origin)
-        // annotation.rect = [x0, y0, x1, y1] top-left origin, normalized
-        let x0_pdf = annotation.rect[0] * pw;
-        let y0_pdf = (1.0 - annotation.rect[3]) * ph;  // bottom of box in PDF
-        let x1_pdf = annotation.rect[2] * pw;
-        let y1_pdf = (1.0 - annotation.rect[1]) * ph;  // top of box in PDF
+        // annotation.rect = [x0, y0, x1, y1] normalised to the page as shown
+        // (top-left origin); map it to user space (bottom-left origin).
+        let [x0_pdf, y0_pdf, x1_pdf, y1_pdf] = geom.rect_to_pdf(
+            annotation.rect[0], annotation.rect[1], annotation.rect[2], annotation.rect[3],
+        );
 
         let (r, g, b) = hex_to_rgb_f32(&annotation.color);
 
@@ -290,17 +285,11 @@ pub async fn add_pdf_annotation(
         annot_dict.set("CA", Object::Real(1.0_f32));
 
         if let Some(contents) = &annotation.contents {
-            annot_dict.set("Contents", Object::String(
-                contents.as_bytes().to_vec(),
-                lopdf::StringFormat::Literal,
-            ));
+            annot_dict.set("Contents", crate::utils::pdf_text::encode(contents));
         }
 
         if let Some(author) = &annotation.author {
-            annot_dict.set("T", Object::String(
-                author.as_bytes().to_vec(),
-                lopdf::StringFormat::Literal,
-            ));
+            annot_dict.set("T", crate::utils::pdf_text::encode(author));
         }
 
         // Stamp /Name field (e.g. /Approved, /Confidential)
@@ -315,8 +304,7 @@ pub async fn add_pdf_annotation(
             let quad_objs: Vec<Object> = qp.chunks(2)
                 .flat_map(|pair| {
                     if pair.len() == 2 {
-                        let qx = pair[0] * pw;
-                        let qy = (1.0 - pair[1]) * ph;
+                        let (qx, qy) = geom.to_pdf(pair[0], pair[1]);
                         vec![Object::Real(qx as f32), Object::Real(qy as f32)]
                     } else {
                         vec![]
@@ -345,23 +333,31 @@ pub async fn add_pdf_annotation(
             let w = (x1_pdf - x0_pdf) as f32;
             let h = (y1_pdf - y0_pdf) as f32;
 
-            // Per-line rects in AP-local space (bottom-left origin, relative to bbox).
-            let mut lines: Vec<(f32, f32, f32, f32)> = Vec::new(); // (x, y, width, height)
+            // Per-line quads in AP-local space (bottom-left origin, relative to
+            // bbox) as [UL, UR, LL, LR]. Mapping each corner keeps the shape
+            // right on rotated pages, where text lines run vertically.
+            type Pt = (f32, f32);
+            let mut lines: Vec<[Pt; 4]> = Vec::new();
             if let Some(qp) = &annotation.quad_points {
-                let to_local = |nx: f64, ny: f64| -> (f32, f32) {
-                    ((nx * pw - x0_pdf) as f32, ((1.0 - ny) * ph - y0_pdf) as f32)
+                let to_local = |nx: f64, ny: f64| -> Pt {
+                    let (x, y) = geom.to_pdf(nx, ny);
+                    ((x - x0_pdf) as f32, (y - y0_pdf) as f32)
                 };
                 for c in qp.chunks(8) {
                     if c.len() < 8 { continue; }
-                    let (_ulx, uly) = to_local(c[0], c[1]);
-                    let (llx, lly) = to_local(c[4], c[5]);
-                    let (lrx, _lry) = to_local(c[6], c[7]);
-                    lines.push((llx, lly, lrx - llx, uly - lly));
+                    lines.push([
+                        to_local(c[0], c[1]),
+                        to_local(c[2], c[3]),
+                        to_local(c[4], c[5]),
+                        to_local(c[6], c[7]),
+                    ]);
                 }
             }
             if lines.is_empty() {
-                lines.push((0.0, 0.0, w, h)); // whole-bbox fallback
+                lines.push([(0.0, h), (w, h), (0.0, 0.0), (w, 0.0)]); // whole-bbox fallback
             }
+            // The point `t` of the way from the bottom edge to the top edge.
+            let lerp = |a: Pt, b: Pt, t: f32| -> Pt { (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t) };
 
             let mut ap_ops = vec![Operation::new("q", vec![])];
             if annotation.subtype == "Highlight" {
@@ -372,10 +368,12 @@ pub async fn add_pdf_annotation(
                 ap_ops.push(Operation::new("rg", vec![
                     Object::Real(r), Object::Real(g), Object::Real(b),
                 ]));
-                for (x, y, lw, lh) in &lines {
-                    ap_ops.push(Operation::new("re", vec![
-                        Object::Real(*x), Object::Real(*y), Object::Real(*lw), Object::Real(*lh),
-                    ]));
+                for [ul, ur, ll, lr] in &lines {
+                    ap_ops.push(Operation::new("m", vec![Object::Real(ll.0), Object::Real(ll.1)]));
+                    for p in [lr, ur, ul] {
+                        ap_ops.push(Operation::new("l", vec![Object::Real(p.0), Object::Real(p.1)]));
+                    }
+                    ap_ops.push(Operation::new("h", vec![]));
                     ap_ops.push(Operation::new("f", vec![]));
                 }
             } else {
@@ -383,13 +381,15 @@ pub async fn add_pdf_annotation(
                     Object::Real(r), Object::Real(g), Object::Real(b),
                 ]));
                 let strike = annotation.subtype == "StrikeOut";
-                for (x, y, lw, lh) in &lines {
+                for [ul, ur, ll, lr] in &lines {
+                    let lh = ((ul.0 - ll.0).powi(2) + (ul.1 - ll.1).powi(2)).sqrt();
                     let thick = (lh * 0.07).max(0.75);
                     // StrikeOut crosses the middle; Underline sits near the baseline.
-                    let ly = if strike { y + lh / 2.0 } else { y + lh * 0.08 };
+                    let t = if strike { 0.5 } else { 0.08 };
+                    let (a, b) = (lerp(*ll, *ul, t), lerp(*lr, *ur, t));
                     ap_ops.push(Operation::new("w", vec![Object::Real(thick)]));
-                    ap_ops.push(Operation::new("m", vec![Object::Real(*x), Object::Real(ly)]));
-                    ap_ops.push(Operation::new("l", vec![Object::Real(x + lw), Object::Real(ly)]));
+                    ap_ops.push(Operation::new("m", vec![Object::Real(a.0), Object::Real(a.1)]));
+                    ap_ops.push(Operation::new("l", vec![Object::Real(b.0), Object::Real(b.1)]));
                     ap_ops.push(Operation::new("S", vec![]));
                 }
             }
@@ -424,19 +424,9 @@ pub async fn add_pdf_annotation(
         let annot_id = doc.add_object(annot_dict);
 
         // Add the annotation reference to the page's /Annots array
-        let page_obj = doc.get_object_mut(page_id)?;
-        if let Object::Dictionary(page_dict) = page_obj {
-            match page_dict.get_mut(b"Annots") {
-                Ok(Object::Array(arr)) => {
-                    arr.push(Object::Reference(annot_id));
-                }
-                _ => {
-                    page_dict.set("Annots", Object::Array(vec![Object::Reference(annot_id)]));
-                }
-            }
-        }
+        crate::utils::annots::push_annot_ref(&mut doc, page_id, annot_id)?;
 
-        doc.save(&out)?;
+        crate::utils::save_pdf(&mut doc, &out)?;
         Ok(out)
     })
     .await

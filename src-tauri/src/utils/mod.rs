@@ -1,5 +1,9 @@
+pub mod annots;
+pub mod geometry;
 pub mod paths;
+pub mod pdf_text;
 pub mod progress;
+pub mod thread_priority;
 pub mod timing;
 
 /// Return the effective (width, height) of a PDF page in user-space units.
@@ -54,4 +58,140 @@ pub fn fnv1a(s: &str) -> u64 {
 /// Returns fnv1a(s) formatted as a zero-padded 16-character hex string.
 pub fn fnv1a_hex(s: &str) -> String {
     format!("{:016x}", fnv1a(s))
+}
+
+/// Paint the stream `stamp_id` over the page's existing content.
+///
+/// The original streams are wrapped in `q` … `Q`, so whatever graphics state
+/// they leave behind (a flipped CTM, a clip) is undone before the stamp, which
+/// therefore draws in the page's initial coordinate system. Prepending the
+/// stamp instead put it under the content, invisible on a scanned page. The two
+/// wrapper streams carry `tag` like the stamp, so removing every stream tagged
+/// `tag` restores the page's original Contents.
+pub fn put_overlay_on_top(
+    doc: &mut lopdf::Document,
+    page_id: lopdf::ObjectId,
+    stamp_id: lopdf::ObjectId,
+    tag: &str,
+) -> Result<(), lopdf::Error> {
+    use lopdf::{Dictionary, Object, Stream};
+    let existing: Vec<Object> = match doc.get_dictionary(page_id)?.get(b"Contents") {
+        Ok(Object::Array(arr)) => arr.clone(),
+        Ok(r @ Object::Reference(_)) => vec![r.clone()],
+        _ => vec![],
+    };
+    let mut contents = Vec::with_capacity(existing.len() + 3);
+    if !existing.is_empty() {
+        let mut wrap = |body: &[u8]| {
+            let mut d = Dictionary::new();
+            d.set(tag, Object::Boolean(true));
+            Object::Reference(doc.add_object(Stream::new(d, body.to_vec())))
+        };
+        let (open, close) = (wrap(b"q\n"), wrap(b"\nQ\n"));
+        contents.push(open);
+        contents.extend(existing);
+        contents.push(close);
+    }
+    contents.push(Object::Reference(stamp_id));
+    if let Object::Dictionary(dict) = doc.get_object_mut(page_id)? {
+        dict.set("Contents", Object::Array(contents));
+    }
+    Ok(())
+}
+
+/// Give every page that inherits its /Resources from the page tree a copy of
+/// its own.
+///
+/// Commands that add a font or image to a page's resources otherwise found
+/// none on the page and created an empty /Resources there, which hides the
+/// inherited fonts and images (a scan's page image disappeared). A copy rather
+/// than a shared reference, so adding to one page leaves the others alone.
+pub fn own_inherited_resources(doc: &mut lopdf::Document) {
+    use lopdf::Object;
+    for page_id in doc.get_pages().into_values() {
+        let Ok(page) = doc.get_dictionary(page_id) else { continue };
+        if page.has(b"Resources") {
+            continue;
+        }
+        // Walk up /Parent (bounded: the tree may be cyclic in broken files).
+        let mut node = page.get(b"Parent").ok().and_then(|p| p.as_reference().ok());
+        let mut inherited = None;
+        for _ in 0..64 {
+            let Some(id) = node else { break };
+            let Ok(dict) = doc.get_dictionary(id) else { break };
+            if let Ok(res) = dict.get(b"Resources") {
+                inherited = match res {
+                    Object::Reference(r) => doc.get_dictionary(*r).ok().cloned(),
+                    Object::Dictionary(d) => Some(d.clone()),
+                    _ => None,
+                };
+                break;
+            }
+            node = dict.get(b"Parent").ok().and_then(|p| p.as_reference().ok());
+        }
+        if let (Some(res), Ok(page)) = (inherited, doc.get_dictionary_mut(page_id)) {
+            page.set("Resources", Object::Dictionary(res));
+        }
+    }
+}
+
+/// Add `xobj` to the page's /XObject resources under a fresh name starting
+/// with `prefix`, and return the name. Handles inline and indirect
+/// /Resources and /XObject dictionaries.
+pub fn add_page_xobject(
+    doc: &mut lopdf::Document,
+    page_id: lopdf::ObjectId,
+    prefix: &str,
+    xobj: lopdf::ObjectId,
+) -> lopdf::Result<String> {
+    use lopdf::{Dictionary, Document, Object, ObjectId};
+    if !doc.get_dictionary(page_id)?.has(b"Resources") {
+        doc.get_dictionary_mut(page_id)?.set("Resources", Dictionary::new());
+    }
+    let res_ref = doc.get_dictionary(page_id)?.get(b"Resources")?.as_reference().ok();
+    fn res_mut(doc: &mut Document, page_id: ObjectId, r: Option<ObjectId>) -> lopdf::Result<&mut Dictionary> {
+        match r {
+            Some(r) => doc.get_dictionary_mut(r),
+            None => doc.get_dictionary_mut(page_id)?.get_mut(b"Resources")?.as_dict_mut(),
+        }
+    }
+    let xo_ref = {
+        let res = res_mut(doc, page_id, res_ref)?;
+        match res.get(b"XObject") {
+            Ok(Object::Reference(r)) => Some(*r),
+            Ok(Object::Dictionary(_)) => None,
+            _ => {
+                res.set("XObject", Dictionary::new());
+                None
+            }
+        }
+    };
+    let xo = match xo_ref {
+        Some(r) => doc.get_dictionary_mut(r)?,
+        None => res_mut(doc, page_id, res_ref)?.get_mut(b"XObject")?.as_dict_mut()?,
+    };
+    let name = (0..).map(|i| format!("{prefix}{i}")).find(|n| !xo.has(n.as_bytes())).unwrap_or_default();
+    xo.set(name.clone(), Object::Reference(xobj));
+    Ok(name)
+}
+
+/// Encrypt `doc` again with the encryption it was loaded with.
+///
+/// lopdf opens a file whose user password is empty without asking, decrypts
+/// it and drops /Encrypt, so saving it wrote the file unprotected: every edit
+/// silently removed the owner's restrictions on printing and copying.
+pub fn reencrypt(doc: &mut lopdf::Document) -> lopdf::Result<()> {
+    if !doc.is_encrypted() {
+        if let Some(state) = doc.encryption_state.clone() {
+            doc.encrypt(&state)?;
+        }
+    }
+    Ok(())
+}
+
+/// Save `doc` to `path`, keeping the encryption it was loaded with.
+pub fn save_pdf(doc: &mut lopdf::Document, path: impl AsRef<std::path::Path>) -> lopdf::Result<()> {
+    reencrypt(doc)?;
+    doc.save(path)?;
+    Ok(())
 }

@@ -10,37 +10,35 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useAppStore } from "../store/useAppStore";
-import { UI } from "../lib/tokens";
-import { useIsPhone } from "../hooks/useMediaQuery";
-import { renderPage } from "../hooks/usePageThumbnails";
+import { thumbUrl } from "../render/renderClient";
+import { Wordmark } from "../components/Wordmark";
 
 const HOVER_DELAY_MS = 450;
-const PREVIEW_SCALE = 0.35;
 
-function TabPill({
-  id, label, active, dirty, isPdfPath, onActivate, onClose, onContextMenu, isPhone,
+/**
+ * One document tab, drawn as a stock tag: a paper sheet with a colour edge on
+ * top. The active sheet is the one lying on the counter (same colour as the
+ * ground), the others sit back in the indigo cloth.
+ */
+function TabTag({
+  id, label, active, dirty, isPdfPath, onActivate, onClose, onContextMenu,
 }: {
   id: string; label: string; active: boolean; dirty: boolean; isPdfPath: boolean;
   onActivate: () => void; onClose: () => void;
   onContextMenu: (x: number, y: number) => void;
-  isPhone: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id });
 
-  const height = isPhone ? 40 : 32;
-  const fontSize = isPhone ? 13 : 12;
-  const maxWidth = isPhone ? 160 : 200;
-
-  const pillRef = useRef<HTMLDivElement | null>(null);
+  const tagRef = useRef<HTMLDivElement | null>(null);
   const timerRef = useRef<number | null>(null);
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
   const [previewPos, setPreviewPos] = useState<{ left: number; top: number } | null>(null);
   const [previewFailed, setPreviewFailed] = useState(false);
 
-  function setPillRefs(node: HTMLDivElement | null) {
+  function setRefs(node: HTMLDivElement | null) {
     setNodeRef(node);
-    pillRef.current = node;
+    tagRef.current = node;
   }
 
   function hidePreview() {
@@ -54,20 +52,15 @@ function TabPill({
   }
 
   function startPreviewTimer() {
-    if (isPhone || !isPdfPath || isDragging) return;
+    if (!isPdfPath || isDragging) return;
     if (timerRef.current !== null) window.clearTimeout(timerRef.current);
     timerRef.current = window.setTimeout(async () => {
-      const rect = pillRef.current?.getBoundingClientRect();
+      const rect = tagRef.current?.getBoundingClientRect();
       if (!rect) return;
       setPreviewPos({ left: rect.left, top: rect.bottom + 6 });
-      try {
-        const src = await renderPage(id, 1, PREVIEW_SCALE);
-        // Race guard — if user left during render the timer was nulled.
-        if (timerRef.current === null && pillRef.current?.matches(":hover") !== true) return;
-        setPreviewSrc(src);
-      } catch {
-        setPreviewFailed(true);
-      }
+      // Race guard — if the user left before the delay elapsed the timer was nulled.
+      if (timerRef.current === null && tagRef.current?.matches(":hover") !== true) return;
+      setPreviewSrc(thumbUrl(id, 1, 256));
     }, HOVER_DELAY_MS);
   }
 
@@ -75,34 +68,23 @@ function TabPill({
     if (timerRef.current !== null) window.clearTimeout(timerRef.current);
   }, []);
 
-  // Hide preview when the pill enters drag state.
+  // Hide preview when the tag enters drag state.
   useEffect(() => {
     if (isDragging) hidePreview();
   }, [isDragging]);
 
+  const edge = !isPdfPath ? "library" : dirty ? "dirty" : active ? "active" : "rest";
+
   return (
     <div
-      ref={setPillRefs}
+      ref={setRefs}
+      className="tab"
+      data-active={active ? "true" : undefined}
+      data-edge={edge}
       style={{
         transform: CSS.Transform.toString(transform),
         transition,
         opacity: isDragging ? 0.5 : 1,
-        display: "flex",
-        alignItems: "center",
-        gap: 4,
-        padding: isPhone ? "0 6px 0 12px" : "0 10px 0 12px",
-        height,
-        borderRadius: 6,
-        cursor: "pointer",
-        flexShrink: 0,
-        maxWidth,
-        background: active ? "var(--bg3)" : "transparent",
-        border: active ? "1px solid var(--line)" : "1px solid transparent",
-        color: active ? "var(--fg0)" : "var(--fg2)",
-        fontFamily: UI,
-        fontSize,
-        userSelect: "none",
-        WebkitTapHighlightColor: "transparent",
       }}
       onClick={onActivate}
       onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onClose(); } }}
@@ -111,47 +93,40 @@ function TabPill({
       onMouseLeave={hidePreview}
       {...attributes}
       {...listeners}
+      role="tab"
+      aria-selected={active}
+      tabIndex={active ? 0 : -1}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onActivate(); return; }
+        listeners?.onKeyDown?.(e);
+      }}
     >
-      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
-        {dirty ? "• " : ""}{label}
-      </span>
+      <span className="tab-label">{label}</span>
+      {dirty && <span className="tab-dot" aria-label="Unsaved changes" title="Unsaved changes" />}
       <button
+        className="tab-close"
         onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => { e.stopPropagation(); onClose(); }}
-        style={{
-          background: "none", border: "none", cursor: "pointer",
-          color: "var(--fg2)",
-          padding: 0, margin: 0,
-          width: isPhone ? 32 : 22,
-          height: isPhone ? 32 : 22,
-          lineHeight: 1,
-          fontSize: isPhone ? 20 : 14,
-          borderRadius: 4,
-          flexShrink: 0,
-          display: "inline-flex", alignItems: "center", justifyContent: "center",
-          WebkitTapHighlightColor: "transparent",
-        }}
-        aria-label="Close tab"
+        aria-label={`Close ${label}`}
+        tabIndex={-1}
       >
-        ×
+        <svg width={12} height={12} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" aria-hidden="true">
+          <path d="M4 4l8 8M12 4l-8 8" />
+        </svg>
       </button>
 
       {previewPos && (previewSrc || !previewFailed) && (
         <div
           role="tooltip"
+          className="pop"
           style={{
             position: "fixed",
             left: previewPos.left,
             top: previewPos.top,
             zIndex: 8500,
-            background: "var(--bg2)",
-            border: "1px solid var(--line)",
-            borderRadius: 6,
             padding: 4,
-            boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
             pointerEvents: "none",
-            fontFamily: UI,
-            fontSize: 11,
+            fontSize: "var(--fs-label)",
             color: "var(--fg1)",
             maxWidth: 240,
           }}
@@ -160,8 +135,9 @@ function TabPill({
             <img
               src={previewSrc}
               alt=""
-              style={{ display: "block", width: 200, height: "auto", borderRadius: 3 }}
+              style={{ display: "block", width: 200, height: "auto", borderRadius: 3, border: "1px solid var(--line2)" }}
               draggable={false}
+              onError={() => { setPreviewSrc(null); setPreviewFailed(true); }}
             />
           ) : (
             <div style={{ width: 200, height: 120, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--fg2)" }}>
@@ -177,10 +153,14 @@ function TabPill({
   );
 }
 
-export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile }: {
+export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile, onActivateTab, suspendActive = false }: {
   onOpenFile: () => void;
   onCloseTab: (index: number) => void;
   onOpenExternalFile: (path: string, name: string) => void;
+  /** Called after a tab is activated by click or keyboard. */
+  onActivateTab?: () => void;
+  /** True while something other than a tab (a tool page) fills the shell: no tag reads active. */
+  suspendActive?: boolean;
 }) {
   const openTabs = useAppStore((s) => s.openTabs);
   const activeTabIndex = useAppStore((s) => s.activeTabIndex);
@@ -232,12 +212,7 @@ export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile }: {
     for (let i = openTabs.length - 1; i > index; i--) onCloseTab(i);
   }
 
-  const isPhone = useIsPhone();
-  const sensors = useSensors(useSensor(PointerSensor, {
-    activationConstraint: isPhone
-      ? { delay: 200, tolerance: 8 }
-      : { distance: 6 },
-  }));
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
@@ -249,19 +224,7 @@ export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile }: {
 
   return (
     <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 4,
-        padding: isPhone ? "6px 8px" : "4px 8px",
-        paddingTop: `calc(env(safe-area-inset-top, 0px) + ${isPhone ? 6 : 4}px)`,
-        borderBottom: "1px solid var(--line2)",
-        background: "var(--bg1)",
-        overflowX: "auto",
-        WebkitOverflowScrolling: "touch",
-        scrollbarWidth: "none",
-        flexShrink: 0,
-      }}
+      className="tabbar"
       onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }}
       onDrop={(e) => {
         e.preventDefault();
@@ -275,29 +238,43 @@ export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile }: {
         }
       }}
     >
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-        <SortableContext items={openTabs.map((t) => t.path)} strategy={horizontalListSortingStrategy}>
-          {openTabs.map((tab, i) => (
-            <TabPill
-              key={tab.path}
-              id={tab.path}
-              label={tab.name}
-              active={i === activeTabIndex}
-              dirty={tabDirty[tab.path] ?? false}
-              isPdfPath={tab.type !== "home"}
-              onActivate={() => activateTab(i)}
-              onClose={() => onCloseTab(i)}
-              onContextMenu={(x, y) => setCtxMenu({ x, y, index: i })}
-              isPhone={isPhone}
-            />
-          ))}
-        </SortableContext>
-      </DndContext>
+      <Wordmark />
+
+      <div className="tabbar-tabs scroll-invisible" role="tablist" aria-label="Open documents">
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={openTabs.map((t) => t.path)} strategy={horizontalListSortingStrategy}>
+            {openTabs.map((tab, i) => (
+              <TabTag
+                key={tab.path}
+                id={tab.path}
+                label={tab.name}
+                active={!suspendActive && i === activeTabIndex}
+                dirty={tabDirty[tab.path] ?? false}
+                isPdfPath={tab.type !== "home"}
+                onActivate={() => { activateTab(i); onActivateTab?.(); }}
+                onClose={() => onCloseTab(i)}
+                onContextMenu={(x, y) => setCtxMenu({ x, y, index: i })}
+              />
+            ))}
+          </SortableContext>
+        </DndContext>
+
+        <button
+          onClick={onOpenFile}
+          className="shell-btn"
+          title="New tab (Ctrl+T)"
+          aria-label="Open new tab"
+        >
+          <svg width={16} height={16} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" aria-hidden="true">
+            <path d="M8 3v10M3 8h10" />
+          </svg>
+        </button>
+      </div>
 
       {ctxMenu && (() => {
         const tab = openTabs[ctxMenu.index];
         const isPdf = tab?.type !== "home";
-        const items: Array<{ label: string; onSelect: () => void; disabled?: boolean; danger?: boolean }> = [
+        const items: Array<{ label: string; onSelect: () => void; disabled?: boolean }> = [
           { label: "Reveal in file explorer", onSelect: () => handleReveal(ctxMenu.index), disabled: !isPdf },
           { label: "Copy path", onSelect: () => handleCopyPath(ctxMenu.index), disabled: !isPdf },
           { label: "Close", onSelect: () => onCloseTab(ctxMenu.index) },
@@ -307,42 +284,23 @@ export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile }: {
         return (
           <div
             role="menu"
+            className="pop menu"
             onClick={(e) => e.stopPropagation()}
-            style={{
-              position: "fixed",
-              left: ctxMenu.x,
-              top: ctxMenu.y,
-              background: "var(--bg2, #181825)",
-              border: "1px solid var(--line, #313244)",
-              borderRadius: 6,
-              padding: "4px 0",
-              minWidth: 200,
-              boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
-              zIndex: 9000,
-              fontFamily: UI,
-              fontSize: 12,
-            }}
+            style={{ position: "fixed", left: ctxMenu.x, top: ctxMenu.y, zIndex: 9000, minWidth: 220 }}
           >
             {items.map((it, idx) => (
               <div
                 key={idx}
                 role="menuitem"
+                className="menu-item"
+                data-disabled={it.disabled ? "" : undefined}
+                onMouseEnter={(e) => { if (!it.disabled) e.currentTarget.setAttribute("data-highlighted", ""); }}
+                onMouseLeave={(e) => e.currentTarget.removeAttribute("data-highlighted")}
                 onClick={() => {
                   if (it.disabled) return;
                   setCtxMenu(null);
                   it.onSelect();
                 }}
-                style={{
-                  padding: isPhone ? "12px 16px" : "6px 12px",
-                  minHeight: isPhone ? 44 : undefined,
-                  fontSize: isPhone ? 14 : 12,
-                  display: "flex", alignItems: "center",
-                  color: it.disabled ? "var(--fg3, #45475a)" : "var(--fg0, #cdd6f4)",
-                  cursor: it.disabled ? "default" : "pointer",
-                  userSelect: "none",
-                }}
-                onMouseEnter={(e) => { if (!it.disabled) (e.currentTarget as HTMLElement).style.background = "var(--bg3, #313244)"; }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
               >
                 {it.label}
               </div>
@@ -350,23 +308,6 @@ export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile }: {
           </div>
         );
       })()}
-
-      <button
-        onClick={onOpenFile}
-        title="Open file in new tab (Ctrl+T)"
-        style={{
-          background: "none", border: "none", cursor: "pointer",
-          color: "var(--fg2)",
-          fontSize: isPhone ? 24 : 18, lineHeight: 1,
-          width: isPhone ? 40 : 28, height: isPhone ? 40 : 28,
-          display: "inline-flex", alignItems: "center", justifyContent: "center",
-          borderRadius: 4, flexShrink: 0,
-          WebkitTapHighlightColor: "transparent",
-        }}
-        aria-label="Open new tab"
-      >
-        +
-      </button>
     </div>
   );
 }

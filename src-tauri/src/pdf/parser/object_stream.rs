@@ -19,13 +19,21 @@ pub fn parse_object_stream(stream: &PdfStream) -> Result<Vec<(ObjectId, PdfObjec
         .dict
         .get(b"N")
         .and_then(|v| v.as_integer())
-        .ok_or_else(|| PdfError::ParseError("/N missing from ObjStm dict".into()))? as usize;
+        .and_then(|n| usize::try_from(n).ok())
+        .ok_or_else(|| PdfError::ParseError("/N missing or negative in ObjStm dict".into()))?;
 
     let first = stream
         .dict
         .get(b"First")
         .and_then(|v| v.as_integer())
-        .ok_or_else(|| PdfError::ParseError("/First missing from ObjStm dict".into()))? as usize;
+        .and_then(|f| usize::try_from(f).ok())
+        .ok_or_else(|| PdfError::ParseError("/First missing or negative in ObjStm dict".into()))?;
+
+    // Each header pair takes at least 4 bytes ("1 0 "), so the /First bytes of
+    // header bound /N. Checked before allocating: /N comes from the file.
+    if n > first / 2 + 1 {
+        return Err(PdfError::ParseError(format!("ObjStm /N ({n}) exceeds its header")));
+    }
 
     let decoded = stream.decode()?;
 
@@ -118,6 +126,12 @@ mod tests {
             dict,
             raw_bytes: content.to_vec(), // uncompressed for test simplicity — no /Filter
         }
+    }
+
+    #[test]
+    fn an_absurd_object_count_is_an_error_not_an_abort() {
+        // /N far beyond what /First bytes of header could hold.
+        assert!(parse_object_stream(&make_objstm(1 << 40, 4, b"1 0 null")).is_err());
     }
 
     #[test]

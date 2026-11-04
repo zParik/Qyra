@@ -10,7 +10,8 @@ use crate::error::{AppError, AppResult};
 ///
 /// V2 (RC4) and V4 (AES-128) are intentionally not used: RC4 is broken and was
 /// removed from PDF 2.0, and AES-128 is no longer recommended for new documents.
-#[tauri::command]
+// Off the main thread: a full parse and save of a large file froze the window.
+#[tauri::command(async)]
 pub fn protect_pdf(
     path: String,
     user_password: String,

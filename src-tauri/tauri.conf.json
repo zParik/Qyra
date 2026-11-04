@@ -20,7 +20,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' tauri: https://tauri.localhost ipc: http://ipc.localhost; script-src 'self' 'wasm-unsafe-eval' blob: tauri: https://tauri.localhost https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: asset: https://asset.localhost tauri: https://tauri.localhost; font-src 'self' data:; connect-src ipc: http://ipc.localhost tauri: https://tauri.localhost https://tessdata.projectnaptha.com https://cdn.jsdelivr.net https://unpkg.com https://raw.githubusercontent.com; worker-src blob:;"
+      "csp": "default-src 'self' tauri: https://tauri.localhost ipc: http://ipc.localhost; script-src 'self' tauri: https://tauri.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: asset: https://asset.localhost tauri: https://tauri.localhost qyra: http://qyra.localhost; font-src 'self' data:; connect-src ipc: http://ipc.localhost tauri: https://tauri.localhost;"
     }
   },
   "plugins": {
@@ -34,6 +34,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "resources/tessdata/eng.traineddata": "resources/tessdata/eng.traineddata"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -41,6 +44,12 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "category": "Productivity",
+    "shortDescription": "Free, offline PDF app for Linux and Windows",
+    "linux": {
+      "deb": { "desktopTemplate": "qyra.desktop" },
+      "rpm": { "desktopTemplate": "qyra.desktop" }
+    },
     "fileAssociations": [
       {
         "ext": ["pdf"],

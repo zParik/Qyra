@@ -1,18 +1,20 @@
-import React, { useEffect, useState } from "react";
-import { UI, MONO } from "../../lib/tokens";
-import { IconProps, IcStar, IcArchive, IcGrid, IcList, IcFile, IcChevron } from "../../components/Icons";
+import React, { useState, type CSSProperties } from "react";
+import { IcStar, IcArchive, IcGrid, IcList, IcFile, IcChevron, type IconProps } from "../../components/Icons";
 import type { LibraryEntry, RecentFile } from "../../lib/schemas";
-import { renderPage } from "../../hooks/usePageThumbnails";
-import { formatRelativeTime, fileSwatch } from "./types";
+import { thumbUrl } from "../../render/renderClient";
+import { useDocVersion } from "../../render/docVersion";
+import { chipStyle, FAMILY, type Family } from "../../lib/families";
+import { shortcutLabel } from "../../lib/platform";
+import { formatRelativeTime, formatBytes } from "./types";
+import { useFileMeasure } from "./useFileMeasure";
+import type { StandaloneTool } from "./tools";
 
-export function SectionHeader({ title, subtitle, right }: {
-  title: string; subtitle?: string; right?: React.ReactNode;
-}) {
+export function SectionHead({ title, meta, right }: { title: string; meta?: string; right?: React.ReactNode }) {
   return (
-    <header className="section-header">
-      <h2 style={{ fontFamily: UI }}>{title}</h2>
-      {subtitle && <span className="text-[11px]" style={{ fontFamily: MONO, color: "var(--fg2)" }}>{subtitle}</span>}
-      <div className="section-divider" />
+    <header className="section-head">
+      <h2>{title}</h2>
+      {meta && <span className="t-meta">{meta}</span>}
+      <span className="spacer" />
       {right}
     </header>
   );
@@ -20,220 +22,185 @@ export function SectionHeader({ title, subtitle, right }: {
 
 export function ViewToggle({ mode, setMode }: { mode: "grid" | "list"; setMode: (m: "grid" | "list") => void }) {
   return (
-    <div className="flex gap-0.5" role="group" aria-label="View mode">
-      <button onClick={() => setMode("grid")} aria-label="Grid view" aria-pressed={mode === "grid"} className="view-toggle-btn"><IcGrid size={13} /></button>
-      <button onClick={() => setMode("list")} aria-label="List view" aria-pressed={mode === "list"} className="view-toggle-btn"><IcList size={13} /></button>
+    <div className="seg" role="group" aria-label="View mode">
+      <button type="button" className="seg-item" onClick={() => setMode("grid")} aria-label="Grid view" aria-pressed={mode === "grid"}><IcGrid size={14} /></button>
+      <button type="button" className="seg-item" onClick={() => setMode("list")} aria-label="List view" aria-pressed={mode === "list"}><IcList size={14} /></button>
     </div>
   );
 }
 
-export function EmptyRecents() {
+export function EmptyShelf({ title, note }: { title: string; note: string }) {
   return (
-    <div className="empty-state">
-      <IcFile size={28} style={{ color: "var(--fg3)" }} />
-      <div className="text-[13px] text-center" style={{ fontFamily: UI, color: "var(--fg2)" }}>
-        No recent files — open a PDF to get started.
-      </div>
+    <div className="empty">
+      <IcFile size={24} style={{ color: "var(--fg3)" }} />
+      <strong>{title}</strong>
+      <span>{note}</span>
     </div>
   );
 }
 
-export function QuickToolCard({ Icon, title, desc, meta, shortcut, onClick, isMobile }: {
-  Icon: (p: IconProps) => React.ReactElement;
-  title: string; desc: string; meta: string; shortcut: string;
-  onClick: () => void;
-  isMobile: boolean;
-}) {
+/** One tool as a row in its family group: icon, name and what it does, shortcut at the edge. */
+export function ToolRow({ tool, onClick }: { tool: StandaloneTool; onClick: () => void }) {
+  const { Icon } = tool;
   return (
-    <button
-      onClick={onClick}
-      className="quick-tool-card"
-      style={{
-        padding: isMobile ? 14 : 16,
-        display: "grid",
-        gridTemplateColumns: isMobile ? "36px 1fr" : "40px 1fr auto",
-        gap: isMobile ? 12 : 14, alignItems: "flex-start",
-      }}
-    >
-      <div className="tool-icon" style={{ width: isMobile ? 36 : 40, height: isMobile ? 36 : 40 }}>
-        <Icon size={isMobile ? 18 : 20} />
-      </div>
-      <div className="flex flex-col gap-1 min-w-0">
-        <div className="font-semibold" style={{ fontFamily: UI, fontSize: isMobile ? 13 : 13.5, color: "var(--fg0)" }}>{title}</div>
-        <div className="leading-snug" style={{ fontFamily: UI, fontSize: 12, color: "var(--fg1)" }}>{desc}</div>
-        <div className="mt-1" style={{ fontFamily: MONO, fontSize: 10.5, color: "var(--fg2)" }}>{meta}</div>
-      </div>
-      {!isMobile && (
-        <div className="flex flex-col items-end gap-2">
-          <span className="text-[10px] px-1 py-0.5 rounded"
-            style={{ fontFamily: MONO, color: "var(--fg2)", border: "1px solid var(--line)" }}>{shortcut}</span>
-          <span className="tool-chevron"><IcChevron size={13} /></span>
-        </div>
-      )}
+    <button type="button" className="row tool-row" onClick={onClick}>
+      <span className="tool-row-icon" aria-hidden="true"><Icon size={16} /></span>
+      <span className="tool-row-text">
+        <span className="tool-row-title">{tool.title}</span>
+        <span className="tool-row-desc">{tool.desc}</span>
+      </span>
+      {tool.shortcut && <kbd className="kbd">{shortcutLabel(tool.shortcut)}</kbd>}
     </button>
   );
 }
 
-export function RecentCard({ file, onOpen, starred, archived, onToggleStar, onToggleArchive, isMobile }: {
+/** A family of tools with its chip and thumb-index tab. */
+export function ToolFamily({ family, children }: { family: Family; children: React.ReactNode }) {
+  return (
+    <section className="family-col" style={chipStyle(family) as CSSProperties} aria-label={FAMILY[family].label}>
+      <div className="family-col-head">
+        <span className="chip">{FAMILY[family].label}</span>
+        <span className="thumb-tab" aria-hidden="true" />
+      </div>
+      {children}
+    </section>
+  );
+}
+
+export function FamilyNote({ family, note, onClick }: { family: Family; note: string; onClick: () => void }) {
+  return (
+    <button type="button" className="family-note" onClick={onClick} style={chipStyle(family) as CSSProperties}>
+      <span className="chip">{FAMILY[family].label}</span>
+      <span className="family-note-text">{note}</span>
+    </button>
+  );
+}
+
+function Measure({ path }: { path: string }) {
+  const { data } = useFileMeasure(path);
+  if (!data) return <span />;
+  return <span className="t-num">{data.pages} {data.pages === 1 ? "page" : "pages"} · {formatBytes(data.bytes)}</span>;
+}
+
+function ActionButton({ active, label, Icon, onClick }: {
+  active: boolean; label: string; Icon: (p: IconProps) => React.ReactElement; onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="sheet-action"
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      aria-label={label}
+      aria-pressed={active}
+      title={label}
+    >
+      <Icon size={13} />
+    </button>
+  );
+}
+
+/** A sheet on the shelf: thumbnail on white, name, and its measure. */
+export function SheetCard({ file, onOpen, starred, archived, onToggleStar, onToggleArchive }: {
   file: RecentFile; onOpen: () => void;
   starred?: boolean; archived?: boolean;
   onToggleStar?: () => void; onToggleArchive?: () => void;
-  isMobile: boolean;
 }) {
-  const [hover, setHover] = useState(false);
-  const [thumb, setThumb] = useState<string | null>(null);
-  const swatch = fileSwatch(file.name);
-  const ext = file.name.split(".").pop()?.toUpperCase() ?? "PDF";
-
-  useEffect(() => {
-    let cancelled = false;
-    renderPage(file.path, 1, 0.3).then((dataUrl) => {
-      if (!cancelled) setThumb(dataUrl);
-    }).catch(() => {});
-    return () => { cancelled = true; };
-  }, [file.path]);
-
-  const showActions = isMobile || hover;
+  const [thumbFailed, setThumbFailed] = useState(false);
+  useDocVersion(file.path); // new thumbnail URL when Qyra rewrites the file
+  const thumb = thumbFailed ? null : thumbUrl(file.path, 1, 256);
+  const name = file.name.replace(/\.pdf$/i, "");
 
   return (
     <div
+      className="sheet"
+      role="button"
+      tabIndex={0}
       onClick={onOpen}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      style={{
-        cursor: "pointer", display: "flex", flexDirection: "column", gap: 8,
-        padding: 8, borderRadius: 6,
-        background: hover ? "var(--bg1)" : "transparent",
-        border: `1px solid ${hover ? "var(--line)" : "transparent"}`,
-        transition: "all 100ms ease",
-      }}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); } }}
+      aria-label={`Open ${file.name}`}
+      title={file.path}
     >
-      <div style={{ position: "relative", aspectRatio: "0.77 / 1", width: "100%", borderRadius: 3, overflow: "hidden", border: "1px solid var(--line)", background: "var(--bg2)" }}>
+      <div className="sheet-thumb">
         {thumb ? (
-          <img src={thumb} className="absolute inset-0 w-full h-full object-cover" alt="" />
+          <img src={thumb} alt="" loading="lazy" onError={() => setThumbFailed(true)} />
         ) : (
-          <>
-            <div className="absolute inset-0" style={{ background: "repeating-linear-gradient(180deg, transparent 0 8px, var(--line2) 8px 9px)" }} />
-            <div className="absolute top-0 left-0 right-0" style={{ height: "34%", background: swatch }} />
-            <div className="absolute top-1.5 left-1.5" style={{ fontFamily: MONO, fontSize: 8, color: "rgba(255,255,255,0.85)", letterSpacing: 1, textTransform: "uppercase" }}>{ext}</div>
-          </>
+          <span className="sheet-thumb-blank"><IcFile size={22} /></span>
         )}
-        <div className="absolute truncate" style={{ bottom: 7, left: 7, right: 7, fontFamily: UI, fontSize: 10.5, fontWeight: 600, color: "var(--fg0)", background: "var(--bg2)", padding: "3px 5px", borderRadius: 2, border: "1px solid var(--line)" }}>
-          {file.name.replace(/\.pdf$/i, "")}
-        </div>
-        {showActions && (
-          <div className="absolute top-1.5 right-1.5 flex flex-col gap-0.5">
-            {onToggleStar && (
-              <button onClick={(e) => { e.stopPropagation(); onToggleStar(); }}
-                aria-label={starred ? `Unstar ${file.name}` : `Star ${file.name}`} aria-pressed={starred}
-                className="flex items-center justify-center rounded cursor-pointer"
-                style={{ width: isMobile ? 28 : 22, height: isMobile ? 28 : 22, border: "none", background: starred ? "var(--accent)" : "var(--bg2)", color: starred ? "#fff" : "var(--fg1)", boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }}>
-                <IcStar size={isMobile ? 13 : 11} />
-              </button>
-            )}
-            {onToggleArchive && (
-              <button onClick={(e) => { e.stopPropagation(); onToggleArchive(); }}
-                aria-label={archived ? `Unarchive ${file.name}` : `Archive ${file.name}`} aria-pressed={archived}
-                className="flex items-center justify-center rounded cursor-pointer"
-                style={{ width: isMobile ? 28 : 22, height: isMobile ? 28 : 22, border: "none", background: archived ? "var(--bg3)" : "var(--bg2)", color: "var(--fg1)", boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }}>
-                <IcArchive size={isMobile ? 13 : 11} />
-              </button>
-            )}
+        {(onToggleStar || onToggleArchive) && (
+          <div className="sheet-actions" data-on={starred || archived ? "true" : undefined}>
+            {onToggleStar && <ActionButton active={!!starred} label={starred ? `Unstar ${file.name}` : `Star ${file.name}`} Icon={IcStar} onClick={onToggleStar} />}
+            {onToggleArchive && <ActionButton active={!!archived} label={archived ? `Unarchive ${file.name}` : `Archive ${file.name}`} Icon={IcArchive} onClick={onToggleArchive} />}
           </div>
         )}
       </div>
-      <div className="flex flex-col gap-0.5 px-0.5">
-        <div className="truncate font-medium" style={{ fontFamily: UI, fontSize: 12, color: "var(--fg0)" }}>{file.name.replace(/\.pdf$/i, "")}</div>
-        <div style={{ fontFamily: MONO, fontSize: 10.5, color: "var(--fg2)" }}>{formatRelativeTime(file.openedAt)}</div>
+      <div className="sheet-name">{name}</div>
+      <div className="sheet-meta">
+        <Measure path={file.path} />
+        <span>{formatRelativeTime(file.openedAt)}</span>
       </div>
     </div>
   );
 }
 
-function ListRow({ file, swatch, index, onOpen, starred, archived, onToggleStar, onToggleArchive, isMobile }: {
-  file: RecentFile; swatch: string; index: number; onOpen: () => void;
+function ListRow({ file, onOpen, starred, archived, onToggleStar, onToggleArchive }: {
+  file: RecentFile; onOpen: () => void;
   starred?: boolean; archived?: boolean;
   onToggleStar?: () => void; onToggleArchive?: () => void;
-  isMobile: boolean;
 }) {
-  const [hover, setHover] = useState(false);
-  const showActions = isMobile || hover;
-
-  const iconBtn = (active: boolean, label: string, Icon: (p: IconProps) => React.ReactElement, onClick: () => void) => (
-    <button
-      onClick={(e) => { e.stopPropagation(); onClick(); }}
-      aria-label={label} aria-pressed={active}
-      className="flex items-center justify-center rounded cursor-pointer"
-      style={{
-        width: isMobile ? 32 : 22, height: isMobile ? 32 : 22, border: "none",
-        background: active ? "var(--accent)" : "transparent",
-        color: active ? "#fff" : "var(--fg2)",
-        opacity: showActions || active ? 1 : 0,
-        transition: "opacity 80ms",
-      }}
-    >
-      <Icon size={isMobile ? 14 : 11} />
-    </button>
-  );
-
+  const { data } = useFileMeasure(file.path);
   return (
-    <button
+    <div
+      className="list-row"
+      role="button"
+      tabIndex={0}
       onClick={onOpen}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); } }}
       aria-label={`Open ${file.name}`}
-      style={{
-        display: "grid",
-        gridTemplateColumns: isMobile ? "20px 1fr auto" : "24px 1fr 120px 52px",
-        padding: isMobile ? "10px 14px" : "8px 14px",
-        gap: 12, alignItems: "center",
-        background: hover ? "var(--bg2)" : "transparent",
-        border: "none",
-        borderTop: index === 0 ? "none" : "1px solid var(--line2)",
-        width: "100%", textAlign: "left", cursor: "pointer",
-        transition: "background 80ms",
-        minHeight: isMobile ? 48 : undefined,
-      }}
+      title={file.path}
     >
-      <span style={{ width: isMobile ? 16 : 18, height: isMobile ? 20 : 22, background: swatch, borderRadius: 2, display: "inline-block" }} />
-      <span className="truncate" style={{ fontFamily: UI, fontSize: isMobile ? 13 : 12.5, color: "var(--fg0)" }}>{file.name}</span>
-      {!isMobile && (
-        <span style={{ fontFamily: MONO, fontSize: 11, color: "var(--fg1)" }}>{formatRelativeTime(file.openedAt)}</span>
-      )}
-      <span className="flex gap-1 justify-end">
-        {onToggleStar && iconBtn(starred ?? false, starred ? `Unstar ${file.name}` : `Star ${file.name}`, IcStar, onToggleStar)}
-        {onToggleArchive && iconBtn(archived ?? false, archived ? `Unarchive ${file.name}` : `Archive ${file.name}`, IcArchive, onToggleArchive)}
+      <span className="list-icon"><IcFile size={16} /></span>
+      <span className="list-name">{file.name}</span>
+      <span className="list-num">{data ? data.pages : ""}</span>
+      <span className="list-num">{data ? formatBytes(data.bytes) : ""}</span>
+      <span className="list-num">{formatRelativeTime(file.openedAt)}</span>
+      <span className="list-actions">
+        {onToggleStar && <ActionButton active={!!starred} label={starred ? `Unstar ${file.name}` : `Star ${file.name}`} Icon={IcStar} onClick={onToggleStar} />}
+        {onToggleArchive && <ActionButton active={!!archived} label={archived ? `Unarchive ${file.name}` : `Archive ${file.name}`} Icon={IcArchive} onClick={onToggleArchive} />}
       </span>
-    </button>
+    </div>
   );
 }
 
-export function RecentList({ files, onOpen, entryMap, onToggleStar, onToggleArchive, isMobile }: {
+export function SheetList({ files, onOpen, entryMap, onToggleStar, onToggleArchive }: {
   files: RecentFile[];
   onOpen: (f: RecentFile) => void;
   entryMap?: Map<string, LibraryEntry>;
   onToggleStar?: (f: RecentFile) => void;
   onToggleArchive?: (f: RecentFile) => void;
-  isMobile: boolean;
 }) {
   return (
-    <div className="recent-list">
-      {!isMobile && (
-        <div className="recent-list-header" style={{ fontFamily: MONO }}>
-          <span /><span>Name</span><span>Modified</span><span />
-        </div>
-      )}
-      {files.map((f, i) => (
+    <div className="list" role="list">
+      <div className="list-head t-label" aria-hidden="true">
+        <span /><span>Name</span><span className="list-num">Pages</span><span className="list-num">Size</span><span className="list-num">Opened</span><span />
+      </div>
+      {files.map((f) => (
         <ListRow
-          key={f.path} file={f} swatch={fileSwatch(f.name)} index={i}
+          key={f.path} file={f}
           onOpen={() => onOpen(f)}
           starred={entryMap?.get(f.path)?.starred ?? false}
           archived={entryMap?.get(f.path)?.archived ?? false}
           onToggleStar={onToggleStar ? () => onToggleStar(f) : undefined}
           onToggleArchive={onToggleArchive ? () => onToggleArchive(f) : undefined}
-          isMobile={isMobile}
         />
       ))}
     </div>
+  );
+}
+
+export function ViewAll({ onClick }: { onClick: () => void }) {
+  return (
+    <button type="button" className="btn-ghost btn-sm" onClick={onClick}>
+      View all <IcChevron size={12} />
+    </button>
   );
 }

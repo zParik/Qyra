@@ -16,6 +16,8 @@ interface Props {
   isEnabled: boolean;
   pendingSignature: string | null;
   onSignaturePlaced: (sig: Signature) => void;
+  /** A placed signature changed (resized); replace it by id. */
+  onSignatureUpdated: (sig: Signature) => void;
   onSignatureRemoved: (id: string) => void;
   signatures: Signature[];
 }
@@ -34,6 +36,7 @@ export function SignatureLayer({
   isEnabled,
   pendingSignature,
   onSignaturePlaced,
+  onSignatureUpdated,
   onSignatureRemoved,
   signatures,
 }: Props) {
@@ -144,8 +147,8 @@ export function SignatureLayer({
     if (!dragState) return;
     const updated = localSigs.find((s) => s.id === dragState.id);
     if (updated) {
-      // Notify parent of final size via onSignaturePlaced (re-place with same id is fine)
-      onSignaturePlaced({ ...updated });
+      // Replace by id: placing it again added a second copy of the signature.
+      onSignatureUpdated({ ...updated });
     }
     setDragState(null);
   }

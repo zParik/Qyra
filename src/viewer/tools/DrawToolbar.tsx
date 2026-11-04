@@ -140,7 +140,7 @@ function AddPageDropdown({ docPath, onClose }: { docPath: string; onClose: () =>
                    vp.afterRealPage >= 9999 ? ' (after end)' :
                    ` (after p.${vp.afterRealPage})`}
                 </span>
-                <button onClick={() => removeVirtualPage(docPath, vp.id)} title="Remove" style={{ color: "#ef4444" }}>
+                <button onClick={() => removeVirtualPage(docPath, vp.id)} title="Remove" style={{ color: "var(--bad)" }}>
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
@@ -165,13 +165,14 @@ interface DrawToolbarProps {
   pageCount: number;
   onApplied: (path: string) => void;
   filePath: string;
+  /** Key of this tab's drawings in useNotesStore. */
+  docPath: string;
 }
 
 export function DrawToolbar({
   onExitDraw, onSave, onSaveAs,
-  currentPage, pageCount, onApplied, filePath,
+  currentPage, pageCount, onApplied, filePath, docPath,
 }: DrawToolbarProps) {
-  const docPath = filePath;
 
   const drawColor     = useNotesStore((s) => s.drawColor);
   const drawThickness = useNotesStore((s) => s.drawThickness);
@@ -305,11 +306,11 @@ export function DrawToolbar({
 
         <button
           onClick={onSaveAs}
-          title="Save As (Ctrl+Shift+S)"
+          title="Save as… (Ctrl+Shift+S)"
           className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs transition-colors shrink-0"
           style={{ background: "transparent", border: "1px solid transparent", color: "var(--viewer-text-sec)" }}
         >
-          Save As
+          Save as…
         </button>
 
         <Divider />
@@ -332,7 +333,7 @@ export function DrawToolbar({
                 onClick={handleDeletePage}
                 disabled={isDeleting}
                 className="px-2 py-1.5 rounded-lg text-xs font-semibold"
-                style={{ background: "#ef4444", border: "1px solid #dc2626", color: "#fff" }}
+                style={{ background: "var(--bad)", border: "1px solid var(--bad-hover)", color: "var(--paper-0)" }}
               >
                 {isDeleting ? "Deleting…" : "Delete"}
               </button>
@@ -346,7 +347,7 @@ export function DrawToolbar({
               style={{
                 background: "transparent",
                 border: "1px solid transparent",
-                color: pageCount <= 1 ? "var(--viewer-text-muted)" : "#ef4444",
+                color: pageCount <= 1 ? "var(--viewer-text-muted)" : "var(--bad)",
                 opacity: pageCount <= 1 ? 0.4 : 1,
                 cursor: pageCount <= 1 ? "not-allowed" : "pointer",
               }}
@@ -512,7 +513,7 @@ export function DrawToolbar({
             </button>
             <button onClick={() => { clearStrokes(docPath); setConfirmClear(false); }}
               className="px-2 py-1.5 rounded-lg text-xs font-semibold"
-              style={{ background: "#ef4444", border: "1px solid #dc2626", color: "#fff" }}>
+              style={{ background: "var(--bad)", border: "1px solid var(--bad-hover)", color: "var(--paper-0)" }}>
               Clear all
             </button>
           </div>
@@ -524,7 +525,7 @@ export function DrawToolbar({
             className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs shrink-0 transition-colors"
             style={{
               background: "transparent", border: "1px solid transparent",
-              color: strokeCount === 0 ? "var(--viewer-text-muted)" : "#ef4444",
+              color: strokeCount === 0 ? "var(--viewer-text-muted)" : "var(--bad)",
               opacity: strokeCount === 0 ? 0.4 : 1,
               cursor: strokeCount === 0 ? "not-allowed" : "pointer",
             }}
@@ -540,7 +541,7 @@ export function DrawToolbar({
 
         <Divider />
 
-        {/* Add Page */}
+        {/* Add page */}
         <div className="relative shrink-0">
           <button
             onClick={() => setAddPageOpen((o) => !o)}
@@ -555,10 +556,10 @@ export function DrawToolbar({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                 d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
-            <span>Add Page</span>
+            <span>Add page</span>
             {virtualPageCount > 0 && (
               <span className="tabular-nums text-xs px-1 py-0.5 rounded-full"
-                style={{ background: "var(--action)", color: "#fff", fontSize: "0.6rem" }}>
+                style={{ background: "var(--rose)", color: "var(--rose-ink)", fontSize: "var(--fs-label)" }}>
                 {virtualPageCount}
               </span>
             )}

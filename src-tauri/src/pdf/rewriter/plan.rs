@@ -27,11 +27,7 @@ pub type PlanMap = HashMap<ObjectId, ImagePlan>;
 
 /// Largest source image (in pixels) we'll fully decode into RAM. A W×H image
 /// costs ~W·H·4 bytes decoded before it can be downsampled, so this caps peak
-/// memory. Phones get a tight budget to stay clear of the OOM killer; desktops
-/// get a generous one. Images over budget are left untouched.
-#[cfg(target_os = "android")]
-const MAX_SOURCE_PIXELS: u64 = 16_000_000; // ~64 MB RGBA, ~4000×4000
-#[cfg(not(target_os = "android"))]
+/// memory. Images over budget are left untouched.
 const MAX_SOURCE_PIXELS: u64 = 120_000_000;
 
 /// Walk every image XObject and produce its `ImagePlan`.
@@ -105,9 +101,10 @@ pub fn build_plans(
 
         let filter = filter_first_name(&dict);
         let is_dct = matches!(filter.as_deref(), Some(b"DCTDecode") | Some(b"DCT"));
-        // We can decode DCT directly via the JPEG decoder even if the colour
-        // space didn't resolve; Flate images need a resolved space.
-        if !is_dct && !cs.is_supported() {
+        // Every image needs a resolved colour space: Flate samples can't be
+        // unpacked without one, and a JPEG in Separation/DeviceN/Lab would be
+        // mislabelled DeviceRGB/Gray on re-encode (inverted or shifted colours).
+        if !cs.is_supported() {
             continue;
         }
 

@@ -1,6 +1,6 @@
-//! OCR text-layer baking via the pure `make_searchable_core`. The recognition
-//! itself is the frontend's job (tesseract.js); the Rust side embeds an
-//! invisible, searchable text layer from the supplied word boxes.
+//! OCR: recognition with MuPDF's bundled tesseract (`ocr_page_core`) and
+//! baking an invisible, searchable text layer from the word boxes
+//! (`make_searchable_core`).
 
 mod common;
 
@@ -23,4 +23,20 @@ fn bakes_an_invisible_searchable_text_layer() {
         page_text(&out, 0).to_lowercase().contains("invoice"),
         "baked OCR word should be extractable",
     );
+}
+
+#[test]
+fn recognizes_the_words_on_a_page_with_bundled_english_data() {
+    let tessdata = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/tessdata");
+    let page = qyra_lib::commands::ocr::ocr_page_core(&fixture_str("text.pdf"), 1, &tessdata)
+        .expect("ocr page");
+
+    let text: Vec<String> = page.words.iter().map(|w| w.text.to_lowercase()).collect();
+    for want in ["hello", "world", "qyra"] {
+        assert!(text.iter().any(|t| t.contains(want)), "missing {want:?} in {text:?}");
+    }
+    for w in &page.words {
+        assert!((0.0..=1.0).contains(&w.x) && (0.0..=1.0).contains(&w.y), "box outside page: {}", w.text);
+        assert!(w.w > 0.0 && w.h > 0.0, "empty box: {}", w.text);
+    }
 }

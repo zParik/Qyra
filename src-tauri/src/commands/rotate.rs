@@ -5,7 +5,8 @@ use crate::error::{AppError, AppResult};
 /// Rotate pages in a PDF.
 /// pages: 1-indexed list of page numbers to rotate (empty = all pages).
 /// degrees: 90, 180, or 270.
-#[tauri::command]
+// Off the main thread: a full parse and save of a large file froze the window.
+#[tauri::command(async)]
 pub fn rotate_pages(
     path: String,
     pages: Vec<u32>,
@@ -62,6 +63,6 @@ pub fn rotate_pages(
     }
 
     let out = output.unwrap_or_else(|| temp_output_path(&path, "rotated"));
-    doc.save(&out)?;
+    crate::utils::save_pdf(&mut doc, &out)?;
     Ok(out)
 }

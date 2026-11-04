@@ -1,14 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ToolLayout } from "../components/ToolLayout";
 import { DropZone } from "../components/DropZone";
 import { useAppStore } from "../store/useAppStore";
 import { invoke } from "@tauri-apps/api/core";
-import { makeSearchable, showSaveDialog, openFile, copyFile } from "../lib/tauri";
-
-import { ocrImage, getOcrWorker } from "../lib/ocrEngine";
+import { makeSearchable, ocrPage, showSaveDialog, openFile, copyFile, suggestedName } from "../lib/tauri";
 import type { OcrPage } from "../lib/tauri";
 
-import { UI, MONO } from "../lib/tokens";
+import { UI } from "../lib/tokens";
 
 type Status = "idle" | "processing" | "done" | "error";
 
@@ -33,6 +31,10 @@ function formatBytes(bytes: number): string {
 export default function Ocr() {
   const files = useAppStore((s) => s.files);
   const clearFiles = useAppStore((s) => s.clearFiles);
+  const reset = useAppStore((s) => s.reset);
+  // Start empty: the file list is shared with the other tool pages, so files
+  // added in Merge or Images to PDF showed up (and were OCR'd) here.
+  useEffect(() => { clearFiles(); reset(); }, [clearFiles, reset]);
   const file = files[0];
 
   const [status, setStatus] = useState<Status>("idle");
@@ -51,18 +53,7 @@ export default function Ocr() {
       setProgress({ stage: "Loading PDF…", page: 0, total: 0, pct: 2 });
       const totalPages = await invoke<number>("get_page_count", { path: file.path });
 
-      // Step 2: warm up the OCR worker (may download the English model ~10 MB on first use)
-      setProgress({ stage: "Initializing OCR engine…", page: 0, total: totalPages, pct: 5 });
-      await getOcrWorker((pct, stage) => {
-        setProgress({
-          stage: `${stage.charAt(0).toUpperCase() + stage.slice(1)}…`,
-          page: 0,
-          total: totalPages,
-          pct: 5 + pct * 20,
-        });
-      });
-
-      // Step 3: render + OCR each page
+      // Step 2: recognize each page in Rust (MuPDF's tesseract, bundled English model)
       const ocrPages: OcrPage[] = [];
       let totalWords = 0;
 
@@ -71,36 +62,14 @@ export default function Ocr() {
           stage: `Recognizing page ${i} of ${totalPages}`,
           page: i,
           total: totalPages,
-          pct: 25 + ((i - 1) / totalPages) * 65,
+          pct: 5 + ((i - 1) / totalPages) * 85,
         });
-
-                // Render at 2× scale for better OCR accuracy (~144 DPI for a 72 DPI PDF) using the Tauri backend
-        const base64 = await invoke<string>("render_page", { path: file.path, page: i, scale: 2.0 });
-        const img = new Image();
-        img.src = `data:image/jpeg;base64,${base64}`;
-        await new Promise((resolve, reject) => {
-          img.onload = resolve;
-          img.onerror = reject;
-        });
-
-        const canvas = document.createElement("canvas");
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) throw new Error("Canvas 2D context unavailable");
-        ctx.drawImage(img, 0, 0);
-
-        const res = await ocrImage(canvas, canvas.width, canvas.height);
-
-        ocrPages.push({
-          words: res.words
-            .filter((w) => w.confidence > 30)
-            .map((w) => ({ text: w.text, x: w.x, y: w.y, w: w.w, h: w.h })),
-        });
-        totalWords += ocrPages[i - 1]!.words.length;
+        const page = await ocrPage(file.path, i);
+        ocrPages.push(page);
+        totalWords += page.words.length;
       }
 
-      // Step 4: embed text layer via Rust
+      // Step 3: embed text layer via Rust
       setProgress({ stage: "Embedding text layer…", page: totalPages, total: totalPages, pct: 92 });
       const outputPath = await makeSearchable(file.path, ocrPages);
 
@@ -114,13 +83,19 @@ export default function Ocr() {
   }
 
   async function handleSaveAs() {
-    if (!result) return;
-    const dest = await showSaveDialog(result.outputPath);
-    if (dest) await copyFile(result.outputPath, dest);
+    if (!result || !file) return;
+    // The result lives in the temp folder; offer a name next to the input's.
+    const dest = await showSaveDialog(suggestedName(file.name, "searchable"));
+    if (!dest) return;
+    try {
+      await copyFile(result.outputPath, dest);
+    } catch (e) {
+      setError(`Couldn't save the file: ${String(e)}`);
+    }
   }
 
   return (
-    <ToolLayout title="Make Searchable" description="Add OCR text layer to scanned PDFs">
+    <ToolLayout title="Make searchable" description="Add an OCR text layer to a scanned PDF, fully offline." family="export">
       {!file ? (
         <DropZone multiple={false} label="Drop a scanned PDF here or click to browse" />
       ) : (
@@ -136,10 +111,10 @@ export default function Ocr() {
           {/* File header */}
           <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
             <div>
-              <div style={{ fontFamily: UI, fontSize: 13.5, fontWeight: 600, color: "var(--fg0)" }}>
+              <div style={{ fontFamily: UI, fontSize: "var(--fs-body)", fontWeight: 600, color: "var(--fg0)" }}>
                 {file.name}
               </div>
-              <div style={{ fontFamily: MONO, fontSize: 10.5, color: "var(--fg2)", marginTop: 3 }}>
+              <div style={{ fontFamily: UI, fontSize: "var(--fs-label)", color: "var(--fg2)", marginTop: 3 }}>
                 {file.info?.page_count != null ? `${file.info.page_count} pages` : ""}
                 {file.info?.file_size != null ? ` · ${formatBytes(file.info.file_size)}` : ""}
               </div>
@@ -149,7 +124,7 @@ export default function Ocr() {
                 onClick={clearFiles}
                 style={{
                   background: "none", border: "none", cursor: "pointer",
-                  fontFamily: MONO, fontSize: 10.5, color: "var(--fg2)",
+                  fontFamily: UI, fontSize: "var(--fs-label)", color: "var(--fg2)",
                   padding: "2px 6px",
                 }}
               >
@@ -163,10 +138,10 @@ export default function Ocr() {
           {status === "processing" && progress && (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontFamily: UI, fontSize: 12.5, color: "var(--fg1)" }}>
+                <span style={{ fontFamily: UI, fontSize: "var(--fs-body)", color: "var(--fg1)" }}>
                   {progress.stage}
                 </span>
-                <span style={{ fontFamily: MONO, fontSize: 11, color: "var(--fg2)" }}>
+                <span style={{ fontFamily: UI, fontSize: "var(--fs-label)", color: "var(--fg2)" }}>
                   {Math.round(progress.pct)}%
                 </span>
               </div>
@@ -186,7 +161,7 @@ export default function Ocr() {
               </div>
               {progress.total > 0 && progress.page > 0 && (
                 <div style={{
-                  fontFamily: MONO, fontSize: 10, color: "var(--fg3)",
+                  fontFamily: UI, fontSize: "var(--fs-label)", color: "var(--fg3)",
                   textAlign: "right", textTransform: "uppercase", letterSpacing: 0.5,
                 }}>
                   Page {progress.page} / {progress.total}
@@ -196,13 +171,13 @@ export default function Ocr() {
           )}
 
           {/* Error */}
-          {status === "error" && error && (
+          {error && (
             <div style={{
               padding: "10px 12px",
-              background: "rgba(239,68,68,0.08)",
-              border: "1px solid rgba(239,68,68,0.25)",
+              background: "var(--bad-soft)",
+              border: "1px solid var(--bad-line)",
               borderRadius: 4,
-              fontFamily: MONO, fontSize: 11, color: "#ef4444",
+              fontFamily: UI, fontSize: "var(--fs-label)", color: "var(--bad)",
               lineHeight: 1.5,
             }}>
               {error}
@@ -233,13 +208,13 @@ export default function Ocr() {
                     borderRadius: 4,
                   }}>
                     <div style={{
-                      fontFamily: MONO, fontSize: 9, color: "var(--fg3)",
+                      fontFamily: UI, fontSize: "var(--fs-label)", color: "var(--fg3)",
                       textTransform: "uppercase", letterSpacing: 0.6,
                     }}>
                       {label}
                     </div>
                     <div style={{
-                      fontFamily: MONO, fontSize: 14, fontWeight: 600,
+                      fontFamily: UI, fontSize: 14, fontWeight: 600,
                       color: label === "Status" ? "var(--accent)" : "var(--fg0)",
                       marginTop: 2,
                     }}>

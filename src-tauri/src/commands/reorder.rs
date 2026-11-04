@@ -3,7 +3,8 @@ use crate::utils::paths::temp_output_path;
 use crate::error::{AppError, AppResult};
 
 /// Reorder pages in a PDF. `order` is 1-indexed and maps new position → old page number.
-#[tauri::command]
+// Off the main thread: a full parse and save of a large file froze the window.
+#[tauri::command(async)]
 pub fn reorder_pages(
     path: String,
     order: Vec<u32>,
@@ -67,6 +68,6 @@ pub fn reorder_pages(
     }
 
     let out = output.unwrap_or_else(|| temp_output_path(&path, "reordered"));
-    doc.save(&out)?;
+    crate::utils::save_pdf(&mut doc, &out)?;
     Ok(out)
 }

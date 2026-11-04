@@ -1,64 +1,27 @@
 import { useState, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
 
-interface FormFieldValue {
-  name: string;
-  value: string;
-}
-
-interface UseFormFillingReturn {
-  isFormMode: boolean;
-  setIsFormMode: (v: boolean) => void;
-  fieldValues: Record<string, string>;
-  setFieldValue: (name: string, value: string) => void;
-  saveFormFields: (filePath: string) => Promise<string | null>;
-  isDirty: boolean;
-  clearFields: () => void;
-}
-
-export function useFormFilling(): UseFormFillingReturn {
-  const [isFormMode, setIsFormMode] = useState(false);
+/**
+ * Form values typed into the viewer's form layer, keyed by full field name.
+ * They are written into the file by the viewer's save (fill_form), then
+ * cleared.
+ */
+export function useFormFilling() {
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
-  const [isDirty, setIsDirty] = useState(false);
 
   const setFieldValue = useCallback((name: string, value: string) => {
     setFieldValues((prev) => ({ ...prev, [name]: value }));
-    setIsDirty(true);
   }, []);
 
-  const saveFormFields = useCallback(
-    async (filePath: string): Promise<string | null> => {
-      const fields: FormFieldValue[] = Object.entries(fieldValues).map(
-        ([name, value]) => ({ name, value })
-      );
-      if (fields.length === 0) return null;
-      try {
-        const result = await invoke<string>("fill_form", {
-          path: filePath,
-          fields,
-          flatten: false,
-        });
-        setIsDirty(false);
-        return result;
-      } catch {
-        return null;
+  /** Forget the given values (once saved), keeping any changed since. */
+  const dropFields = useCallback((saved: Record<string, string>) => {
+    setFieldValues((prev) => {
+      const next = { ...prev };
+      for (const [name, value] of Object.entries(saved)) {
+        if (next[name] === value) delete next[name];
       }
-    },
-    [fieldValues]
-  );
-
-  const clearFields = useCallback(() => {
-    setFieldValues({});
-    setIsDirty(false);
+      return next;
+    });
   }, []);
 
-  return {
-    isFormMode,
-    setIsFormMode,
-    fieldValues,
-    setFieldValue,
-    saveFormFields,
-    isDirty,
-    clearFields,
-  };
+  return { fieldValues, setFieldValue, dropFields };
 }

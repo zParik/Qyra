@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { isAndroid } from "../lib/androidFileUtils";
 
 export type UpdaterState =
   | { status: "idle" }
@@ -15,8 +14,6 @@ export function useUpdater() {
   const [state, setState] = useState<UpdaterState>({ status: "idle" });
 
   useEffect(() => {
-    // Updater plugin is not registered on Android — skip entirely
-    if (isAndroid()) return;
     // Delay the check so it doesn't compete with app startup
     const timer = setTimeout(() => checkForUpdates(), 3000);
     return () => clearTimeout(timer);

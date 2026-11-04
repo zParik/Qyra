@@ -82,7 +82,7 @@ export function HeaderFooterPanel({ file, onApplied }: Props) {
         <code>{"{page}"}</code> <code>{"{total}"}</code> <code>{"{filename}"}</code> <code>{"{date}"}</code>.
       </p>
 
-      <div style={{ fontSize: 10.5, color: "var(--viewer-text-sec)", textTransform: "uppercase", letterSpacing: 0.5, marginTop: 4 }}>
+      <div style={{ fontSize: "var(--fs-label)", color: "var(--viewer-text-sec)", textTransform: "uppercase", letterSpacing: 0.5, marginTop: 4 }}>
         Header
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4 }}>
@@ -91,7 +91,7 @@ export function HeaderFooterPanel({ file, onApplied }: Props) {
         <ZoneField label="R" value={opts.zones.headerRight} onChange={(v) => setZone("headerRight", v)} />
       </div>
 
-      <div style={{ fontSize: 10.5, color: "var(--viewer-text-sec)", textTransform: "uppercase", letterSpacing: 0.5, marginTop: 8 }}>
+      <div style={{ fontSize: "var(--fs-label)", color: "var(--viewer-text-sec)", textTransform: "uppercase", letterSpacing: 0.5, marginTop: 8 }}>
         Footer
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4 }}>
@@ -121,7 +121,7 @@ export function HeaderFooterPanel({ file, onApplied }: Props) {
             borderRadius: 6,
             padding: "8px 10px",
             color: "var(--v-ok-text)",
-            fontSize: 11.5,
+            fontSize: "var(--fs-label)",
           }}
         >
           Stamped {report.pagesStamped} page{report.pagesStamped === 1 ? "" : "s"}.
@@ -141,7 +141,7 @@ export function HeaderFooterPanel({ file, onApplied }: Props) {
           color: "var(--viewer-text)",
           border: "1px solid var(--viewer-border)",
           borderRadius: 6,
-          fontSize: 12.5,
+          fontSize: "var(--fs-body)",
           cursor: isProcessing ? "not-allowed" : "pointer",
         }}
       >
@@ -154,7 +154,7 @@ export function HeaderFooterPanel({ file, onApplied }: Props) {
 function ZoneField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      <span style={{ fontSize: 10, color: "var(--viewer-text-muted)" }}>{label}</span>
+      <span style={{ fontSize: "var(--fs-label)", color: "var(--viewer-text-muted)" }}>{label}</span>
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -165,7 +165,7 @@ function ZoneField({ label, value, onChange }: { label: string; value: string; o
           color: "var(--viewer-text)",
           border: "1px solid var(--viewer-border)",
           borderRadius: 4,
-          fontSize: 11.5,
+          fontSize: "var(--fs-label)",
         }}
       />
     </label>
@@ -177,7 +177,7 @@ function NumField({ label, value, onChange, min, allowZero }: {
 }) {
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      <span style={{ fontSize: 10, color: "var(--viewer-text-muted)" }}>{label}</span>
+      <span style={{ fontSize: "var(--fs-label)", color: "var(--viewer-text-muted)" }}>{label}</span>
       <input
         type="number"
         min={allowZero ? 0 : min}
@@ -193,7 +193,7 @@ function NumField({ label, value, onChange, min, allowZero }: {
           color: "var(--viewer-text)",
           border: "1px solid var(--viewer-border)",
           borderRadius: 4,
-          fontSize: 11.5,
+          fontSize: "var(--fs-label)",
           textAlign: "right",
         }}
       />

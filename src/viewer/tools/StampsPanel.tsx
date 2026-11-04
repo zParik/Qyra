@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { UI, MONO } from "../../lib/tokens";
+import { UI } from "../../lib/tokens";
 
 interface Props {
   filePath: string;
@@ -65,7 +65,7 @@ export function StampsPanel({ filePath, currentPage, onApplied }: Props) {
 
       {/* Page */}
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontFamily: UI, fontSize: 11, color: "var(--viewer-text-sec)" }}>Page</span>
+        <span style={{ fontFamily: UI, fontSize: "var(--fs-label)", color: "var(--viewer-text-sec)" }}>Page</span>
         <input
           type="number"
           min={1}
@@ -75,14 +75,14 @@ export function StampsPanel({ filePath, currentPage, onApplied }: Props) {
             width: 52, padding: "3px 6px", borderRadius: 5,
             border: "1px solid var(--viewer-border)",
             background: "var(--viewer-bg)", color: "var(--viewer-text)",
-            fontFamily: MONO, fontSize: 11, outline: "none",
+            fontFamily: UI, fontSize: "var(--fs-label)", outline: "none",
           }}
         />
       </div>
 
       {/* Stamp picker */}
       <div>
-        <p style={{ fontFamily: UI, fontSize: 11, fontWeight: 500, color: "var(--viewer-text-sec)", margin: "0 0 6px" }}>
+        <p style={{ fontFamily: UI, fontSize: "var(--fs-label)", fontWeight: 500, color: "var(--viewer-text-sec)", margin: "0 0 6px" }}>
           Stamp type
         </p>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5 }}>
@@ -96,8 +96,8 @@ export function StampsPanel({ filePath, currentPage, onApplied }: Props) {
                 border: `1.5px solid ${selectedStamp === s.id ? s.color : "var(--viewer-border)"}`,
                 background: selectedStamp === s.id ? `${s.color}18` : "var(--viewer-bg)",
                 color: selectedStamp === s.id ? s.color : "var(--viewer-text-muted)",
-                fontFamily: MONO,
-                fontSize: 9.5,
+                fontFamily: UI,
+                fontSize: "var(--fs-label)",
                 fontWeight: 700,
                 letterSpacing: "0.4px",
                 cursor: "pointer",
@@ -113,7 +113,7 @@ export function StampsPanel({ filePath, currentPage, onApplied }: Props) {
 
       {/* Position picker */}
       <div>
-        <p style={{ fontFamily: UI, fontSize: 11, fontWeight: 500, color: "var(--viewer-text-sec)", margin: "0 0 6px" }}>
+        <p style={{ fontFamily: UI, fontSize: "var(--fs-label)", fontWeight: 500, color: "var(--viewer-text-sec)", margin: "0 0 6px" }}>
           Position
         </p>
         <div style={{ display: "flex", gap: 4 }}>
@@ -126,7 +126,7 @@ export function StampsPanel({ filePath, currentPage, onApplied }: Props) {
                 border: `1px solid ${position === p ? "var(--accent)" : "var(--viewer-border)"}`,
                 background: position === p ? "var(--accent-soft)" : "var(--viewer-bg)",
                 color: position === p ? "var(--accent)" : "var(--viewer-text-muted)",
-                fontFamily: UI, fontSize: 10, cursor: "pointer",
+                fontFamily: UI, fontSize: "var(--fs-label)", cursor: "pointer",
                 transition: "all 100ms",
               }}
             >
@@ -143,7 +143,7 @@ export function StampsPanel({ filePath, currentPage, onApplied }: Props) {
         style={{
           padding: "7px 0", borderRadius: 6, border: "none",
           background: status === "done" ? "#16a34a" : status === "error" ? "#dc2626" : "var(--accent)",
-          color: "#fff", fontFamily: UI, fontSize: 12, fontWeight: 600,
+          color: "#fff", fontFamily: UI, fontSize: "var(--fs-body)", fontWeight: 600,
           cursor: status === "applying" ? "not-allowed" : "pointer",
           transition: "background 200ms",
         }}

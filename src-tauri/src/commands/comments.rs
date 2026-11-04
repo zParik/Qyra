@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::commands::pdf_annotations::{color_array_to_hex, hex_to_rgb_f32};
 use crate::error::{AppError, AppResult};
-use crate::utils::get_page_dims;
+use crate::utils::geometry::PageGeom;
 
 const ATTACHMENT_KEY: &[u8] = b"qyra-comments";
 const ATTACHMENT_FILENAME: &[u8] = b"qyra-comments.json";
@@ -108,18 +108,9 @@ fn pdf_text_encode(s: &str) -> Vec<u8> {
     out
 }
 
-/// Decode a PDF text string: UTF-16BE when BOM-prefixed, else treat the bytes
-/// as (lossy) UTF-8 — close enough to PDFDocEncoding for comment text.
+/// Decode a PDF text string (UTF-16 or PDFDocEncoding).
 fn pdf_text_decode(bytes: &[u8]) -> String {
-    if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
-        let units: Vec<u16> = bytes[2..]
-            .chunks_exact(2)
-            .map(|p| u16::from_be_bytes([p[0], p[1]]))
-            .collect();
-        String::from_utf16_lossy(&units)
-    } else {
-        String::from_utf8_lossy(bytes).into_owned()
-    }
+    crate::utils::pdf_text::decode(bytes)
 }
 
 /// Days-from-civil (Howard Hinnant's algorithm); days since 1970-01-01.
@@ -208,67 +199,8 @@ fn author_name() -> String {
 // /Annots access
 // ---------------------------------------------------------------------------
 
-/// Object ids referenced by a page's /Annots array (inline or indirect).
-/// Inline annotation dictionaries (no indirect ref) are skipped, matching
-/// pdf_annotations.rs.
-fn annot_refs(doc: &Document, page_id: ObjectId) -> Vec<ObjectId> {
-    let Some(page_dict) = get_dict(doc, page_id) else {
-        return vec![];
-    };
-    match page_dict.get(b"Annots") {
-        Ok(Object::Array(arr)) => arr.iter().filter_map(obj_as_ref).collect(),
-        Ok(Object::Reference(r)) => match doc.get_object(*r) {
-            Ok(Object::Array(arr)) => arr.iter().filter_map(obj_as_ref).collect(),
-            _ => vec![],
-        },
-        _ => vec![],
-    }
-}
+use crate::utils::annots::{annot_refs, push_annot_ref, remove_annot_ref};
 
-/// Append an annotation reference to a page's /Annots, handling the inline
-/// array, indirect array, and missing cases.
-fn push_annot_ref(doc: &mut Document, page_id: ObjectId, annot_id: ObjectId) -> AppResult<()> {
-    // Determine the array's location with immutable borrows first.
-    let indirect_arr: Option<ObjectId> = get_dict(doc, page_id)
-        .and_then(|d| d.get(b"Annots").ok())
-        .and_then(obj_as_ref);
-
-    if let Some(arr_id) = indirect_arr {
-        if let Ok(Object::Array(arr)) = doc.get_object_mut(arr_id) {
-            arr.push(Object::Reference(annot_id));
-            return Ok(());
-        }
-    }
-
-    let page_obj = doc.get_object_mut(page_id)?;
-    if let Object::Dictionary(page_dict) = page_obj {
-        match page_dict.get_mut(b"Annots") {
-            Ok(Object::Array(arr)) => arr.push(Object::Reference(annot_id)),
-            _ => page_dict.set("Annots", Object::Array(vec![Object::Reference(annot_id)])),
-        }
-    }
-    Ok(())
-}
-
-/// Remove an annotation reference from a page's /Annots (inline or indirect).
-fn remove_annot_ref(doc: &mut Document, page_id: ObjectId, annot_id: ObjectId) {
-    let indirect_arr: Option<ObjectId> = get_dict(doc, page_id)
-        .and_then(|d| d.get(b"Annots").ok())
-        .and_then(obj_as_ref);
-
-    let target = Object::Reference(annot_id);
-    if let Some(arr_id) = indirect_arr {
-        if let Ok(Object::Array(arr)) = doc.get_object_mut(arr_id) {
-            arr.retain(|o| *o != target);
-        }
-        return;
-    }
-    if let Ok(Object::Dictionary(page_dict)) = doc.get_object_mut(page_id) {
-        if let Ok(Object::Array(arr)) = page_dict.get_mut(b"Annots") {
-            arr.retain(|o| *o != target);
-        }
-    }
-}
 
 /// Stable comment id for a Text annotation: its /NM if present, otherwise a
 /// synthetic id derived from the object id (stable across load/save because
@@ -549,10 +481,10 @@ fn note_appearance(doc: &mut Document, color: &str) -> ObjectId {
 }
 
 /// Build a fresh Text-annotation dictionary for a comment.
-fn build_note_dict(comment: &Comment, pw: f64, ph: f64, ap_id: ObjectId) -> Dictionary {
-    // Pin tip (normalized, top-left origin) → PDF coords (bottom-left origin).
-    let tip_x = comment.x.clamp(0.0, 1.0) * pw;
-    let tip_y = (1.0 - comment.y.clamp(0.0, 1.0)) * ph;
+fn build_note_dict(comment: &Comment, geom: &PageGeom, ap_id: ObjectId) -> Dictionary {
+    // Pin tip (normalised to the page as shown) → user space. The tip is the
+    // bottom-centre of /Rect in user space, so it reads back exactly.
+    let (tip_x, tip_y) = geom.to_pdf(comment.x.clamp(0.0, 1.0), comment.y.clamp(0.0, 1.0));
     let (r, g, b) = hex_to_rgb_f32(&comment.color);
 
     let mut d = Dictionary::new();
@@ -667,9 +599,9 @@ fn sync_text_annots(doc: &mut Document, comments: &mut [Comment]) {
                 // Page out of range (stale comment) — keep in sidecar only.
                 continue;
             };
-            let (pw, ph) = get_page_dims(doc, page_id);
+            let geom = PageGeom::of(doc, page_id);
             let ap_id = note_appearance(doc, &comment.color);
-            let note_dict = build_note_dict(comment, pw, ph, ap_id);
+            let note_dict = build_note_dict(comment, &geom, ap_id);
             let annot_id = doc.add_object(note_dict);
             if push_annot_ref(doc, page_id, annot_id).is_ok() {
                 comment.synced = true;
@@ -682,10 +614,10 @@ fn sync_text_annots(doc: &mut Document, comments: &mut [Comment]) {
         if keep.contains(&note.annot_id) {
             continue;
         }
-        remove_annot_ref(doc, note.page_id, note.annot_id);
+        let _ = remove_annot_ref(doc, note.page_id, note.annot_id);
         doc.objects.remove(&note.annot_id);
         if let Some(popup_id) = note.popup_id {
-            remove_annot_ref(doc, note.page_id, popup_id);
+            let _ = remove_annot_ref(doc, note.page_id, popup_id);
             doc.objects.remove(&popup_id);
         }
     }
@@ -698,7 +630,15 @@ fn sync_text_annots(doc: &mut Document, comments: &mut [Comment]) {
 #[tauri::command]
 pub async fn load_comments(path: String) -> AppResult<String> {
     tokio::task::spawn_blocking(move || -> AppResult<String> {
-        let doc = Document::load(&path)?;
+        // Most files have no comments: answer from MuPDF's lazy object tree
+        // instead of a whole-file lopdf parse. (No worker in tests: always parse.)
+        if let Some(w) = crate::commands::render_worker::global() {
+            if matches!(w.features(path.clone()), Ok(f) if !f.comments) {
+                return Ok("[]".to_string());
+            }
+        }
+        // Read-only: share the cached parse instead of a fresh full one.
+        let doc = crate::commands::lopdf_cache::load(&path)?;
 
         let sidecar = read_sidecar(&doc);
         let mut by_id: HashMap<String, Comment> = sidecar
@@ -710,10 +650,7 @@ pub async fn load_comments(path: String) -> AppResult<String> {
 
         // Import every Text annotation, merging sidecar extras by id.
         for (page_num, page_id) in doc.get_pages() {
-            let (pw, ph) = get_page_dims(&doc, page_id);
-            if pw <= 0.0 || ph <= 0.0 {
-                continue;
-            }
+            let geom = PageGeom::of(&doc, page_id);
             for annot_id in annot_refs(&doc, page_id) {
                 let Some(dict) = get_dict(&doc, annot_id) else { continue };
                 if dict_subtype(dict) != Some(b"Text".as_slice()) {
@@ -735,7 +672,8 @@ pub async fn load_comments(path: String) -> AppResult<String> {
                             (num(&arr[0]), num(&arr[1]), num(&arr[2]), num(&arr[3]));
                         let cx = (x0 + x1) / 2.0;
                         let bottom = y0.min(y1);
-                        ((cx / pw).clamp(0.0, 1.0), (1.0 - bottom / ph).clamp(0.0, 1.0))
+                        let (nx, ny) = geom.to_norm(cx, bottom);
+                        (nx.clamp(0.0, 1.0), ny.clamp(0.0, 1.0))
                     }
                     _ => match &side {
                         Some(s) => (s.x, s.y),
@@ -803,7 +741,21 @@ pub async fn save_comments(path: String, comments_json: String) -> AppResult<()>
             .map_err(|e| AppError::Other(e.to_string()))?;
         write_sidecar(&mut doc, json_bytes)?;
 
-        doc.save(&path)?;
+        // Keep the encryption the file was opened with.
+        crate::utils::reencrypt(&mut doc)?;
+
+        // Atomically: this is often the user's original file, and the doc
+        // thread reads it lazily while we write.
+        let worker = crate::commands::render_worker::global();
+        crate::utils::paths::replace_file_with(
+            path.as_ref(),
+            |f| doc.save_to(f).map(|_| ()),
+            || {
+                if let Some(w) = &worker {
+                    w.close(&path);
+                }
+            },
+        )?;
         Ok(())
     })
     .await

@@ -1,7 +1,6 @@
 use crate::error::{AppError, AppResult};
 
 #[tauri::command]
-#[cfg(not(target_os = "android"))]
 pub async fn export_pdf_to_text(
     path: String,
     output: Option<String>,
@@ -44,13 +43,4 @@ pub async fn export_pdf_to_text(
     })
     .await
     .map_err(|e| AppError::Other(e.to_string()))?
-}
-
-#[tauri::command]
-#[cfg(target_os = "android")]
-pub async fn export_pdf_to_text(
-    _path: String,
-    _output: Option<String>,
-) -> AppResult<String> {
-    Err(AppError::Other("Not supported on Android".to_string()))
 }

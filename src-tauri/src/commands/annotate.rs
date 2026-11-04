@@ -1,6 +1,6 @@
 use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream, content::{Content, Operation}};
 use crate::utils::paths::temp_output_path;
-use crate::utils::get_page_dims;
+use crate::utils::geometry::PageGeom;
 use crate::error::AppResult;
 
 #[derive(serde::Deserialize)]
@@ -61,17 +61,20 @@ fn catmull_to_cubic(pts: &[[f64; 2]]) -> Vec<[f64; 6]> {
     segments
 }
 
-fn build_stroke_ops(s: &StrokeData, pw: f64, ph: f64, hl_gs_name: Option<&[u8]>) -> Vec<Operation> {
+fn build_stroke_ops(s: &StrokeData, geom: &PageGeom, hl_gs_name: Option<&[u8]>) -> Vec<Operation> {
     if s.points.is_empty() {
         return vec![];
     }
 
     let (r, g, b) = hex_to_rgb(&s.color);
-    let line_width = (s.thickness * (pw / 768.0)) as f32;
+    let line_width = (s.thickness * (geom.display_size().0 / 768.0)) as f32;
 
-    // Y-flip helper: PDF origin is bottom-left
-    let flip_y = |y_norm: f64| -> f32 { ((1.0 - y_norm) * ph) as f32 };
-    let to_x = |x_norm: f64| -> f32 { (x_norm * pw) as f32 };
+    // Points are normalised to the page as shown (top-left origin, after
+    // CropBox and /Rotate); map each to user space.
+    let at = |x_norm: f64, y_norm: f64| -> (f32, f32) {
+        let (x, y) = geom.to_pdf(x_norm, y_norm);
+        (x as f32, y as f32)
+    };
 
     let mut ops: Vec<Operation> = Vec::new();
 
@@ -109,17 +112,13 @@ fn build_stroke_ops(s: &StrokeData, pw: f64, ph: f64, hl_gs_name: Option<&[u8]>)
         let segments = catmull_to_cubic(&s.points);
 
         // Move to first point
-        let x0 = to_x(s.points[0][0]);
-        let y0 = flip_y(s.points[0][1]);
+        let (x0, y0) = at(s.points[0][0], s.points[0][1]);
         ops.push(Operation::new("m", vec![Object::Real(x0), Object::Real(y0)]));
 
         for seg in &segments {
-            let cp1x = to_x(seg[0]);
-            let cp1y = flip_y(seg[1]);
-            let cp2x = to_x(seg[2]);
-            let cp2y = flip_y(seg[3]);
-            let ex = to_x(seg[4]);
-            let ey = flip_y(seg[5]);
+            let (cp1x, cp1y) = at(seg[0], seg[1]);
+            let (cp2x, cp2y) = at(seg[2], seg[3]);
+            let (ex, ey) = at(seg[4], seg[5]);
             ops.push(Operation::new("c", vec![
                 Object::Real(cp1x), Object::Real(cp1y),
                 Object::Real(cp2x), Object::Real(cp2y),
@@ -130,13 +129,11 @@ fn build_stroke_ops(s: &StrokeData, pw: f64, ph: f64, hl_gs_name: Option<&[u8]>)
         ops.push(Operation::new("S", vec![]));
     } else {
         // Polyline: m + l... + S
-        let x0 = to_x(s.points[0][0]);
-        let y0 = flip_y(s.points[0][1]);
+        let (x0, y0) = at(s.points[0][0], s.points[0][1]);
         ops.push(Operation::new("m", vec![Object::Real(x0), Object::Real(y0)]));
 
         for pt in s.points.iter().skip(1) {
-            let x = to_x(pt[0]);
-            let y = flip_y(pt[1]);
+            let (x, y) = at(pt[0], pt[1]);
             ops.push(Operation::new("l", vec![Object::Real(x), Object::Real(y)]));
         }
 
@@ -261,6 +258,7 @@ fn insert_virtual_pages(doc: &mut Document, virtual_pages: &[VirtualPageData]) -
     let total_real = kids.len() as u32;
     let pw = 595.0_f64;
     let ph = 842.0_f64;
+    let blank_geom = PageGeom { x0: 0.0, y0: 0.0, x1: pw, y1: ph, rotate: 0 };
 
     // Create each virtual page object
     let mut new_pages: Vec<(u32, ObjectId)> = Vec::new();
@@ -284,7 +282,7 @@ fn insert_virtual_pages(doc: &mut Document, virtual_pages: &[VirtualPageData]) -
         for s in &vp.strokes {
             if s.tool == "eraser" { continue; }
             let gs_name = if s.tool == "highlighter" { Some(b"HLAlpha".as_slice()) } else { None };
-            all_ops.extend(build_stroke_ops(s, pw, ph, gs_name));
+            all_ops.extend(build_stroke_ops(s, &blank_geom, gs_name));
         }
 
         let content = Content { operations: all_ops };
@@ -455,7 +453,8 @@ fn append_stream_to_page(doc: &mut Document, page_id: ObjectId, stream_id: Objec
     Ok(())
 }
 
-#[tauri::command]
+// Off the main thread: a full parse and save of a large file froze the window.
+#[tauri::command(async)]
 pub fn bake_annotations(
     path: String,
     annotations: Vec<PageAnnotationData>,
@@ -471,6 +470,7 @@ pub fn bake_annotations(
 
     let _t = crate::utils::timing::Timer::start("bake_annotations", String::new());
     let mut doc = Document::load(&path)?;
+    crate::utils::own_inherited_resources(&mut doc);
 
     // Build page_map: page number (1-indexed) -> ObjectId
     let page_map: std::collections::HashMap<u32, ObjectId> =
@@ -486,7 +486,7 @@ pub fn bake_annotations(
             continue;
         }
 
-        let (pw, ph) = get_page_dims(&doc, page_id);
+        let geom = PageGeom::of(&doc, page_id);
 
         // Check if any highlighter strokes exist
         let has_highlighter = annotation.strokes.iter().any(|s| s.tool == "highlighter");
@@ -516,7 +516,7 @@ pub fn bake_annotations(
             } else {
                 None
             };
-            let ops = build_stroke_ops(stroke, pw, ph, gs_name_opt);
+            let ops = build_stroke_ops(stroke, &geom, gs_name_opt);
             all_ops.extend(ops);
         }
 
@@ -543,6 +543,6 @@ pub fn bake_annotations(
         insert_virtual_pages(&mut doc, &virtual_pages)?;
     }
 
-    doc.save(&out)?;
+    crate::utils::save_pdf(&mut doc, &out)?;
     Ok(out)
 }

@@ -3,6 +3,36 @@ use crate::pdf::error::PdfError;
 use crate::pdf::parser::lexer::{Lexer, Token};
 use crate::pdf::types::{ObjectId, PdfDict, PdfObject, PdfStream};
 
+/// Deepest array/dictionary nesting accepted. Real files stay in single digits;
+/// a hostile one with thousands of levels would overflow the stack and abort
+/// the whole app, so it is a parse error instead.
+const MAX_NESTING: u32 = 256;
+
+thread_local! {
+    static NESTING: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// One level of array/dictionary nesting; released on drop.
+struct NestingGuard;
+
+impl NestingGuard {
+    fn enter() -> Result<Self, PdfError> {
+        NESTING.with(|n| {
+            if n.get() >= MAX_NESTING {
+                return Err(PdfError::ParseError("objects nested too deeply".into()));
+            }
+            n.set(n.get() + 1);
+            Ok(NestingGuard)
+        })
+    }
+}
+
+impl Drop for NestingGuard {
+    fn drop(&mut self) {
+        NESTING.with(|n| n.set(n.get() - 1));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -47,10 +77,12 @@ pub fn parse_object(lex: &mut Lexer<'_>) -> Result<PdfObject, PdfError> {
         Token::LiteralString(s) => Ok(PdfObject::StringLiteral(s)),
         Token::HexString(s) => Ok(PdfObject::HexString(s)),
         Token::DictStart => {
+            let _level = NestingGuard::enter()?;
             let dict = parse_dict_body(lex)?;
             Ok(PdfObject::Dictionary(dict))
         }
         Token::ArrayStart => {
+            let _level = NestingGuard::enter()?;
             let arr = parse_array_body(lex)?;
             Ok(PdfObject::Array(arr))
         }
@@ -232,10 +264,10 @@ fn consume_stream_body(
     let declared_length = dict
         .get(b"Length")
         .and_then(|v| v.as_integer())
-        .map(|n| n as usize);
+        .and_then(|n| usize::try_from(n).ok());
 
     let raw_bytes = if let Some(len) = declared_length {
-        let end = stream_start + len;
+        let end = stream_start.saturating_add(len);
         if end <= data.len() {
             // Verify the next bytes after length are endstream.
             // Skip CR/LF in-place — no allocation needed.
@@ -327,6 +359,21 @@ mod tests {
     fn obj(s: &[u8]) -> PdfObject {
         let mut lex = Lexer::new(s);
         parse_object(&mut lex).unwrap()
+    }
+
+    #[test]
+    fn deep_nesting_is_an_error_not_a_stack_overflow() {
+        // 100 000 levels would overflow any thread stack and abort the app.
+        let deep = [b"[".repeat(100_000), b"]".repeat(100_000)].concat();
+        assert!(parse_object(&mut Lexer::new(&deep)).is_err());
+        let dict = [b"<</A ".repeat(100_000), b">>".repeat(100_000)].concat();
+        assert!(parse_object(&mut Lexer::new(&dict)).is_err());
+    }
+
+    #[test]
+    fn ordinary_nesting_still_parses() {
+        let ok = [b"[".repeat(200), b"]".repeat(200)].concat();
+        assert!(parse_object(&mut Lexer::new(&ok)).is_ok());
     }
 
     #[test]

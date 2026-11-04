@@ -138,6 +138,7 @@ pub fn header_footer_core(
 
         let _t = crate::utils::timing::Timer::start("add_header_footer", String::new());
         let mut doc = Document::load(&path)?;
+        crate::utils::own_inherited_resources(&mut doc);
         let font_id = doc.add_object(dictionary! {
             "Type" => "Font",
             "Subtype" => "Type1",
@@ -289,34 +290,20 @@ pub fn header_footer_core(
                 }
             }
 
-            if let Ok(Object::Dictionary(dict)) = doc.get_object_mut(*page_id) {
-                match dict.get_mut(b"Contents") {
-                    Ok(Object::Array(arr)) => {
-                        arr.insert(0, Object::Reference(stream_id));
-                    }
-                    Ok(Object::Reference(r)) => {
-                        let existing = *r;
-                        dict.set("Contents", Object::Array(vec![
-                            Object::Reference(stream_id),
-                            Object::Reference(existing),
-                        ]));
-                    }
-                    _ => {
-                        dict.set("Contents", Object::Reference(stream_id));
-                    }
-                }
-            }
+            // Over the page content (under it, a scanned page hid the stamp).
+            crate::utils::put_overlay_on_top(&mut doc, *page_id, stream_id, "HeaderFooterOverlay")?;
 
             pages_stamped += 1;
         }
 
         let out = output.unwrap_or_else(|| temp_output_path(&path, "header"));
-        doc.save(&out)?;
+        crate::utils::save_pdf(&mut doc, &out)?;
 
         Ok(HeaderFooterReport { output: out, pages_stamped })
 }
 
-#[tauri::command]
+// Off the main thread: a full parse and save of a large file froze the window.
+#[tauri::command(async)]
 pub fn remove_header_footer(path: String, output: Option<String>) -> AppResult<String> {
     let mut doc = Document::load(&path)?;
     let page_ids: Vec<(u32, (u32, u16))> = doc.get_pages().into_iter().collect();
@@ -365,7 +352,7 @@ pub fn remove_header_footer(path: String, output: Option<String>) -> AppResult<S
     }
 
     let out = output.unwrap_or_else(|| temp_output_path(&path, "unheader"));
-    doc.save(&out)?;
+    crate::utils::save_pdf(&mut doc, &out)?;
     Ok(out)
 }
 

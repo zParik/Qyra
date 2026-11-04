@@ -1,8 +1,8 @@
 // Pure zoom math, extracted from the Viewer so it can be unit-tested and so the
 // ctrl+wheel handler can batch a frame's worth of events into one update.
 
-export const ZOOM_MIN = 0.25;
-export const ZOOM_MAX = 3.0;
+export const ZOOM_MIN = 0.1;
+export const ZOOM_MAX = 16;
 
 export function clampZoom(z: number): number {
   return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
@@ -15,12 +15,10 @@ export const ZOOM_STEP = 0.1;
  * Snap a zoom value to a coarse ladder (multiples of `step`, clamped to range).
  *
  * Wheel and pinch zoom are multiplicative and continuous, so they emit a new,
- * never-before-seen scale on every animation frame. The WebView software-
- * composites each page's layer (canvas + text + shadow) into system RAM and
- * caches a raster keyed by scale, so a stream of unique scales made that cache
- * climb to ~18 GB during zoom-spam (the GPU never moved — it is not GPU-bound).
- * Snapping to a fixed ladder means spam can only ever produce a handful of
- * distinct scales, so the cached rasters are reused and memory plateaus.
+ * never-before-seen scale on every animation frame. Every committed zoom is a
+ * new render scale, which means a fresh set of tiles. Snapping to a fixed ladder
+ * keeps a gesture to a handful of distinct scales, so tiles are re-rendered
+ * rarely and the tile cache can reuse a previous zoom's tiles.
  */
 export function snapZoom(z: number, step = ZOOM_STEP): number {
   return clampZoom(Math.round(z / step) * step);
@@ -43,4 +41,20 @@ export function nextZoomFromWheel(prev: number, deltaY: number, fitZoom: number)
   const inZone = (z: number) => Math.abs(z - fitZoom) < fitZoom * 0.04;
   if (!inZone(prev) && inZone(next)) return fitZoom;
   return next;
+}
+
+/**
+ * The zoom a wheel/pinch gesture commits to, given its continuous `preview` zoom.
+ *
+ * Normally {@link snapZoom}. But a small gesture can snap straight back to the
+ * `current` zoom; nothing would re-lay-out, so the gesture's preview transform
+ * would stay on the pages and blur every tile. A gesture that moved therefore
+ * always lands at least one rung away, in the direction it moved. `fitZoom` is
+ * kept exactly (the fit-width magnet).
+ */
+export function commitZoom(preview: number, current: number, fitZoom: number): number {
+  if (Math.abs(preview - fitZoom) < 1e-6) return preview;
+  const snapped = snapZoom(preview);
+  if (Math.abs(snapped - current) > 1e-6 || Math.abs(preview - current) < 1e-6) return snapped;
+  return snapZoom(current + (preview > current ? ZOOM_STEP : -ZOOM_STEP));
 }

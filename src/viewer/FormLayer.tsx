@@ -1,15 +1,6 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-
-interface FormField {
-  name: string;
-  field_type: string; // "Tx" | "Btn" | "Ch" | "Sig"
-  value: string;
-  page: number;
-  rect: [number, number, number, number]; // [x0, y0, x1, y1] normalized [0,1]
-  options: string[];
-  flags: number;
-}
+import { getFormFields } from "../lib/tauri";
+import type { FormField } from "../lib/tauri";
 
 interface Props {
   pdfPath: string;
@@ -45,7 +36,7 @@ export function FormLayer({
 
   useEffect(() => {
     let cancelled = false;
-    invoke<FormField[]>("get_form_fields", { path: pdfPath })
+    getFormFields(pdfPath)
       .then((data) => {
         if (cancelled) return;
         const pageFields = data.filter((f) => f.page === pageNum);
@@ -85,7 +76,9 @@ export function FormLayer({
         zIndex: 15,
       }}
     >
-      {fields.map((field) => {
+      {fields.map((field, i) => {
+        // Radio buttons share their group's name, so the name alone is not a key.
+        const key = `${field.name}#${i}`;
         const [x0, y0, x1, y1] = field.rect;
         const w = x1 - x0;
         const h = y1 - y0;
@@ -107,7 +100,7 @@ export function FormLayer({
           if (isMultiline) {
             return (
               <textarea
-                key={field.name}
+                key={key}
                 value={value}
                 style={rectStyle}
                 onChange={(e) => handleChange(field.name, e.target.value)}
@@ -116,7 +109,7 @@ export function FormLayer({
           }
           return (
             <input
-              key={field.name}
+              key={key}
               type="text"
               value={value}
               style={rectStyle}
@@ -127,18 +120,20 @@ export function FormLayer({
 
         if (field.field_type === "Btn") {
           const isRadio = (field.flags & (1 << 15)) !== 0;
+          // The value is the widget's on-state name ("Yes", "On", "Choice2"…).
+          const onState = field.on_state ?? "Yes";
           return (
             <input
-              key={field.name}
+              key={key}
               type={isRadio ? "radio" : "checkbox"}
-              checked={value === "Yes" || value === "On" || value === "true"}
+              checked={value !== "" && value === onState}
               style={{
                 ...rectStyle,
                 padding: 0,
                 cursor: "pointer",
               }}
               onChange={(e) =>
-                handleChange(field.name, e.target.checked ? "Yes" : "Off")
+                handleChange(field.name, e.target.checked ? onState : "Off")
               }
             />
           );
@@ -147,7 +142,7 @@ export function FormLayer({
         if (field.field_type === "Ch") {
           return (
             <select
-              key={field.name}
+              key={key}
               value={value}
               style={rectStyle}
               onChange={(e) => handleChange(field.name, e.target.value)}

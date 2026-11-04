@@ -74,7 +74,7 @@ export function FormDataPanel({ file, onApplied }: Props) {
             borderRadius: 6,
             padding: "8px 10px",
             color: "var(--v-ok-text)",
-            fontSize: 11.5,
+            fontSize: "var(--fs-label)",
             wordBreak: "break-all",
           }}
         >
@@ -89,7 +89,7 @@ export function FormDataPanel({ file, onApplied }: Props) {
           display: "flex", flexDirection: "column", gap: 8,
         }}
       >
-        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "var(--fs-body)" }}>
           <input
             type="checkbox"
             checked={flatten}
@@ -110,7 +110,7 @@ export function FormDataPanel({ file, onApplied }: Props) {
             color: "var(--viewer-text)",
             border: "1px solid var(--viewer-border)",
             borderRadius: 6,
-            fontSize: 12.5,
+            fontSize: "var(--fs-body)",
             cursor: isProcessing ? "not-allowed" : "pointer",
           }}
         >

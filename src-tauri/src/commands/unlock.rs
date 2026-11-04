@@ -3,7 +3,8 @@ use crate::utils::paths::temp_output_path;
 use crate::error::{AppError, AppResult};
 
 /// Remove password protection from a PDF (requires the current password).
-#[tauri::command]
+// Off the main thread: a full parse and save of a large file froze the window.
+#[tauri::command(async)]
 pub fn unlock_pdf(
     path: String,
     password: String,

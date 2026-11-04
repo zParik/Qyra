@@ -174,17 +174,28 @@ impl Rewriter {
                                     .copied()
                                     .unwrap_or(data_ref.len() as u64) as usize
                             };
-                            let slice = &data_ref[offset as usize..end];
+                            let Some(slice) = data_ref.get(offset as usize..end) else {
+                                return (id, Err(lost(id, format!("offset {offset} is past the end of the file"))));
+                            };
                             match parse_indirect_object(slice, 0) {
+                                // A broken xref can point at another object.
+                                Ok((parsed, _)) if parsed.0 != id.0 => {
+                                    return (id, Err(lost(id, format!("xref offset holds object {} instead", parsed.0))))
+                                }
                                 Ok((_, o)) => o,
-                                Err(_) => return (id, Ok(PdfObject::Null)),
+                                Err(e) => return (id, Err(lost(id, e.to_string()))),
                             }
                         }
-                        XrefEntry::Compressed { obj_stream_id, index } => objstm_cache
+                        XrefEntry::Compressed { obj_stream_id, index } => match objstm_cache
                             .get(obj_stream_id)
                             .and_then(|v| v.get(*index as usize))
-                            .map(|(_, o)| o.clone())
-                            .unwrap_or(PdfObject::Null),
+                        {
+                            Some((_, o)) => o.clone(),
+                            // Its object stream failed to parse or decode.
+                            None => {
+                                return (id, Err(lost(id, format!("object stream {obj_stream_id} unreadable"))))
+                            }
+                        },
                         XrefEntry::Free => return (id, Ok(PdfObject::Null)),
                     };
 
@@ -237,11 +248,18 @@ impl Rewriter {
         #[cfg(debug_assertions)]
         eprintln!("[compress] Pass 2b: writing {} objects…", work_total);
 
+        // Objects we could not parse are set aside, not failed on yet: losing
+        // one is only harmless if nothing still references it (checked after GC).
+        let mut lost_ids: HashSet<ObjectId> = HashSet::new();
         let live: Vec<(ObjectId, PdfObject)> = transformed
             .into_iter()
             .filter_map(|(id, r)| match r {
                 Ok(PdfObject::Null) => None,
                 Ok(obj) => Some(Ok((id, obj))),
+                Err(PdfError::MalformedObject { id, .. }) => {
+                    lost_ids.insert(id);
+                    None
+                }
                 Err(e) => Some(Err(e)),
             })
             .collect::<Result<Vec<_>, PdfError>>()?;
@@ -255,6 +273,12 @@ impl Rewriter {
         out_trailer.remove(b"Encrypt");
         out_trailer.remove(b"XRefStm");
         out_trailer.remove(b"Prev");
+        // A file whose xref is a stream has that stream's dictionary as its
+        // trailer. Its stream keys (/Type /XRef, /W, /Filter, /Length …) are
+        // wrong in a classic trailer and stale for a new xref stream.
+        for key in [&b"Type"[..], b"W", b"Index", b"Filter", b"DecodeParms", b"Length", b"DL"] {
+            out_trailer.remove(key);
+        }
         if self.config.strip_metadata {
             out_trailer.remove(b"Info");
             out_trailer.remove(b"Metadata");
@@ -269,25 +293,23 @@ impl Rewriter {
         progress_cb(0, 1, "Removing unused objects");
         let live = crate::pdf::rewriter::gc::gc(live, &out_trailer);
 
+        // Never silently drop content: if any unparseable object is still
+        // referenced (a font, an image, a page's contents), refuse to compress.
+        // The page-count validation below cannot notice such a loss.
+        if !lost_ids.is_empty() {
+            let reachable = crate::pdf::rewriter::gc::collect_reachable(&live, &out_trailer);
+            if let Some(&id) = lost_ids.iter().find(|id| reachable.contains(id)) {
+                return Err(lost(id, "referenced object could not be read; refusing to drop it".into()));
+            }
+        }
+
         // Stream the compressed PDF straight to `out_path`. Preferred path:
         // object streams + xref stream, then validate by re-opening the file
         // (mmap) and checking the page count. If that fails, rewrite a classic
         // xref table in its place. The full output never lives in the heap.
         progress_cb(0, 1, "Writing compressed PDF");
 
-        let objstm_ok = match write_object_streams_to(out_path, &live, &out_trailer) {
-            Ok(()) => validate_output(out_path, expected_pages),
-            Err(_e) => {
-                #[cfg(debug_assertions)]
-                eprintln!("[compress] object-stream write failed: {_e}; falling back");
-                false
-            }
-        };
-
-        if !objstm_ok {
-            // Fallback: classic cross-reference table (trusted, no re-validation).
-            write_classic_to(out_path, &live, out_trailer)?;
-        }
+        write_validated(out_path, &live, out_trailer, expected_pages)?;
 
         let written = std::fs::metadata(out_path)?.len();
         #[cfg(debug_assertions)]
@@ -299,6 +321,35 @@ impl Rewriter {
 // ---------------------------------------------------------------------------
 // Output writers (stream to disk) + validation
 // ---------------------------------------------------------------------------
+
+/// Write `live` to `path`, preferring object streams + an xref stream and
+/// falling back to a classic xref table. Whichever form is written must pass
+/// `validate_output`; if neither does, the output is rejected so the caller
+/// keeps the original file.
+fn write_validated(
+    path: &Path,
+    live: &[(ObjectId, PdfObject)],
+    trailer: PdfDict,
+    expected_pages: usize,
+) -> Result<(), PdfError> {
+    match write_object_streams_to(path, live, &trailer) {
+        Ok(()) if validate_output(path, expected_pages) => return Ok(()),
+        Ok(()) => {}
+        Err(_e) => {
+            #[cfg(debug_assertions)]
+            eprintln!("[compress] object-stream write failed: {_e}; falling back");
+        }
+    }
+
+    write_classic_to(path, live, trailer)?;
+    if validate_output(path, expected_pages) {
+        Ok(())
+    } else {
+        Err(PdfError::WriteError(
+            "compressed output failed validation; original left unchanged".into(),
+        ))
+    }
+}
 
 /// Write `live` to `path` using object streams + an xref stream, streamed.
 fn write_object_streams_to(
@@ -329,6 +380,12 @@ fn write_classic_to(
     w.write_xref_and_trailer(trailer)?;
     w.finish()?;
     Ok(())
+}
+
+/// Marks an object the rewriter could not read. `run` collects these and only
+/// fails if one is still referenced from the output.
+fn lost(id: ObjectId, reason: String) -> PdfError {
+    PdfError::MalformedObject { id, reason }
 }
 
 /// Re-open the written file (mmap) and confirm the page count matches. The
@@ -391,50 +448,130 @@ fn transform_object(
 ///
 /// Capped to half the cores (min 2, max 8) so a compression never pins every
 /// core, and at most that many full-resolution images decode at once (memory).
-/// Phones: at most 2 workers (tighter memory + thermal headroom). Worker threads
-/// run at below-normal priority so they yield to the UI/audio.
+/// Worker threads run at below-normal priority so they yield to the UI/audio.
 fn build_compress_pool() -> Option<rayon::ThreadPool> {
     let cores = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(2);
-    let workers = if cfg!(target_os = "android") {
-        cores.saturating_sub(1).clamp(1, 2)
-    } else {
-        (cores / 2).clamp(2, 8).min(cores.max(1))
-    };
+    let workers = (cores / 2).clamp(2, 8).min(cores.max(1));
     rayon::ThreadPoolBuilder::new()
         .num_threads(workers)
         .thread_name(|i| format!("qyra-compress-{i}"))
-        .start_handler(|_| lower_current_thread_priority())
+        .start_handler(|_| crate::utils::thread_priority::lower_current_thread_priority())
         .build()
         .ok()
 }
 
-/// Drop the calling thread's scheduling priority so it yields to foreground
-/// work. No-op where we don't have a cheap per-thread hook.
-#[cfg(windows)]
-fn lower_current_thread_priority() {
-    use std::ffi::c_void;
-    const THREAD_PRIORITY_BELOW_NORMAL: i32 = -1;
-    extern "system" {
-        fn GetCurrentThread() -> *mut c_void;
-        fn SetThreadPriority(handle: *mut c_void, priority: i32) -> i32;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a classic-xref PDF from `(object number, body)` pairs, computing
+    /// real byte offsets so the reader takes the normal (non-repair) path.
+    fn pdf_with(objects: &[(u32, &str)]) -> Vec<u8> {
+        let mut out = b"%PDF-1.4\n".to_vec();
+        let mut offsets = Vec::new();
+        for (num, body) in objects {
+            offsets.push((*num, out.len()));
+            out.extend_from_slice(format!("{num} 0 obj\n{body}\nendobj\n").as_bytes());
+        }
+        let size = objects.iter().map(|(n, _)| n).max().unwrap() + 1;
+        let xref_at = out.len();
+        out.extend_from_slice(format!("xref\n0 {size}\n0000000000 65535 f \n").as_bytes());
+        for n in 1..size {
+            match offsets.iter().find(|(o, _)| *o == n) {
+                Some((_, off)) => out.extend_from_slice(format!("{off:010} 00000 n \n").as_bytes()),
+                None => out.extend_from_slice(b"0000000000 65535 f \n"),
+            }
+        }
+        out.extend_from_slice(
+            format!("trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{xref_at}\n%%EOF\n")
+                .as_bytes(),
+        );
+        out
     }
-    unsafe {
-        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+
+    const CATALOG: &str = "<< /Type /Catalog /Pages 2 0 R >>";
+    const PAGES: &str = "<< /Type /Pages /Kids [3 0 R] /Count 1 >>";
+    const BROKEN: &str = "<< /Broken (unterminated >>";
+
+    fn compress(pdf: Vec<u8>) -> Result<u64, PdfError> {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("out.pdf");
+        Rewriter::new(0).run(Bytes::Owned(pdf), &out, |_, _, _| {}, &AtomicBool::new(false))
+    }
+
+    #[test]
+    fn an_xref_offset_past_the_end_of_the_file_is_an_error_not_a_panic() {
+        let pdf = pdf_with(&[(1, CATALOG), (2, PAGES), (3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>")]);
+        let text = String::from_utf8(pdf).unwrap();
+        // Point obj 3 far past the end (a truncated download).
+        let off3 = text.find("3 0 obj").unwrap();
+        let pdf = text.replacen(&format!("{off3:010} 00000 n "), "0099999999 00000 n ", 1).into_bytes();
+        assert!(compress(pdf).is_err());
+    }
+
+    #[test]
+    fn an_xref_entry_pointing_at_another_object_is_not_written_as_it() {
+        let pdf = pdf_with(&[(1, CATALOG), (2, PAGES), (3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>")]);
+        let text = String::from_utf8(pdf).unwrap();
+        // Obj 3's entry points at obj 1 (the catalog).
+        let (off1, off3) = (text.find("1 0 obj").unwrap(), text.find("3 0 obj").unwrap());
+        let pdf = text.replacen(&format!("{off3:010} 00000 n "), &format!("{off1:010} 00000 n "), 1).into_bytes();
+        assert!(compress(pdf).is_err(), "page 3 is lost; writing the catalog in its place would be wrong");
+    }
+
+    #[test]
+    fn a_negative_stream_length_does_not_panic() {
+        let pdf = pdf_with(&[
+            (1, CATALOG),
+            (2, PAGES),
+            (3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>"),
+            (4, "<< /Length -1 >>\nstream\nq Q\nendstream"),
+        ]);
+        let _ = compress(pdf);
+    }
+
+    #[test]
+    fn run_fails_when_a_referenced_object_cannot_be_parsed() {
+        // The page's content stream is unparseable. Dropping it would ship a
+        // blank page that still passes the page-count check.
+        let pdf = pdf_with(&[
+            (1, CATALOG),
+            (2, PAGES),
+            (3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>"),
+            (4, BROKEN),
+        ]);
+        assert!(compress(pdf).is_err());
+    }
+
+    #[test]
+    fn run_tolerates_an_unreferenced_unparseable_object() {
+        // Garbage nothing points at is dead weight; losing it is harmless.
+        let pdf = pdf_with(&[
+            (1, CATALOG),
+            (2, PAGES),
+            (3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>"),
+            (4, BROKEN),
+        ]);
+        assert!(compress(pdf).is_ok());
+    }
+
+    #[test]
+    fn write_validated_rejects_output_that_fails_validation() {
+        // Expecting 2 pages from a 1-page document fails validation for the
+        // object-stream write AND the classic fallback; both must be rejected.
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("out.pdf");
+        let reader = PdfReader::new(pdf_with(&[
+            (1, CATALOG),
+            (2, PAGES),
+            (3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>"),
+        ]))
+        .unwrap();
+        let trailer = reader.trailer().clone();
+        let catalog = crate::pdf::parser::object::parse_object_at(CATALOG.as_bytes(), 0).unwrap().0;
+        let live = vec![((1u32, 0u16), catalog)];
+        assert!(write_validated(&out, &live, trailer, 2).is_err());
     }
 }
-
-// unix covers Linux, macOS AND Android (bionic has setpriority; libc is a dep on
-// all three). Phones especially need this so the compressor yields instead of
-// cooking the CPU / tripping thermal throttling.
-#[cfg(unix)]
-fn lower_current_thread_priority() {
-    // setpriority(PRIO_PROCESS, 0, ..) applies to the calling thread on Linux.
-    unsafe {
-        libc::setpriority(libc::PRIO_PROCESS, 0, 10);
-    }
-}
-
-#[cfg(not(any(windows, unix)))]
-fn lower_current_thread_priority() {}

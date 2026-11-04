@@ -1,120 +1,69 @@
+import type { CSSProperties, ReactElement } from "react";
 import { useNavigate } from "react-router-dom";
-import { UI, MONO } from "../../lib/tokens";
-import { IconProps, IcHome, IcRecent, IcStar, IcFolder, IcArchive, IcMerge, IcImage } from "../../components/Icons";
+import { IcHome, IcRecent, IcStar, IcArchive, IcFolder, IcGear, type IconProps } from "../../components/Icons";
 import { ThemeToggle } from "../../components/ThemeToggle";
-import type { DiskSpace } from "../../lib/schemas";
-import { Section, formatBytes } from "./types";
+import { chipStyle, FAMILY } from "../../lib/families";
+import { TOOL_FAMILIES } from "./tools";
+import type { Section } from "./types";
 
-function RailItem({ label, Icon, badge, active, onClick }: {
-  id?: string; label: string; Icon: (p: IconProps) => React.ReactElement;
-  badge?: string; active: boolean; onClick: () => void;
+function RailItem({ label, Icon, count, active, onClick }: {
+  label: string;
+  Icon: (p: IconProps) => ReactElement;
+  count?: number;
+  active?: boolean;
+  onClick: () => void;
 }) {
   return (
-    <button
-      onClick={onClick}
-      aria-current={active ? "page" : undefined}
-      className="home-rail-item"
-      style={{ fontFamily: UI }}
-    >
+    <button type="button" onClick={onClick} aria-current={active ? "page" : undefined} className="rail-item">
       <span className="rail-icon"><Icon /></span>
-      <span className="flex-1">{label}</span>
-      {badge && <span className="home-rail-badge" style={{ fontFamily: MONO }}>{badge}</span>}
+      <span className="rail-text">{label}</span>
+      {typeof count === "number" && count > 0 && <span className="rail-count">{count}</span>}
     </button>
   );
 }
 
-export function LeftRail({ active, onPick, recentCount, storageUsage }: {
+/**
+ * The sample book: the library on top, then the tools filed by family, each
+ * family carrying its colour on the outer edge like a thumb index.
+ */
+export function LeftRail({ active, onPick, recentCount, starredCount, archivedCount }: {
   active: Section;
   onPick: (id: string) => void;
   recentCount: number;
-  storageUsage: DiskSpace | null;
+  starredCount: number;
+  archivedCount: number;
 }) {
   const navigate = useNavigate();
-  const navItems = [
-    { id: "home",    label: "Home",        Icon: IcHome },
-    { id: "recent",  label: "Recents",     Icon: IcRecent, badge: recentCount > 0 ? String(recentCount) : undefined },
-    { id: "starred", label: "Starred",     Icon: IcStar },
-    { id: "local",   label: "Local files", Icon: IcFolder },
-    { id: "archive", label: "Archive",     Icon: IcArchive },
-  ];
-  const toolItems = [
-    { id: "merge",  label: "Merge",         Icon: IcMerge },
-    { id: "i2pdf",  label: "Images to PDF", Icon: IcImage },
-  ];
-
   return (
-    <aside className="home-rail">
-      <div className="px-3 pt-3 pb-1">
-        <div className="home-rail-label" style={{ fontFamily: UI }}>Library</div>
-        <div className="flex flex-col gap-px">
-          {navItems.map(({ id, label, Icon, badge }) => (
-            <RailItem key={id} id={id} label={label} Icon={Icon} badge={badge}
-              active={active === id} onClick={() => onPick(id)} />
-          ))}
-        </div>
+    <aside className="rail" aria-label="Library and tools">
+      <div className="rail-section">
+        <div className="t-label rail-label">Library</div>
+        <RailItem label="Home" Icon={IcHome} active={active === "home"} onClick={() => onPick("home")} />
+        <RailItem label="Recents" Icon={IcRecent} count={recentCount} active={active === "recent"} onClick={() => onPick("recent")} />
+        <RailItem label="Starred" Icon={IcStar} count={starredCount} active={active === "starred"} onClick={() => onPick("starred")} />
+        <RailItem label="Archive" Icon={IcArchive} count={archivedCount} active={active === "archive"} onClick={() => onPick("archive")} />
+        <RailItem label="Browse files…" Icon={IcFolder} onClick={() => onPick("local")} />
       </div>
 
-      <div className="h-px mx-3 my-1" style={{ background: "var(--line2)" }} />
-
-      <div className="px-3 py-1">
-        <div className="home-rail-label" style={{ fontFamily: UI }}>Tools</div>
-        <div className="flex flex-col gap-px">
-          {toolItems.map(({ id, label, Icon }) => (
-            <RailItem key={id} id={id} label={label} Icon={Icon} active={false} onClick={() => onPick(id)} />
-          ))}
-        </div>
+      <div className="rail-section">
+        <div className="t-label rail-label">Tools</div>
+        {TOOL_FAMILIES.map((g) => (
+          <section key={g.family} className="rail-family" style={chipStyle(g.family) as CSSProperties} aria-label={FAMILY[g.family].label}>
+            <div className="rail-family-head">
+              <span className="chip">{FAMILY[g.family].label}</span>
+              <span className="thumb-tab" aria-hidden="true" />
+            </div>
+            {g.tools.map((t) => (
+              <RailItem key={t.id} label={t.title} Icon={t.Icon} onClick={() => navigate(t.route)} />
+            ))}
+          </section>
+        ))}
       </div>
 
-      <div className="flex-1" />
-
-      <div className="m-3 p-3 rounded-md" style={{ border: "1px solid var(--line)", background: "var(--bg2)", fontFamily: UI }}>
-        <div className="flex items-center gap-1.5 mb-1.5">
-          <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: "var(--accent)" }} />
-          <span className="text-[10.5px] font-semibold uppercase tracking-[0.5px]" style={{ color: "var(--fg0)" }}>Storage</span>
-        </div>
-        <div className="h-1 rounded-sm overflow-hidden mb-1.5" style={{ background: "var(--bg3)" }}>
-          <div style={{
-            width: storageUsage ? `${Math.min(100, (storageUsage.used / storageUsage.total) * 100).toFixed(1)}%` : "0%",
-            height: "100%", background: "var(--accent)", borderRadius: 2,
-            transition: "width 400ms ease",
-          }} />
-        </div>
-        <div className="flex justify-between text-[10.5px]" style={{ fontFamily: MONO, color: "var(--fg1)" }}>
-          {storageUsage ? (
-            <>
-              <span>{formatBytes(storageUsage.used)} used</span>
-              <span style={{ color: "var(--fg2)" }}>{formatBytes(storageUsage.total)}</span>
-            </>
-          ) : (
-            <>
-              <span>Local only</span>
-              <span style={{ color: "var(--fg2)" }}>offline</span>
-            </>
-          )}
-        </div>
-      </div>
-
-      <div className="px-3 pb-2">
+      <div className="rail-foot">
         <ThemeToggle variant="rail" />
-      </div>
-
-      <div className="px-3 pb-2">
-        <button
-          onClick={() => navigate("/settings")}
-          className="home-rail-item w-full"
-          style={{ fontFamily: UI }}
-        >
-          <span className="rail-icon">⚙</span>
-          <span className="flex-1 text-left">Settings</span>
-        </button>
-      </div>
-
-      <div className="flex items-center gap-2 px-3.5 py-2.5" style={{ borderTop: "1px solid var(--line2)" }}>
-        <img src="/Logo.png" alt="Qyra" className="w-8 h-8 rounded-full object-contain" />
-        <div className="flex flex-col min-w-0">
-          <span className="text-[11.5px] font-medium leading-tight" style={{ color: "var(--fg0)", fontFamily: UI }}>Qyra</span>
-          <span className="text-[10px] leading-tight" style={{ color: "var(--fg2)", fontFamily: MONO }}>free · offline · open source</span>
-        </div>
+        <RailItem label="Settings" Icon={IcGear} onClick={() => navigate("/settings")} />
+        <div className="rail-sign">Qyra · free · offline · open source</div>
       </div>
     </aside>
   );

@@ -32,6 +32,9 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
+          # Save even when tests fail, so MuPDF's C build is not redone on
+          # every run. A failing run used to leave no cache at all.
+          cache-on-failure: true
 
       - name: cargo test
         run: cargo test --manifest-path src-tauri/Cargo.toml

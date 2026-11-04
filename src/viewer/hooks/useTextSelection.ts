@@ -45,8 +45,13 @@ export function getSelectionGeometry(): PageSelectionGeometry[] {
   const sel = window.getSelection();
   if (!sel || sel.isCollapsed || !sel.rangeCount) return [];
 
+  // Only pages of the tab the selection is in: hidden tabs keep their layout,
+  // so their page boxes can sit at the same screen position.
+  const anchor = sel.getRangeAt(0).commonAncestorContainer;
+  const anchorEl = anchor.nodeType === 3 ? anchor.parentElement : (anchor as HTMLElement);
+  const scope: ParentNode = anchorEl?.closest("[data-viewer-pages]") ?? document;
   const pageEls = Array.from(
-    document.querySelectorAll<HTMLElement>("[data-page-index]")
+    scope.querySelectorAll<HTMLElement>("[data-page-index]")
   ).map((el) => ({ page: parseInt(el.dataset.pageIndex!, 10), rect: el.getBoundingClientRect() }));
 
   const byPage = new Map<number, SelectionLine[]>();
@@ -111,7 +116,8 @@ export function useTextSelection() {
       const container = range.commonAncestorContainer;
       const el = container.nodeType === 3 ? container.parentElement : (container as HTMLElement);
       // We only care about selections within a TextLayer.
-      const pageEl = el?.closest(".textLayer")?.parentElement as HTMLElement | null;
+      // The page box carrying data-page-index wraps PageView, which wraps the layer.
+      const pageEl = el?.closest(".textLayer")?.closest<HTMLElement>("[data-page-index]") ?? null;
 
       if (!pageEl || !pageEl.dataset.pageIndex) {
         setSelectionPopup(null);

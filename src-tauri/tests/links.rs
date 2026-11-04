@@ -67,3 +67,46 @@ async fn add_link_requires_a_target() {
     .await;
     assert!(result.is_err());
 }
+
+/// annotated.pdf with page 1's /Annots moved into its own object (as Acrobat
+/// and incremental saves write it): `/Annots 12 0 R`.
+fn with_indirect_annots() -> (tempfile::TempDir, String) {
+    let mut doc = load_lopdf(&fixture_str("annotated.pdf"));
+    let pid = doc.get_pages()[&1];
+    let arr = doc.get_dictionary(pid).unwrap().get(b"Annots").unwrap().clone();
+    let arr_id = doc.add_object(arr);
+    doc.get_dictionary_mut(pid).unwrap().set("Annots", Object::Reference(arr_id));
+    let (d, p) = temp_output("indirect-annots.pdf");
+    doc.save(&p).unwrap();
+    (d, p)
+}
+
+/// All annotation refs on page 1, following an indirect /Annots.
+fn annot_count(path: &str) -> usize {
+    let doc = load_lopdf(path);
+    let pid = doc.get_pages()[&1];
+    match doc.get_dictionary(pid).unwrap().get(b"Annots") {
+        Ok(Object::Array(a)) => a.len(),
+        Ok(Object::Reference(r)) => doc.get_object(*r).unwrap().as_array().unwrap().len(),
+        _ => 0,
+    }
+}
+
+#[tokio::test]
+async fn adding_and_removing_a_link_keeps_annotations_behind_an_indirect_annots() {
+    let (_d, src) = with_indirect_annots();
+    let before = annot_count(&src);
+    let (_d2, out) = temp_output("linked.pdf");
+    add_link(
+        src,
+        LinkInput { page: 1, x0: 0.1, y0: 0.1, x1: 0.5, y1: 0.2, uri: Some("https://example.com/".into()), dest_page: None },
+        Some(out.clone()),
+    )
+    .await
+    .expect("add link");
+    assert_eq!(annot_count(&out), before + 1, "existing annotations were dropped");
+
+    let (_d3, back) = temp_output("unlinked.pdf");
+    remove_link(out, 1, 0, Some(back.clone())).await.expect("remove link");
+    assert_eq!(annot_count(&back), before);
+}

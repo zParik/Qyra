@@ -1,6 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 import { save, open } from "@tauri-apps/plugin-dialog";
-import { isAndroid, androidSavePath, androidOutputDir, saveFolderLabel } from "./androidFileUtils";
 import { loadSetting, Settings } from "./settings";
 import type {
   PageRange, PageNumberOptions, PdfMetadata, PdfInfo,
@@ -51,9 +50,6 @@ export const removePages = (path: string, pages: number[], output?: string) =>
 export const reorderPages = (path: string, order: number[], output?: string) =>
   invoke<string>("reorder_pages", { path, order, output });
 
-export const renderThumbnail = (path: string, page: number, dpi?: number) =>
-  invoke<string>("render_thumbnail", { path, page, dpi });
-
 export const pdfToImages = (path: string, format?: string, dpi?: number, outputDir?: string) =>
   invoke<string[]>("pdf_to_images", { path, format, dpi, outputDir });
 
@@ -99,8 +95,6 @@ export interface PdfPermissions {
 export const getPdfPermissions = (path: string) =>
   invoke<PdfPermissions>("get_pdf_permissions", { path });
 
-export const readPdfBytes = (path: string) =>
-  invoke<string>("read_pdf_bytes", { path });
 
 export const copyFile = (src: string, dst: string) =>
   invoke<void>("copy_file", { src, dst });
@@ -112,17 +106,13 @@ export const showInFolder = (path: string) =>
   invoke<void>("show_in_folder", { path });
 
 export const showSaveDialog = async (defaultPath?: string): Promise<string | null> => {
-  if (isAndroid()) {
-    const name = defaultPath ? (defaultPath.split(/[\\/]/).pop() ?? "output.pdf") : "output.pdf";
-    return androidSavePath(name);
-  }
   // If the caller passed a bare filename (no directory) and a default save
   // folder is configured, open the dialog in that folder.
   let effectivePath = defaultPath;
   const isBareName = !!defaultPath && !/[\\/]/.test(defaultPath);
   if (isBareName) {
     const folder = await loadSetting(Settings.defaultSaveFolder);
-    if (folder && !folder.startsWith("content://")) {
+    if (folder) {
       const sep = folder.includes("\\") ? "\\" : "/";
       effectivePath = `${folder.replace(/[\\/]$/, "")}${sep}${defaultPath}`;
     }
@@ -130,47 +120,19 @@ export const showSaveDialog = async (defaultPath?: string): Promise<string | nul
   return save({ defaultPath: effectivePath, filters: [{ name: "PDF", extensions: ["pdf"] }] });
 };
 
+/** `<name>_<suffix>.pdf` for a file named `name`: a bare name, so the save
+ *  dialog opens in the default save folder rather than the temp folder an
+ *  edited document's working copy lives in. */
+export function suggestedName(name: string, suffix: string): string {
+  const base = name.split(/[\\/]/).pop() ?? name;
+  return `${base.replace(/\.pdf$/i, "")}_${suffix}.pdf`;
+}
+
 export const writeBytes = (path: string, data: number[]) =>
   invoke<void>("write_bytes", { path, data });
 
 export const pickDirectory = async (): Promise<string | null> => {
-  if (isAndroid()) return androidOutputDir();
   return open({ directory: true, multiple: false }) as Promise<string | null>;
-};
-
-export const getContentUriDisplayName = (uri: string) =>
-  invoke<string>("get_content_uri_display_name", { uri });
-
-export const shareFile = (path: string) =>
-  invoke<void>("share_file", { path });
-
-export const saveToSafTree = (treeUri: string, srcPath: string, displayName: string) =>
-  invoke<string>("save_to_saf_tree", { treeUri, srcPath, displayName });
-
-/**
- * Export/save a generated file to the user's chosen destination.
- * - Android with a default save folder set → write into the SAF tree.
- * - Android with no default folder → existing share/Downloads behavior.
- * - Desktop → existing share behavior (desktop save uses showSaveDialog elsewhere).
- * Returns a short human label of where it went, or null if it fell back to share.
- */
-export const exportFile = async (path: string): Promise<string | null> => {
-  if (isAndroid()) {
-    const folder = await loadSetting(Settings.defaultSaveFolder);
-    if (folder && folder.startsWith("content://")) {
-      const name = path.split(/[\\/]/).pop() ?? "output.pdf";
-      try {
-        await saveToSafTree(folder, path, name);
-        return saveFolderLabel(folder);
-      } catch {
-        // Stale grant or removed folder — fall back to share.
-        await shareFile(path);
-        return null;
-      }
-    }
-  }
-  await shareFile(path);
-  return null;
 };
 
 export const bakeAnnotations = (
@@ -216,6 +178,10 @@ export interface OcrPage {
   words: OcrWord[];
 }
 
+/** Recognize the words on one 1-based page, offline (MuPDF's tesseract). */
+export const ocrPage = (path: string, page: number) =>
+  invoke<OcrPage>("ocr_page", { path, page });
+
 export const makeSearchable = (path: string, pages: OcrPage[], output?: string) =>
   invoke<string>("make_searchable", { path, pages, output });
 
@@ -255,6 +221,8 @@ export interface FormField {
   rect: [number, number, number, number];
   options: string[];
   flags: number;
+  /** A checkbox or radio button's "on" state name. */
+  on_state: string | null;
 }
 
 export interface FieldValue {
@@ -268,6 +236,20 @@ export const getFormFields = (path: string) =>
 export const fillForm = (path: string, fields: FieldValue[], flatten: boolean, output?: string) =>
   invoke<string>("fill_form", { path, fields, flatten, output });
 
+/** A signature image to draw into a page. Positions are normalised to the
+ *  page as shown; `x`/`y` is the image's centre. */
+export interface ImageStamp {
+  page: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  dataUrl: string;
+}
+
+export const stampImages = (path: string, stamps: ImageStamp[], output?: string) =>
+  invoke<string>("stamp_images", { path, stamps, output });
+
 // --- Standard PDF annotations ---
 
 export interface PdfAnnotation {
@@ -279,14 +261,16 @@ export interface PdfAnnotation {
   quad_points: number[] | null;
 }
 
+/** Mirrors the Rust `NewAnnotation`, which is serde `rename_all = "camelCase"`. */
 export interface NewAnnotation {
   subtype: string;
   page: number;
   rect: [number, number, number, number];
   color: string;
   contents?: string;
-  quad_points?: number[];
+  quadPoints?: number[];
   author?: string;
+  stampName?: string;
 }
 
 export const getPageAnnotations = (path: string, page: number) =>
@@ -323,5 +307,3 @@ export const flattenPdf = (path: string, output?: string) =>
 export const exportPdfToText = (path: string, output?: string) =>
   invoke<string>("export_pdf_to_text", { path, output });
 
-export const setActiveDocument = (path: string | null) =>
-  invoke<void>("set_active_document", { path });

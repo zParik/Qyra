@@ -207,7 +207,9 @@ impl PdfReader {
 
             // Bound the slice so scan_for_endstream can't escape this object.
             let end = self.next_offset_after(stm_offset);
-            let slice = &self.data[stm_offset as usize..end];
+            let Some(slice) = self.data.get(stm_offset as usize..end) else {
+                continue; // offset past the end of the file
+            };
 
             let (_, stm_obj) = match parse_indirect_object(slice, 0) {
                 Ok(r) => r,
@@ -230,7 +232,10 @@ impl PdfReader {
     fn load_from_disk(&mut self, id: ObjectId, offset: u64) -> Result<(), PdfError> {
         // Slice to [offset, next_object_offset] so scan_for_endstream is bounded.
         let end = self.next_offset_after(offset);
-        let slice = &self.data[offset as usize..end];
+        let slice = self.data.get(offset as usize..end).ok_or_else(|| PdfError::MalformedObject {
+            id,
+            reason: format!("offset {offset} is past the end of the file"),
+        })?;
 
         let (parsed_id, obj) = parse_indirect_object(slice, 0).map_err(|e| {
             PdfError::MalformedObject {
@@ -239,10 +244,15 @@ impl PdfReader {
             }
         })?;
 
-        self.cache.insert(parsed_id, obj.clone());
-        if parsed_id != id {
-            self.cache.insert(id, obj);
+        // A broken xref can point at a different object; caching it under the
+        // requested number would silently substitute one object for another.
+        if parsed_id.0 != id.0 {
+            return Err(PdfError::MalformedObject {
+                id,
+                reason: format!("xref offset holds object {} instead", parsed_id.0),
+            });
         }
+        self.cache.insert(id, obj);
         Ok(())
     }
 

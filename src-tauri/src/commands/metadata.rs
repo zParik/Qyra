@@ -30,7 +30,7 @@ fn get_info_string(doc: &Document, key: &[u8]) -> Option<String> {
     if let Object::Dictionary(dict) = info_obj {
         let val = dict.get(key).ok()?;
         // May be a string literal or a string reference
-        val.as_str().ok().map(|s| String::from_utf8_lossy(s).to_string())
+        val.as_str().ok().map(crate::utils::pdf_text::decode)
     } else {
         None
     }
@@ -61,7 +61,8 @@ pub async fn get_pdf_info(path: String) -> AppResult<PdfInfo> {
     .map_err(|e| AppError::Other(e.to_string()))?
 }
 
-#[tauri::command]
+// Off the main thread: a full parse and save of a large file froze the window.
+#[tauri::command(async)]
 pub fn get_metadata(path: String) -> AppResult<PdfMetadata> {
     let doc = crate::commands::lopdf_cache::load(&path)?;
     let d = doc.as_ref();
@@ -127,7 +128,8 @@ fn algorithm_name(v: i64) -> &'static str {
 
 /// Read the permission flags from /Encrypt /P. Returns defaults (everything
 /// allowed) when the document is not encrypted.
-#[tauri::command]
+// Off the main thread: a full parse and save of a large file froze the window.
+#[tauri::command(async)]
 pub fn get_pdf_permissions(path: String) -> AppResult<PdfPermissions> {
     let doc = crate::commands::lopdf_cache::load(&path)?;
     let Ok(encrypt_ref) = doc.trailer.get(b"Encrypt") else {
@@ -176,7 +178,8 @@ pub fn get_pdf_permissions(path: String) -> AppResult<PdfPermissions> {
     })
 }
 
-#[tauri::command]
+// Off the main thread: a full parse and save of a large file froze the window.
+#[tauri::command(async)]
 pub fn set_metadata(
     path: String,
     metadata: PdfMetadata,
@@ -201,7 +204,7 @@ pub fn set_metadata(
     if let Object::Dictionary(dict) = info {
         let set_str = |dict: &mut lopdf::Dictionary, key: &[u8], val: Option<&String>| {
             if let Some(v) = val {
-                dict.set(key, Object::string_literal(v.clone()));
+                dict.set(key, crate::utils::pdf_text::encode(v));
             }
         };
         set_str(dict, b"Title", metadata.title.as_ref());
@@ -212,6 +215,6 @@ pub fn set_metadata(
     }
 
     let out = output.unwrap_or_else(|| temp_output_path(&path, "meta"));
-    doc.save(&out)?;
+    crate::utils::save_pdf(&mut doc, &out)?;
     Ok(out)
 }

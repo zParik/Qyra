@@ -12,11 +12,7 @@ import { LoadedFile } from "../../store/useAppStore";
 import { usePanelCommand } from "../usePanelCommand";
 import { ToolPanelLayout } from "../components/ToolPanelLayout";
 import { reorderPages } from "../../lib/tauri";
-import { seedThumbnailsForReorder } from "../../hooks/usePageThumbnails";
 import { IconDocWord } from "../icons";
-
-// Must match the scales used by Viewer.tsx's two usePageThumbnails calls.
-const VIEWER_SCALES = [0.3, 2.0];
 
 function PageChip({ id, label }: { id: string; label: string }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
@@ -69,11 +65,7 @@ export function ReorderPanel({ file, onApplied }: ReorderPanelProps) {
   async function handle() {
     const orderSnapshot = [...pageOrder];
     await run(async () => {
-      const newPath = await reorderPages(file.path, orderSnapshot);
-      // Pre-populate the thumbnail cache for the new path so the viewer reload is instant.
-      // Reorder only repositions pages — content is identical — so we can reuse cached renders.
-      seedThumbnailsForReorder(file.path, newPath, orderSnapshot, VIEWER_SCALES);
-      return newPath;
+      return reorderPages(file.path, orderSnapshot);
     });
   }
 
@@ -99,7 +91,7 @@ export function ReorderPanel({ file, onApplied }: ReorderPanelProps) {
   return (
     <ToolPanelLayout
       onSubmit={handle}
-      submitLabel="Apply New Order"
+      submitLabel="Apply new order"
       isProcessing={isProcessing}
       result={result}
       error={error}

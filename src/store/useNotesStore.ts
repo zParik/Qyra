@@ -19,7 +19,7 @@ export interface VirtualPage {
 }
 
 interface NotesState {
-  strokes: Record<string, Stroke[]>; // keyed by docPath
+  strokes: Record<string, Stroke[]>; // keyed by the tab's path (see Viewer)
   addStroke: (docPath: string, stroke: Stroke) => void;
   undoStroke: (docPath: string) => void;
   removeStroke: (docPath: string, strokeId: string) => void;

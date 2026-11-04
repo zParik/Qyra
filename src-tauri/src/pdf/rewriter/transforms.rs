@@ -38,7 +38,10 @@ pub fn recompress_stream(stream: PdfStream, zlib_level: u32) -> Result<PdfStream
     let raw_decoded = match &filter {
         None => stream.raw_bytes.clone(),
         Some(PdfObject::Name(n)) if n == b"FlateDecode" || n == b"Fl" => {
-            stream.decode()?
+            match stream.decode() {
+                Ok(d) => d,
+                Err(_) => return Ok(stream), // undecodable: keep it byte-for-byte
+            }
         }
         Some(PdfObject::Array(arr)) if arr.len() == 1 => {
             let is_flat = arr
@@ -49,7 +52,10 @@ pub fn recompress_stream(stream: PdfStream, zlib_level: u32) -> Result<PdfStream
             if !is_flat {
                 return Ok(stream); // can't help
             }
-            stream.decode()?
+            match stream.decode() {
+                Ok(d) => d,
+                Err(_) => return Ok(stream),
+            }
         }
         _ => return Ok(stream), // DCT, JBIG2, LZW, etc — leave alone
     };
@@ -113,6 +119,29 @@ pub fn recompress_image(
     // invert them. Re-encoding risks wrong colours, so leave them untouched.
     if is_dct && matches!(plan.cs, ResolvedColorSpace::Cmyk) {
         return Ok(stream);
+    }
+
+    // A colour-key /Mask names exact sample values; lossy re-encoding (or an
+    // Indexed -> RGB conversion) shifts the samples and breaks transparency.
+    if matches!(stream.dict.get(b"Mask"), Some(PdfObject::Array(_))) {
+        return Ok(stream);
+    }
+
+    // The JPEG path can't honour these, and it rewrites the image as plain
+    // DeviceGray/DeviceRGB with no /Decode — so any of them would come out
+    // with wrong or inverted colours:
+    // - an unresolved colour space (Separation, DeviceN, Lab, odd ICC);
+    // - a /Decode array;
+    // - an explicit /ColorTransform overriding the decoder's YCbCr guess.
+    if is_dct {
+        let has_color_transform = matches!(
+            stream.dict.get(b"DecodeParms"),
+            Some(PdfObject::Dictionary(d)) if d.get(b"ColorTransform").is_some()
+        );
+        if !plan.cs.is_supported() || stream.dict.get(b"Decode").is_some() || has_color_transform
+        {
+            return Ok(stream);
+        }
     }
 
     let original_len = stream.raw_bytes.len();
@@ -356,5 +385,114 @@ mod tests {
         // Solid colour JPEG of 16x16 is tiny — must have shrunk + resized.
         assert_eq!(r.dict.get(b"Width").and_then(|v| v.as_integer()), Some(16));
         assert_eq!(r.dict.get(b"Height").and_then(|v| v.as_integer()), Some(16));
+    }
+
+    #[test]
+    fn recompress_stream_keeps_original_when_decode_fails() {
+        // Undecodable Flate data must be passed through untouched rather than
+        // aborting the whole compression run.
+        let mut dict = PdfDict::new();
+        dict.set(b"Filter", PdfObject::Name(b"FlateDecode".to_vec()));
+        let garbage: Vec<u8> = (0..4096u32).map(|i| (i * 7 % 251) as u8).collect();
+        let stream = PdfStream { dict, raw_bytes: garbage.clone() };
+        let r = recompress_stream(stream, 6).unwrap();
+        assert_eq!(r.raw_bytes, garbage);
+    }
+
+    fn gradient_rgb(w: u32, h: u32) -> Vec<u8> {
+        let mut raw = Vec::with_capacity((w * h * 3) as usize);
+        for i in 0..(w * h) {
+            raw.push((i % 256) as u8);
+            raw.push((i.wrapping_mul(2) % 256) as u8);
+            raw.push((i.wrapping_mul(3) % 256) as u8);
+        }
+        raw
+    }
+
+    fn raw_rgb_image(w: u32, h: u32) -> PdfStream {
+        let mut dict = PdfDict::new();
+        dict.set(b"Subtype", PdfObject::Name(b"Image".to_vec()));
+        dict.set(b"Width", PdfObject::Integer(w as i64));
+        dict.set(b"Height", PdfObject::Integer(h as i64));
+        dict.set(b"ColorSpace", PdfObject::Name(b"DeviceRGB".to_vec()));
+        dict.set(b"BitsPerComponent", PdfObject::Integer(8));
+        PdfStream { dict, raw_bytes: gradient_rgb(w, h) }
+    }
+
+    fn jpeg_image(w: u32, h: u32) -> PdfStream {
+        let rgb = image::RgbImage::from_raw(w, h, gradient_rgb(w, h)).unwrap();
+        let mut jpeg = Vec::new();
+        rgb.write_with_encoder(image::codecs::jpeg::JpegEncoder::new_with_quality(
+            &mut Cursor::new(&mut jpeg),
+            95,
+        ))
+        .unwrap();
+        let mut dict = PdfDict::new();
+        dict.set(b"Subtype", PdfObject::Name(b"Image".to_vec()));
+        dict.set(b"Width", PdfObject::Integer(w as i64));
+        dict.set(b"Height", PdfObject::Integer(h as i64));
+        dict.set(b"ColorSpace", PdfObject::Name(b"DeviceRGB".to_vec()));
+        dict.set(b"BitsPerComponent", PdfObject::Integer(8));
+        dict.set(b"Filter", PdfObject::Name(b"DCTDecode".to_vec()));
+        PdfStream { dict, raw_bytes: jpeg }
+    }
+
+    #[test]
+    fn recompress_image_skips_color_key_mask() {
+        // A colour-key /Mask lists exact sample values; lossy re-encoding
+        // shifts the samples and breaks the transparency.
+        let mut stream = raw_rgb_image(64, 64);
+        stream.dict.set(
+            b"Mask",
+            PdfObject::Array(vec![PdfObject::Integer(0); 6]),
+        );
+        let r = recompress_image(stream.clone(), &rgb_plan(64, 64), 50).unwrap();
+        assert_eq!(r.raw_bytes, stream.raw_bytes);
+    }
+
+    #[test]
+    fn recompress_image_skips_dct_with_decode_array() {
+        // The JPEG path cannot apply /Decode, so it must not drop it either.
+        let mut stream = jpeg_image(64, 64);
+        stream.dict.set(
+            b"Decode",
+            PdfObject::Array(vec![
+                PdfObject::Integer(1),
+                PdfObject::Integer(0),
+                PdfObject::Integer(1),
+                PdfObject::Integer(0),
+                PdfObject::Integer(1),
+                PdfObject::Integer(0),
+            ]),
+        );
+        let r = recompress_image(stream.clone(), &rgb_plan(16, 16), 50).unwrap();
+        assert_eq!(r.raw_bytes, stream.raw_bytes);
+    }
+
+    #[test]
+    fn recompress_image_skips_dct_with_unresolved_colorspace() {
+        // A Separation/DeviceN/Lab JPEG would be relabelled DeviceRGB/Gray,
+        // which inverts or shifts its colours.
+        let stream = jpeg_image(64, 64);
+        let plan = ImagePlan {
+            cs: crate::pdf::rewriter::colorspace::ResolvedColorSpace::Unsupported,
+            target_w: 16,
+            target_h: 16,
+            force_gray: false,
+        };
+        let r = recompress_image(stream.clone(), &plan, 50).unwrap();
+        assert_eq!(r.raw_bytes, stream.raw_bytes);
+    }
+
+    #[test]
+    fn recompress_image_skips_dct_with_color_transform_parm() {
+        // /ColorTransform overrides the decoder's YCbCr guess; the image crate
+        // ignores it, so decoded colours could be wrong.
+        let mut stream = jpeg_image(64, 64);
+        let mut parms = PdfDict::new();
+        parms.set(b"ColorTransform", PdfObject::Integer(0));
+        stream.dict.set(b"DecodeParms", PdfObject::Dictionary(parms));
+        let r = recompress_image(stream.clone(), &rgb_plan(16, 16), 50).unwrap();
+        assert_eq!(r.raw_bytes, stream.raw_bytes);
     }
 }

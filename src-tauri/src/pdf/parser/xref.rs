@@ -166,18 +166,18 @@ fn parse_traditional_xref(
 
     let mut entries: HashMap<ObjectId, XrefEntry> = HashMap::new();
 
-    // Read subsections: "first_obj count\n" followed by count 20-byte entries
+    // Read subsections: "first_obj count" followed by count entries
+    // "offset gen n|f". Fields are split on any whitespace rather than read at
+    // a fixed 20-byte stride: some writers end entries with a bare LF (19
+    // bytes) or separate fields with tabs. Anything unexpected is an error;
+    // retrying the same line used to loop forever.
     loop {
         lex.skip_whitespace_and_comments();
-
-        // Peek: if next word is "trailer", we're done with the xref table.
         let saved = lex.pos();
-        let line = lex.read_line();
-        let trimmed = line.trim_ascii();
 
-        if trimmed == b"trailer" || trimmed.starts_with(b"trailer") {
-            // We consumed "trailer" — now parse the dictionary
-            // The trailer might be on the same line or the next token might start <<
+        if data.get(saved..).is_some_and(|rest| rest.starts_with(b"trailer")) {
+            // The dictionary may follow on the same line (`trailer << ... >>`).
+            lex.seek(saved + b"trailer".len());
             lex.skip_whitespace_and_comments();
             let trailer_dict = if lex.peek_bytes(2) == b"<<" {
                 lex.seek(lex.pos() + 2); // consume <<
@@ -196,16 +196,13 @@ fn parse_traditional_xref(
             return Ok((table, prev));
         }
 
-        // Parse "first_obj count"
-        let parts: Vec<&[u8]> = trimmed.split(|&b| b == b' ').collect();
-        if parts.len() < 2 {
-            // Might be a malformed or extra blank line — try to recover
-            lex.seek(saved);
-            // If we see end-of-data, bail
-            if lex.pos() >= data.len() {
-                break;
-            }
-            continue;
+        let line = lex.read_line();
+        let parts = fields(&line);
+        if parts.len() != 2 {
+            return Err(PdfError::MalformedXref(format!(
+                "Expected an xref subsection header, got {:?}",
+                String::from_utf8_lossy(&line)
+            )));
         }
 
         let first_obj: u32 = parse_u32(parts[0]).map_err(|_| {
@@ -221,48 +218,45 @@ fn parse_traditional_xref(
             ))
         })?;
 
-        // Read `count` 20-byte entries
         for i in 0..count {
-            let obj_num = first_obj + i;
-            let entry_start = lex.pos();
-            // Each entry is exactly 20 bytes (10 + space + 5 + space + n/f + EOL)
-            if entry_start + 20 > data.len() {
-                return Err(PdfError::MalformedXref(
-                    "Xref entry truncated at EOF".into(),
-                ));
+            let obj_num = first_obj.checked_add(i).ok_or_else(|| {
+                PdfError::MalformedXref("Xref object number overflows".into())
+            })?;
+            lex.skip_whitespace_and_comments();
+            let entry_line = lex.read_line();
+            let f = fields(&entry_line);
+            if f.len() < 3 {
+                return Err(PdfError::MalformedXref(format!(
+                    "Malformed xref entry for obj {}",
+                    obj_num
+                )));
             }
-            let entry_bytes = &data[entry_start..entry_start + 20];
-            lex.seek(entry_start + 20);
-
-            let offset_bytes = &entry_bytes[0..10];
-            let gen_bytes = &entry_bytes[11..16];
-            let type_byte = entry_bytes[17];
-
-            let offset_val = parse_u64(offset_bytes).map_err(|_| {
+            let offset_val = parse_u64(f[0]).map_err(|_| {
                 PdfError::MalformedXref(format!("Invalid xref offset for obj {}", obj_num))
             })?;
-            let gen_val = parse_u16(gen_bytes).map_err(|_| {
+            let gen_val = parse_u16(f[1]).map_err(|_| {
                 PdfError::MalformedXref(format!(
                     "Invalid xref generation for obj {}",
                     obj_num
                 ))
             })?;
-
-            let entry = match type_byte {
-                b'n' => XrefEntry::InUse {
+            let entry = match f[2] {
+                b"n" => XrefEntry::InUse {
                     offset: offset_val,
                 },
-                b'f' => XrefEntry::Free,
-                _ => XrefEntry::Free, // treat unknown as free
+                b"f" => XrefEntry::Free,
+                other => {
+                    return Err(PdfError::MalformedXref(format!(
+                        "Invalid xref entry type {:?} for obj {}",
+                        String::from_utf8_lossy(other),
+                        obj_num
+                    )))
+                }
             };
 
             entries.insert((obj_num, gen_val), entry);
         }
     }
-
-    Err(PdfError::MalformedXref(
-        "Reached EOF without finding 'trailer'".into(),
-    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -445,6 +439,11 @@ fn extract_prev(dict: &PdfDict) -> Option<u64> {
     dict.get(b"Prev")?.as_integer().map(|n| n as u64)
 }
 
+/// Whitespace-separated fields of an xref line.
+fn fields(line: &[u8]) -> Vec<&[u8]> {
+    line.split(|b| b.is_ascii_whitespace()).filter(|f| !f.is_empty()).collect()
+}
+
 fn parse_u32(s: &[u8]) -> Result<u32, ()> {
     std::str::from_utf8(s)
         .ok()
@@ -493,13 +492,48 @@ mod tests {
         ));
     }
 
+    /// parse_xref on another thread; None if it has not returned within 5 s.
+    fn parse_within(data: &'static [u8]) -> Option<Result<XrefTable, PdfError>> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || { let _ = tx.send(parse_xref(data)); });
+        rx.recv_timeout(std::time::Duration::from_secs(5)).ok()
+    }
+
+    #[test]
+    fn xref_entries_with_lf_only_line_ends_parse() {
+        // 19-byte entries (no space before the LF), as some writers produce.
+        let data = b"xref\n0 2\n0000000000 65535 f\n0000000009 00000 n\ntrailer\n<< /Size 2 >>\nstartxref\n0\n%%EOF\n";
+        let table = parse_within(data).expect("must not hang").expect("parse");
+        assert!(matches!(table.entries.get(&(1, 0)), Some(XrefEntry::InUse { offset: 9 })));
+    }
+
+    #[test]
+    fn trailer_dictionary_on_the_trailer_line_parses() {
+        let data = b"xref\n0 1\n0000000000 65535 f \ntrailer << /Size 1 >>\nstartxref\n0\n%%EOF\n";
+        let table = parse_within(data).expect("must not hang").expect("parse");
+        assert!(table.trailer.get(b"Size").is_some());
+    }
+
+    #[test]
+    fn tab_separated_subsection_header_parses() {
+        let data = b"xref\n0\t2\n0000000000 65535 f \n0000000009 00000 n \ntrailer\n<< /Size 2 >>\nstartxref\n0\n%%EOF\n";
+        let table = parse_within(data).expect("must not hang").expect("parse");
+        assert_eq!(table.entries.len(), 2);
+    }
+
+    #[test]
+    fn a_garbage_line_is_an_error_not_a_hang() {
+        let data = b"xref\n0 1\n0000000000 65535 f \ngarbage\nstartxref\n0\n%%EOF\n";
+        assert!(parse_within(data).expect("must not hang").is_err());
+    }
+
     #[test]
     fn png_up_predictor_applied() {
         // Two rows, row_width=2, filter byte 2 (Up)
         // Row 0: [2, 10, 20]  → [10, 20]
         // Row 1: [2, 1, 2]    → [10+1, 20+2] = [11, 22]
         let data = [2u8, 10, 20, 2, 1, 2];
-        let out = apply_png_predictor(&data, 2).unwrap();
+        let out = apply_png_predictor(&data, 2, 1).unwrap();
         assert_eq!(out, vec![10, 20, 11, 22]);
     }
 

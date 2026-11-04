@@ -1,5 +1,5 @@
 use crate::error::{AppError, AppResult};
-use crate::utils::get_page_dims;
+use crate::utils::geometry::PageGeom;
 use crate::utils::paths::temp_output_path;
 use lopdf::{Dictionary, Document, Object, ObjectId};
 use serde::Deserialize;
@@ -19,20 +19,6 @@ pub struct LinkInput {
     pub uri: Option<String>,
     /// Internal link target (1-indexed). Mutually exclusive with `uri`.
     pub dest_page: Option<u32>,
-}
-
-fn norm_rect_to_pdf(
-    x0: f64, y0: f64, x1: f64, y1: f64,
-    page_w: f64, page_h: f64,
-) -> [f64; 4] {
-    // y=0 at top in normalized → flip to PDF user space (origin bottom-left).
-    let llx = x0 * page_w;
-    let urx = x1 * page_w;
-    let ury = (1.0 - y0) * page_h;
-    let lly = (1.0 - y1) * page_h;
-    let (llx, urx) = if llx <= urx { (llx, urx) } else { (urx, llx) };
-    let (lly, ury) = if lly <= ury { (lly, ury) } else { (ury, lly) };
-    [llx, lly, urx, ury]
 }
 
 fn page_id_for(doc: &Document, page: u32) -> AppResult<ObjectId> {
@@ -87,8 +73,7 @@ pub async fn add_link(
         let mut doc = Document::load(&path)?;
         let page_id = page_id_for(&doc, link.page)?;
 
-        let (pw, ph) = get_page_dims(&doc, page_id);
-        let rect = norm_rect_to_pdf(link.x0, link.y0, link.x1, link.y1, pw, ph);
+        let rect = PageGeom::of(&doc, page_id).rect_to_pdf(link.x0, link.y0, link.x1, link.y1);
 
         let dest_page_id = match link.dest_page {
             Some(p) => Some(page_id_for(&doc, p)?),
@@ -102,25 +87,10 @@ pub async fn add_link(
         let annot_id = build_link_annot(&mut doc, rect, link.uri.as_deref(), dest_page_id);
 
         // Attach to the page's /Annots array, creating one if missing.
-        if let Ok(Object::Dictionary(page)) = doc.get_object_mut(page_id) {
-            match page.get_mut(b"Annots") {
-                Ok(Object::Array(arr)) => arr.push(Object::Reference(annot_id)),
-                Ok(Object::Reference(r)) => {
-                    let existing = *r;
-                    // Replace direct reference with array containing both.
-                    page.set("Annots", Object::Array(vec![
-                        Object::Reference(existing),
-                        Object::Reference(annot_id),
-                    ]));
-                }
-                _ => {
-                    page.set("Annots", Object::Array(vec![Object::Reference(annot_id)]));
-                }
-            }
-        }
+        crate::utils::annots::push_annot_ref(&mut doc, page_id, annot_id)?;
 
         let out = output.unwrap_or_else(|| temp_output_path(&path, "links"));
-        doc.save(&out)?;
+        crate::utils::save_pdf(&mut doc, &out)?;
         Ok(out)
     })
     .await
@@ -140,17 +110,10 @@ pub async fn remove_link(
 
         // Collect all annotation refs on the page that are Link subtype.
         let link_refs: Vec<ObjectId> = {
-            let Ok(Object::Dictionary(page)) = doc.get_object(page_id) else {
+            if doc.get_dictionary(page_id).is_err() {
                 return Err(AppError::Other("page missing".into()));
-            };
-            let annot_refs: Vec<ObjectId> = match page.get(b"Annots") {
-                Ok(Object::Array(arr)) => arr.iter()
-                    .filter_map(|o| o.as_reference().ok())
-                    .collect(),
-                Ok(Object::Reference(r)) => vec![*r],
-                _ => vec![],
-            };
-            annot_refs.into_iter().filter(|id| {
+            }
+            crate::utils::annots::annot_refs(&doc, page_id).into_iter().filter(|id| {
                 matches!(
                     doc.get_object(*id),
                     Ok(Object::Dictionary(d)) if matches!(
@@ -164,23 +127,10 @@ pub async fn remove_link(
         let target = link_refs.get(index as usize).copied()
             .ok_or_else(|| AppError::Other(format!("link index {} out of range", index)))?;
 
-        if let Ok(Object::Dictionary(page)) = doc.get_object_mut(page_id) {
-            match page.get_mut(b"Annots") {
-                Ok(Object::Array(arr)) => {
-                    arr.retain(|o| match o.as_reference() {
-                        Ok(id) => id != target,
-                        Err(_) => true,
-                    });
-                }
-                Ok(Object::Reference(r)) if *r == target => {
-                    page.remove(b"Annots");
-                }
-                _ => {}
-            }
-        }
+        crate::utils::annots::remove_annot_ref(&mut doc, page_id, target)?;
 
         let out = output.unwrap_or_else(|| temp_output_path(&path, "links"));
-        doc.save(&out)?;
+        crate::utils::save_pdf(&mut doc, &out)?;
         Ok(out)
     })
     .await
@@ -191,16 +141,20 @@ pub async fn remove_link(
 mod tests {
     use super::*;
 
+    fn geom(w: f64, h: f64) -> PageGeom {
+        PageGeom { x0: 0.0, y0: 0.0, x1: w, y1: h, rotate: 0 }
+    }
+
     #[test]
     fn rect_flip_y_axis() {
-        let r = norm_rect_to_pdf(0.0, 0.0, 1.0, 1.0, 100.0, 200.0);
+        let r = geom(100.0, 200.0).rect_to_pdf(0.0, 0.0, 1.0, 1.0);
         assert_eq!(r, [0.0, 0.0, 100.0, 200.0]);
     }
 
     #[test]
     fn rect_top_half() {
         // Normalized top half (y0=0, y1=0.5) → PDF upper half.
-        let r = norm_rect_to_pdf(0.0, 0.0, 1.0, 0.5, 100.0, 200.0);
+        let r = geom(100.0, 200.0).rect_to_pdf(0.0, 0.0, 1.0, 0.5);
         assert_eq!(r, [0.0, 100.0, 100.0, 200.0]);
     }
 }

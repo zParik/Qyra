@@ -7,19 +7,20 @@ test.describe("home", () => {
     await expect(
       page.getByRole("heading", { name: /drop a pdf here/i }),
     ).toBeVisible();
-    await expect(page.getByRole("button", { name: /merge pdfs/i })).toBeVisible();
+    // Merge is reachable twice: from the rail and from the tool row.
+    await expect(page.locator(".tool-row", { hasText: /merge pdfs/i })).toBeVisible();
   });
 
   test("shows the empty recents state", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByText(/no recent files/i)).toBeVisible();
+    await expect(page.getByText(/no sheets on the shelf yet/i)).toBeVisible();
   });
 });
 
 test.describe("navigation", () => {
   test("opening the Merge tool routes to /merge", async ({ page }) => {
     await page.goto("/");
-    await page.getByRole("button", { name: /merge pdfs/i }).click();
+    await page.locator(".tool-row", { hasText: /merge pdfs/i }).click();
     await expect(page).toHaveURL(/\/merge$/);
   });
 
@@ -33,14 +34,77 @@ test.describe("navigation", () => {
 });
 
 test.describe("theme toggle", () => {
-  test("cycles the theme label when clicked", async ({ page }) => {
+  test("switches the theme when a choice is pressed", async ({ page }) => {
     await page.goto("/");
-    const toggle = page.getByRole("button", { name: /^Theme:/ });
-    await expect(toggle).toBeVisible();
-    const before = await toggle.getAttribute("aria-label");
-    await toggle.click();
+    const dark = page.getByRole("button", { name: /^Theme: Dark/ });
+    await expect(dark).toBeVisible();
+    await dark.click();
+    await expect(dark).toHaveAttribute("aria-pressed", "true");
     await expect
-      .poll(async () => toggle.getAttribute("aria-label"))
-      .not.toBe(before);
+      .poll(async () => page.evaluate(() => document.documentElement.dataset.theme))
+      .toBe("dark");
   });
 });
+
+test.describe("viewer", () => {
+  test("reopening a document scrolls back to its saved page", async ({ page, mockTauri }) => {
+    const pages = Array.from({ length: 12 }, () => ({ w: 612, h: 792 }));
+    await mockTauri({
+      get_setting: "1",
+      get_tab_session: [[{ path: "/x/a.pdf", name: "a.pdf" }], 0],
+      doc_open: { pageCount: 12, pages, version: "1" },
+      get_page_count: 12,
+      get_file_size: 1000,
+      get_text_page: [],
+      load_comments: "[]",
+      get_form_fields: [],
+      get_page_links: [],
+      get_outline: [],
+      get_tab_ui_state: [7, 1],
+      render_tile: null,
+    });
+    await page.goto("/view");
+    // Page 7 must be on screen, not just marked current while the view stays at page 1.
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const el = document.querySelector('[data-page-index="7"]');
+          if (!el) return false;
+          const r = el.getBoundingClientRect();
+          return r.top < innerHeight && r.bottom > 0;
+        }),
+      )
+      .toBe(true);
+  });
+
+  test("selecting page text raises the markup popup", async ({ page, mockTauri }) => {
+    const chars = "Hello Qyra".split("").map((c, i) => ({ c, x0: 0.1 + i * 0.02, y0: 0.1, x1: 0.12 + i * 0.02, y1: 0.12 }));
+    await mockTauri({
+      get_setting: "1",
+      get_tab_session: [[{ path: "/x/a.pdf", name: "a.pdf" }], 0],
+      doc_open: { pageCount: 1, pages: [{ w: 612, h: 792 }], version: "1" },
+      get_page_count: 1,
+      get_file_size: 1000,
+      get_text_page: [{ chars, x0: 0.1, y0: 0.1, x1: 0.32, y1: 0.12 }],
+      load_comments: "[]",
+      get_form_fields: [],
+      get_page_links: [],
+      get_outline: [],
+      get_tab_ui_state: [1, 1],
+      render_tile: null,
+    });
+    await page.goto("/view");
+    const layer = page.locator(".textLayer").first();
+    await expect(layer).toContainText("Hello");
+    await layer.evaluate((el) => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const sel = window.getSelection()!;
+      sel.removeAllRanges();
+      sel.addRange(range);
+      document.dispatchEvent(new PointerEvent("pointerup", { button: 0 }));
+    });
+    await expect(page.getByTitle("Highlight")).toBeVisible();
+  });
+});
+

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { UI, MONO } from "../lib/tokens";
+import { MONO } from "../lib/tokens";
+import { IcClose } from "./Icons";
 
 interface CrashLog {
   path: string;
@@ -49,50 +50,29 @@ export function CrashLogBanner() {
   }
 
   return (
-    <div
-      style={{
-        position: "fixed", bottom: 16, left: 16, zIndex: 9999,
-        maxWidth: 380, borderRadius: 8,
-        background: "var(--bg1)", border: "1px solid var(--v-bad-border, var(--line))",
-        boxShadow: "0 8px 32px rgba(0,0,0,0.35)",
-        fontFamily: UI,
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px" }}>
-        <span style={{
-          width: 8, height: 8, borderRadius: "50%",
-          background: "var(--v-bad-text, #e07070)",
-        }} />
-        <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--fg0)", flex: 1 }}>
-          {logs.length} unread crash log{logs.length === 1 ? "" : "s"}
+    <div className="toast toast-bad" role="status" style={{ left: 16, maxWidth: 420 }}>
+      <div className="toast-head">
+        <span className="toast-dot" aria-hidden="true" />
+        <span className="toast-title">
+          Qyra crashed last time{logs.length > 1 ? ` (${logs.length} logs)` : ""}
         </span>
-        <button onClick={() => setOpen((o) => !o)}
-          style={chipBtn}>{open ? "Hide" : "View"}</button>
-        <button onClick={dismissAll} style={chipBtn}>Dismiss all</button>
+        <button type="button" onClick={() => setOpen((o) => !o)} className="btn-secondary btn-sm">{open ? "Hide" : "View log"}</button>
+        <button type="button" onClick={dismissAll} className="btn-ghost btn-sm">Dismiss</button>
       </div>
       {open && (
-        <div style={{ borderTop: "1px solid var(--line2)", maxHeight: 260, overflowY: "auto" }}>
+        <div className="toast-body">
           {logs.map((log) => (
-            <div key={log.path} style={{ padding: "8px 12px", borderBottom: "1px solid var(--line2)" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ fontFamily: MONO, fontSize: 10.5, color: "var(--fg2)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <div key={log.path} className="crash-log">
+              <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+                <span className="t-meta" style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {log.filename}
                 </span>
-                <button onClick={report} style={chipBtn}>Report on GitHub</button>
-                <button onClick={() => dismissOne(log.path)} style={chipBtn}>×</button>
+                <button type="button" onClick={report} className="btn-secondary btn-sm">Report on GitHub</button>
+                <button type="button" onClick={() => dismissOne(log.path)} className="btn-icon" style={{ width: 24, height: 24 }} aria-label={`Dismiss ${log.filename}`}>
+                  <IcClose size={12} />
+                </button>
               </div>
-              <pre
-                style={{
-                  margin: "6px 0 0",
-                  padding: 8,
-                  background: "var(--bg2)", border: "1px solid var(--line)",
-                  borderRadius: 4,
-                  fontFamily: MONO, fontSize: 10.5,
-                  whiteSpace: "pre-wrap",
-                  maxHeight: 160, overflow: "auto",
-                  color: "var(--fg1)",
-                }}
-              >{log.preview}</pre>
+              <pre className="crash-pre" style={{ fontFamily: MONO }}>{log.preview}</pre>
             </div>
           ))}
         </div>
@@ -100,13 +80,3 @@ export function CrashLogBanner() {
     </div>
   );
 }
-
-const chipBtn: React.CSSProperties = {
-  padding: "2px 8px",
-  background: "transparent",
-  color: "var(--fg1)",
-  border: "1px solid var(--line)",
-  borderRadius: 4,
-  fontSize: 10.5,
-  cursor: "pointer",
-};

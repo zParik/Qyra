@@ -21,38 +21,45 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
 
-use base64::Engine;
-
-use crate::commands::render::{ActiveDocument, PageLink, TextLine, CharRect};
+use crate::commands::render::{PageLink, TextLine, CharRect};
 use crate::error::{AppError, AppResult};
 
 /// How many distinct documents to keep open at once. A viewer typically has a
 /// handful of tabs; beyond this the least-recently-inserted doc is dropped.
 const CACHE_CAP: usize = 6;
 
-/// Hard upper bound, in device pixels, on the longest edge of any rendered page
-/// raster. The requested `scale` multiplies the page's native 72-DPI point size,
-/// so an oversized page (e.g. issue #63's 2378×3072 pt, ~3× a normal page) at the
-/// viewer's normal scale produces a many-megapixel pixmap. The WebView decodes
-/// that JPEG back into a raw RGBA bitmap on screen — at ~3072 pt × scale that is
-/// hundreds of MB per page, and scrolling/zooming a document full of them exhausts
-/// RAM and crashes. Clamping the effective scale so the longest edge never exceeds
-/// this bound keeps every page's raster (and thus its decoded footprint) bounded
-/// regardless of the page's native size. Normal Letter/A4 pages stay well under it
-/// and are unaffected.
-const MAX_RENDER_DIM: f32 = 2600.0;
+use crate::render::geometry::PageSizePt;
+use mupdf::pdf::PdfDocument;
+
+/// Display lists kept (across documents). A list is the parsed page, which can
+/// run to tens of MB on a vector-heavy page; 24 covers the viewer's mounted
+/// band (about 17 pages) with room to scroll back.
+const LIST_CAP: usize = 24;
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocInfo {
+    pub page_count: u32,
+    pub pages: Vec<PageSizePt>,
+    /// File mtime (ns) as a string — cache-busting version for the frontend.
+    pub version: String,
+}
+
+/// What a document carries that only a full lopdf parse can read. Read-only
+/// commands check this first and skip that parse (seconds of CPU and hundreds
+/// of MB on a large file) when there is nothing to read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DocFeatures {
+    /// The AcroForm has at least one field.
+    pub form_fields: bool,
+    /// A page has a Text annotation, or the file has embedded files (where the
+    /// comments sidecar lives).
+    pub comments: bool,
+}
 
 /// Work items handed to the worker thread. Each carries its own typed reply
 /// channel so results stay strongly typed across the boundary.
 enum Job {
-    Render {
-        path: String,
-        mtime: u64,
-        page: u32,
-        scale: f32,
-        check_active: bool,
-        reply: Sender<AppResult<Vec<u8>>>,
-    },
     Text {
         path: String,
         mtime: u64,
@@ -65,11 +72,11 @@ enum Job {
         page: u32,
         reply: Sender<AppResult<Vec<PageLink>>>,
     },
-    Aspect {
-        path: String,
-        mtime: u64,
-        reply: Sender<AppResult<f64>>,
-    },
+    Info { path: String, mtime: u64, reply: Sender<AppResult<DocInfo>> },
+    Features { path: String, mtime: u64, reply: Sender<AppResult<DocFeatures>> },
+    /// Drop everything cached for `path`, closing MuPDF's handle on the file.
+    Close { path: String, reply: Sender<()> },
+    List { path: String, mtime: u64, page: u32, reply: Sender<AppResult<Arc<mupdf::DisplayList>>> },
     /// Generic short read-only task against the cached document. The closure
     /// owns its own reply channel and receives the open result (or the open
     /// error) so failures still reach the caller. Only use for *fast* reads
@@ -111,16 +118,15 @@ pub fn global() -> Option<RenderWorker> {
 }
 
 impl RenderWorker {
-    /// Spawn the worker thread. `active` shares the same `Arc<Mutex<..>>` as the
-    /// managed `ActiveDocument`, so `set_active_document` cancels stale jobs.
-    pub fn new(active: ActiveDocument) -> Self {
+    /// Spawn the worker thread.
+    pub fn new() -> Self {
         let (tx, rx) = channel::<Job>();
         std::thread::Builder::new()
             .name("qyra-render".to_string())
             // High-scale renders on large pages can blow the default 2 MiB
             // stack inside MuPDF; match lib.rs's RUST_MIN_STACK headroom.
             .stack_size(16 * 1024 * 1024)
-            .spawn(move || worker_loop(rx, active))
+            .spawn(move || worker_loop(rx))
             .expect("failed to spawn qyra render worker");
         Self { tx: Arc::new(Mutex::new(tx)) }
     }
@@ -133,14 +139,6 @@ impl RenderWorker {
             .map_err(|_| AppError::Other("render worker stopped".to_string()))
     }
 
-    pub fn render(&self, path: String, page: u32, scale: f32, check_active: bool) -> AppResult<Vec<u8>> {
-        let mtime = file_mtime(&path);
-        let (reply, rx) = channel();
-        self.enqueue(Job::Render { path, mtime, page, scale, check_active, reply })?;
-        rx.recv()
-            .map_err(|_| AppError::Other("render worker dropped reply".to_string()))?
-    }
-
     pub fn text(&self, path: String, page: u32) -> AppResult<Vec<TextLine>> {
         let mtime = file_mtime(&path);
         let (reply, rx) = channel();
@@ -149,18 +147,42 @@ impl RenderWorker {
             .map_err(|_| AppError::Other("render worker dropped reply".to_string()))?
     }
 
+    pub fn doc_info(&self, path: String) -> AppResult<DocInfo> {
+        let mtime = file_mtime(&path);
+        let (reply, rx) = channel();
+        self.enqueue(Job::Info { path, mtime, reply })?;
+        rx.recv().map_err(|_| AppError::Other("render worker dropped reply".to_string()))?
+    }
+
+    pub fn features(&self, path: String) -> AppResult<DocFeatures> {
+        let mtime = file_mtime(&path);
+        let (reply, rx) = channel();
+        self.enqueue(Job::Features { path, mtime, reply })?;
+        rx.recv().map_err(|_| AppError::Other("render worker dropped reply".to_string()))?
+    }
+
+    /// Close `path` on the doc thread (open document and display lists) and wait
+    /// until it is closed, so the file can be replaced on disk. The next read
+    /// reopens it.
+    pub fn close(&self, path: &str) {
+        let (reply, rx) = channel();
+        if self.enqueue(Job::Close { path: path.to_string(), reply }).is_ok() {
+            let _ = rx.recv();
+        }
+    }
+
+    /// Cached display list for 1-based `page` of `path`.
+    pub fn display_list(&self, path: String, page: u32) -> AppResult<Arc<mupdf::DisplayList>> {
+        let mtime = file_mtime(&path);
+        let (reply, rx) = channel();
+        self.enqueue(Job::List { path, mtime, page, reply })?;
+        rx.recv().map_err(|_| AppError::Other("render worker dropped reply".to_string()))?
+    }
+
     pub fn links(&self, path: String, page: u32) -> AppResult<Vec<PageLink>> {
         let mtime = file_mtime(&path);
         let (reply, rx) = channel();
         self.enqueue(Job::Links { path, mtime, page, reply })?;
-        rx.recv()
-            .map_err(|_| AppError::Other("render worker dropped reply".to_string()))?
-    }
-
-    pub fn aspect(&self, path: String) -> AppResult<f64> {
-        let mtime = file_mtime(&path);
-        let (reply, rx) = channel();
-        self.enqueue(Job::Aspect { path, mtime, reply })?;
         rx.recv()
             .map_err(|_| AppError::Other("render worker dropped reply".to_string()))?
     }
@@ -198,9 +220,9 @@ fn file_mtime(path: &str) -> u64 {
 }
 
 /// Per-thread document cache. Lives entirely inside the worker thread, so the
-/// non-`Send` `mupdf::Document` values never cross a thread boundary.
+/// non-`Send` MuPDF documents never cross a thread boundary.
 struct DocCache {
-    docs: HashMap<String, (u64, mupdf::Document)>,
+    docs: HashMap<String, (u64, PdfDocument)>,
     order: Vec<String>,
 }
 
@@ -216,7 +238,7 @@ impl DocCache {
         if fresh {
             return Ok(());
         }
-        let doc = mupdf::Document::open(path)?;
+        let doc = PdfDocument::open(path)?;
         if self.docs.insert(path.to_string(), (mtime, doc)).is_none() {
             self.order.push(path.to_string());
         }
@@ -238,7 +260,7 @@ impl DocCache {
         &mut self,
         path: &str,
         mtime: u64,
-        f: impl FnOnce(&mupdf::Document) -> AppResult<R>,
+        f: impl FnOnce(&PdfDocument) -> AppResult<R>,
     ) -> AppResult<R> {
         self.ensure(path, mtime)?;
         let (_, doc) = self.docs.get(path).expect("ensure inserted the doc");
@@ -246,164 +268,125 @@ impl DocCache {
     }
 }
 
-fn worker_loop(rx: Receiver<Job>, active: ActiveDocument) {
+fn worker_loop(rx: Receiver<Job>) {
     let mut cache = DocCache::new();
+    let mut lists: Vec<((String, u64, u32), Arc<mupdf::DisplayList>)> = Vec::new();
+    // The viewer asks once per visible page; walk each file version once.
+    let mut features: HashMap<(String, u64), DocFeatures> = HashMap::new();
     while let Ok(job) = rx.recv() {
-        match job {
-            Job::Render { path, mtime, page, scale, check_active, reply } => {
-                let _ = reply.send(do_render(&mut cache, &active, &path, mtime, page, scale, check_active));
-            }
-            Job::Text { path, mtime, page, reply } => {
-                let _ = reply.send(do_text(&mut cache, &active, &path, mtime, page));
-            }
-            Job::Links { path, mtime, page, reply } => {
-                let _ = reply.send(do_links(&mut cache, &path, mtime, page));
-            }
-            Job::Aspect { path, mtime, reply } => {
-                let _ = reply.send(do_aspect(&mut cache, &path, mtime));
-            }
-            Job::Run { path, mtime, run } => match cache.ensure(&path, mtime) {
-                Ok(()) => {
-                    let (_, doc) = cache.docs.get(&path).expect("ensure inserted the doc");
-                    run(Ok(doc));
+        // A panic in one job (mupdf-rs unwraps while resolving links in some
+        // damaged files) must not kill this thread: every later render would
+        // fail until restart. The job's reply is dropped, so its caller gets
+        // an error; the caches are reset in case the panic left them torn.
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            match job {
+                Job::Text { path, mtime, page, reply } => {
+                    let _ = reply.send(do_text(&mut cache, &path, mtime, page));
                 }
-                Err(e) => run(Err(e)),
-            },
-        }
-    }
-}
-
-#[inline]
-fn cancelled() -> AppError {
-    AppError::Other("Cancelled".to_string())
-}
-
-fn do_render(
-    cache: &mut DocCache,
-    active: &ActiveDocument,
-    path: &str,
-    mtime: u64,
-    page: u32,
-    scale: f32,
-    check_active: bool,
-) -> AppResult<Vec<u8>> {
-    let _t = crate::utils::timing::Timer::start("render_page(worker)", format!("p{page} s{scale}"));
-    if check_active && !active.is(path) {
-        return Err(cancelled());
-    }
-    cache.with_doc(path, mtime, |doc| {
-        let p = doc.load_page(page as i32 - 1)?;
-        // Clamp the effective scale so the longest raster edge stays within
-        // MAX_RENDER_DIM (see the constant's docs). bounds() is in points; an
-        // oversized page would otherwise rasterize to a multi-hundred-MB bitmap
-        // once the WebView decodes it, OOM-crashing on scroll/zoom (issue #63).
-        let eff_scale = {
-            let b = p.bounds()?;
-            let longest = (b.x1 - b.x0).abs().max((b.y1 - b.y0).abs());
-            if longest > 0.0 && longest * scale > MAX_RENDER_DIM {
-                MAX_RENDER_DIM / longest
-            } else {
-                scale
+                Job::Links { path, mtime, page, reply } => {
+                    let _ = reply.send(do_links(&mut cache, &path, mtime, page));
+                }
+                Job::Info { path, mtime, reply } => {
+                    let _ = reply.send(cache.with_doc(&path, mtime, |doc| {
+                        let pages = crate::render::raster::page_sizes(doc)?;
+                        Ok(DocInfo { page_count: pages.len() as u32, pages, version: mtime.to_string() })
+                    }));
+                }
+                Job::Features { path, mtime, reply } => {
+                    let key = (path.clone(), mtime);
+                    if let Some(f) = features.get(&key) {
+                        let _ = reply.send(Ok(*f));
+                        return;
+                    }
+                    let found = cache.with_doc(&path, mtime, scan_features);
+                    if let Ok(f) = found {
+                        if features.len() >= 32 {
+                            features.clear();
+                        }
+                        features.insert(key, f);
+                    }
+                    let _ = reply.send(found);
+                }
+                Job::Close { path, reply } => {
+                    cache.docs.remove(&path);
+                    cache.order.retain(|p| *p != path);
+                    lists.retain(|((p, _, _), _)| *p != path);
+                    features.retain(|(p, _), _| *p != path);
+                    let _ = reply.send(());
+                }
+                Job::List { path, mtime, page, reply } => {
+                    let key = (path.clone(), mtime, page);
+                    if let Some(pos) = lists.iter().position(|(k, _)| *k == key) {
+                        let hit = lists.remove(pos); // move to most-recent
+                        let _ = reply.send(Ok(hit.1.clone()));
+                        lists.push(hit);
+                        return;
+                    }
+                    let built = cache.with_doc(&path, mtime, |doc| {
+                        Ok(Arc::new(crate::render::raster::build_display_list(doc, page as i32 - 1)?))
+                    });
+                    if let Ok(list) = &built {
+                        lists.push((key, list.clone()));
+                        if lists.len() > LIST_CAP {
+                            lists.remove(0);
+                        }
+                    }
+                    let _ = reply.send(built);
+                }
+                Job::Run { path, mtime, run } => match cache.ensure(&path, mtime) {
+                    Ok(()) => {
+                        let (_, doc) = cache.docs.get(&path).expect("ensure inserted the doc");
+                        run(Ok(&**doc));
+                    }
+                    Err(e) => run(Err(e)),
+                },
             }
-        };
-        let matrix = mupdf::Matrix::new_scale(eff_scale, eff_scale);
-        let cs = mupdf::Colorspace::device_rgb();
-        if check_active && !active.is(path) {
-            return Err(cancelled());
+        }));
+        if outcome.is_err() {
+            cache = DocCache::new();
+            lists.clear();
+            features.clear();
         }
-        drop(p);
-        let pixmap = rasterize_page(doc, page as i32 - 1, &matrix, &cs)?;
-        let width = pixmap.width();
-        let height = pixmap.height();
-        let samples = pixmap.samples();
-        let img = image::RgbImage::from_raw(width, height, samples.to_vec())
-            .ok_or_else(|| AppError::Pdf("pixmap→RgbImage failed".to_string()))?;
-        let mut buf = Vec::new();
-        {
-            let mut cursor = std::io::Cursor::new(&mut buf);
-            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, 90)
-                .encode_image(&image::DynamicImage::ImageRgb8(img))?;
-        }
-        Ok(buf)
-    })
+    }
 }
 
-/// Rasterize one page: page contents plus standard annotations (issue #64 —
-/// highlights, sticky notes, ink, stamps written by Acrobat/Edge/Firefox were
-/// previously stripped because the raster used page *contents* only).
-///
-/// Deliberate differences from a full `fz_new_pixmap_from_page`:
-///  • Form **widgets** are not baked in: FormLayer draws live DOM inputs over
-///    the page, and baking widget appearances underneath would double-render
-///    filled fields.
-///  • **Text** (sticky-note) and **Popup** annotations are hidden before the
-///    run: Qyra's comment system shows them as DOM pins (CommentLayer), so a
-///    baked note icon would appear twice. Hiding is in-memory only — the
-///    cached document is never saved from the render worker.
-///
-/// Annotations created without an `/AP` appearance stream (including Qyra's
-/// own squares/underlines) are covered by `update()`, which lets MuPDF
-/// synthesize their appearance before the annotation pass runs.
-pub fn rasterize_page(
-    doc: &mupdf::Document,
-    page_idx: i32,
-    matrix: &mupdf::Matrix,
-    cs: &mupdf::Colorspace,
-) -> AppResult<mupdf::Pixmap> {
-    use mupdf::pdf::annotation::AnnotationFlags;
-    use mupdf::pdf::{PdfAnnotationType, PdfPage};
-
-    let page = doc.load_page(page_idx)?;
-    let mut p = match PdfPage::try_from(page) {
-        Ok(p) => p,
-        Err(_) => {
-            // Non-PDF document (no annotation API): plain full render.
-            let page = doc.load_page(page_idx)?;
-            return Ok(page.to_pixmap(matrix, cs, false, true)?);
-        }
+/// Walk the object tree MuPDF loads lazily: the catalog, and each page's
+/// /Annots array. No page content is parsed.
+fn scan_features(doc: &PdfDocument) -> AppResult<DocFeatures> {
+    let catalog = doc.catalog()?;
+    let form_fields = match catalog.get_dict("AcroForm")? {
+        Some(form) => matches!(form.get_dict("Fields")?, Some(f) if f.len()? > 0),
+        None => false,
     };
-
-    for mut annot in p.annotations() {
-        if matches!(
-            annot.r#type(),
-            Ok(PdfAnnotationType::Text | PdfAnnotationType::Popup)
-        ) {
-            let _ = annot.set_flags(AnnotationFlags::IS_HIDDEN);
+    let embedded = match catalog.get_dict("Names")? {
+        Some(names) => names.get_dict("EmbeddedFiles")?.is_some(),
+        None => false,
+    };
+    let mut comments = embedded;
+    if !comments {
+        'pages: for i in 0..doc.page_count()? {
+            let Some(annots) = doc.find_page(i)?.get_dict("Annots")? else { continue };
+            for j in 0..annots.len()? as i32 {
+                let Some(annot) = annots.get_array(j)? else { continue };
+                if let Some(sub) = annot.get_dict("Subtype")? {
+                    if sub.as_name()? == b"Text" {
+                        comments = true;
+                        break 'pages;
+                    }
+                }
+            }
         }
-        // mupdf-rs 0.6 bug: AnnotationIter yields *borrowed* pdf_annot
-        // pointers (pdf_first/next_annot take no reference), but
-        // PdfAnnotation's Drop calls pdf_drop_annot anyway. Letting it run
-        // underflows the refcount and frees the page's annotation list while
-        // the page still uses it — use-after-free, STATUS_ACCESS_VIOLATION
-        // on any page that has annotations (links included). Forgetting the
-        // wrapper releases the borrow without the bogus drop; no leak, since
-        // no reference was ever taken.
-        std::mem::forget(annot);
     }
-    let _ = p.update();
-
-    let bbox = p.bounds()?.transform(matrix).round();
-    let mut pixmap = mupdf::Pixmap::new_with_rect(cs, bbox, false)?;
-    pixmap.clear_with(0xff)?;
-    let device = mupdf::Device::from_pixmap(&pixmap)?;
-    p.run_contents(&device, matrix)?;
-    p.run_annotations(&device, matrix)?;
-    // Drop closes the draw device, flushing pending output into the pixmap.
-    drop(device);
-    Ok(pixmap)
+    Ok(DocFeatures { form_fields, comments })
 }
 
 fn do_text(
     cache: &mut DocCache,
-    active: &ActiveDocument,
     path: &str,
     mtime: u64,
     page: u32,
 ) -> AppResult<Vec<TextLine>> {
     let _t = crate::utils::timing::Timer::start("get_text_page(worker)", format!("p{page}"));
-    if !active.is(path) {
-        return Err(cancelled());
-    }
     cache.with_doc(path, mtime, |doc| {
         let p = doc.load_page(page as i32 - 1)?;
         let b = p.bounds()?;
@@ -482,20 +465,53 @@ fn do_links(cache: &mut DocCache, path: &str, mtime: u64, page: u32) -> AppResul
     })
 }
 
-fn do_aspect(cache: &mut DocCache, path: &str, mtime: u64) -> AppResult<f64> {
-    cache.with_doc(path, mtime, |doc| {
-        let page = doc.load_page(0)?;
-        let b = page.bounds()?;
-        let w = (b.x1 - b.x0) as f64;
-        let h = (b.y1 - b.y0) as f64;
-        if w == 0.0 {
-            return Err(AppError::Invalid("zero page width".to_string()));
-        }
-        Ok(h / w)
-    })
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// Encode raw JPEG bytes to base64 (kept here so render commands stay thin).
-pub fn b64(bytes: &[u8]) -> String {
-    base64::engine::general_purpose::STANDARD.encode(bytes)
+    fn fixture(name: &str) -> String {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../tests/fixtures/pdf/generated")
+            .join(name)
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    #[test]
+    fn doc_info_lists_every_page_size_and_a_version() {
+        let w = RenderWorker::new();
+        let info = w.doc_info(fixture("mixed-sizes.pdf")).unwrap();
+        assert_eq!(info.page_count, 3);
+        assert_eq!(info.pages[1].w, 792.0);
+        assert!(info.version.parse::<u64>().unwrap() > 0);
+    }
+
+    #[test]
+    fn display_list_is_cached_per_page() {
+        let w = RenderWorker::new();
+        let a = w.display_list(fixture("text.pdf"), 1).unwrap();
+        let b = w.display_list(fixture("text.pdf"), 1).unwrap();
+        assert!(Arc::ptr_eq(&a, &b));
+    }
+
+    #[test]
+    fn features_report_form_fields_only_for_a_form() {
+        let w = RenderWorker::new();
+        assert!(w.features(fixture("acroform.pdf")).unwrap().form_fields);
+        assert!(!w.features(fixture("text.pdf")).unwrap().form_fields);
+    }
+
+    #[test]
+    fn features_report_comments_only_when_a_text_annotation_exists() {
+        let w = RenderWorker::new();
+        assert!(w.features(fixture("annotated.pdf")).unwrap().comments);
+        assert!(!w.features(fixture("text.pdf")).unwrap().comments);
+    }
+
+    #[test]
+    fn text_does_not_require_the_active_document() {
+        let w = RenderWorker::new();
+        let lines = w.text(fixture("text.pdf"), 1).unwrap();
+        assert!(!lines.is_empty());
+    }
 }

@@ -24,7 +24,8 @@ pub fn cancel_compress() {
 /// (`<name>-compressed.pdf`, auto-numbered to avoid collisions). Compression
 /// must never overwrite the source, so this always creates a fresh file and
 /// returns its path. `src` is consumed (moved/removed).
-#[tauri::command]
+// Off the main thread: a full parse and save of a large file froze the window.
+#[tauri::command(async)]
 pub fn save_compressed_copy(src: String, original: String) -> AppResult<String> {
     let dest = crate::utils::paths::unique_sibling_path(&original, "-compressed");
     // Rename when on the same filesystem (atomic, free); copy+delete across the

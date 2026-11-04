@@ -40,7 +40,7 @@ export const Settings = {
   defaultCompressLevel: oneOf<CompressLevel>(
     "default_compress_level", 0, [0, 1, 2], (r) => parseInt(r, 10) as CompressLevel,
   ),
-  confirmBeforeOverwrite: bool("confirm_before_overwrite", true),
+  confirmBeforeOverwrite: bool("confirm_before_overwrite", false),
   defaultSaveFolder: str("default_save_folder", ""),
   reopenTabsOnLaunch: bool("reopen_tabs_on_launch", true),
 } as const;

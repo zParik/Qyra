@@ -1,9 +1,14 @@
-import { Fragment, useRef, useEffect, useCallback, useState } from "react";
+import { Fragment, memo, useRef, useEffect, useCallback, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { thumbUrl } from "../render/renderClient";
+import { IcFile } from "../components/Icons";
 
 interface PageStripProps {
+  /** PDF whose pages are shown; thumbnails load from the qyra:// scheme. */
+  path: string;
+  /** Document version (mtime) so edited files never show stale thumbnails. */
+  version?: string;
   pageCount: number;
-  thumbnails: Record<number, string>;
   currentPage: number;
   onPageSelect: (page: number) => void;
   selectionMode?: boolean;
@@ -11,16 +16,21 @@ interface PageStripProps {
   onPageToggle?: (page: number) => void;
   splitAfter?: number;
   onSplitAfterChange?: (page: number) => void;
-  onVisibleRangeChange?: (range: [number, number]) => void;
   onReorder?: (fromPage: number, dropBeforePage: number) => void;
 }
 
-const SLOT_HEIGHT = 120;
+const SLOT_HEIGHT = 128;
 const OVERSCAN = Math.ceil(400 / SLOT_HEIGHT);
 
-export function PageStrip({
+/**
+ * The page strip: every page as a small white sheet in a column, the current
+ * one ringed in rose. Also hosts remove-mode selection, the split marker and
+ * drag reorder.
+ */
+function PageStripImpl({
+  path,
+  version,
   pageCount,
-  thumbnails,
   currentPage,
   onPageSelect,
   selectionMode = false,
@@ -28,7 +38,6 @@ export function PageStrip({
   onPageToggle,
   splitAfter,
   onSplitAfterChange,
-  onVisibleRangeChange,
   onReorder,
 }: PageStripProps) {
   const isSplitMode = onSplitAfterChange !== undefined;
@@ -45,14 +54,6 @@ export function PageStrip({
   });
 
   const virtualItems = virtualizer.getVirtualItems();
-  const firstVisible = virtualItems.length > 0 ? virtualItems[0]!.index + 1 : 0;
-  const lastVisible = virtualItems.length > 0 ? virtualItems[virtualItems.length - 1]!.index + 1 : 0;
-
-  // Notify parent of visible range so thumbnail hook can prioritize renders
-  useEffect(() => {
-    if (firstVisible === 0 || lastVisible === 0) return;
-    onVisibleRangeChange?.([firstVisible, lastVisible]);
-  }, [firstVisible, lastVisible, onVisibleRangeChange]);
 
   // Auto-scroll active page into view
   useEffect(() => {
@@ -72,52 +73,39 @@ export function PageStrip({
 
   if (pageCount === 0) return null;
 
-  return (
-    <div style={{
-      width: 168, display: "flex", flexDirection: "column", height: "100%",
-      background: "var(--viewer-bg)", borderRight: "1px solid var(--viewer-border)",
-    }}>
-      {/* Subbar header */}
-      <div style={{
-        height: 32, padding: "0 14px", flexShrink: 0,
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        borderBottom: "1px solid var(--viewer-border-sub)",
-      }}>
-        <span style={{
-          fontFamily: "'Inter', system-ui, sans-serif", fontSize: 11, fontWeight: 600,
-          color: "var(--viewer-text)", textTransform: "uppercase", letterSpacing: "0.6px",
-        }}>Pages</span>
-        <span style={{ fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 10, color: "var(--viewer-text-muted)" }}>
-          {pageCount}
-        </span>
-      </div>
+  const hint = isSplitMode ? "Click a page to split after it" : selectionMode ? "Click pages to select them" : null;
 
-      <div ref={scrollRef} style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+  return (
+    <div className="strip">
+      <div className="strip-head">
+        <span className="t-label">Pages</span>
+        <span className="t-meta">{pageCount}</span>
+      </div>
+      {hint && <div className="strip-hint">{hint}</div>}
+
+      <div ref={scrollRef} className="strip-scroll">
         <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
           {virtualItems.map((vItem) => {
             const page = vItem.index + 1;
             const isSelected = selectionMode && !isSplitMode && (selectedPages?.has(page) ?? false);
             const isActive = !selectionMode && !isSplitMode && page === currentPage;
             const isSplitPoint = isSplitMode && splitAfter === page;
-
             const isDropTarget = dropTarget === page;
+            const state = isSelected ? "selected" : isActive || isSplitPoint ? "active" : undefined;
+
             return (
               <Fragment key={page}>
-                {/* Drop-before indicator line */}
                 {isDropTarget && isDragEnabled && (
-                  <div style={{
-                    position: "absolute",
-                    top: vItem.start - 2,
-                    left: 8, right: 8,
-                    height: 3, borderRadius: 2,
-                    background: "var(--accent)",
-                    pointerEvents: "none",
-                    zIndex: 10,
-                  }} />
+                  <div className="strip-drop" style={{ top: vItem.start - 3 }} aria-hidden="true" />
                 )}
                 <button
+                  type="button"
                   onClick={() => handleClick(page)}
-                  className="rounded-lg overflow-hidden border-2 transition-colors block relative"
+                  className="strip-sheet"
+                  data-state={state}
+                  aria-current={isActive ? "page" : undefined}
+                  aria-pressed={selectionMode ? isSelected : undefined}
+                  aria-label={isSplitMode ? `Split after page ${page}` : `Page ${page}`}
                   title={isSplitMode ? `Split after page ${page}` : undefined}
                   draggable={isDragEnabled}
                   onDragStart={isDragEnabled ? (e) => {
@@ -149,105 +137,41 @@ export function PageStrip({
                     setDropTarget(null);
                   } : undefined}
                   style={{
-                    position: "absolute",
                     top: vItem.start,
-                    left: 8,
-                    right: 8,
-                    height: SLOT_HEIGHT - 6,
-                    borderColor: isSelected
-                      ? "var(--v-bad-border, #ef4444)"
-                      : isActive || isSplitPoint
-                      ? "var(--action)"
-                      : "transparent",
-                    cursor: isDragEnabled ? "grab" : isSplitMode ? "pointer" : undefined,
+                    height: SLOT_HEIGHT - 8,
+                    cursor: isDragEnabled ? "grab" : "pointer",
                     opacity: isDragEnabled && dragPageRef.current === page ? 0.4 : 1,
                   }}
-                  onMouseEnter={(e) => {
-                    if (!isSelected && !isActive && !isSplitPoint)
-                      (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--viewer-border)";
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!isSelected && !isActive && !isSplitPoint)
-                      (e.currentTarget as HTMLButtonElement).style.borderColor = "transparent";
-                  }}
                 >
-                  <div
-                    className="flex items-center justify-center relative"
-                    style={{ background: "var(--viewer-elevated)", height: SLOT_HEIGHT - 28 }}
-                  >
-                    {thumbnails[page] ? (
-                      <img
-                        src={thumbnails[page]}
-                        alt={`Page ${page}`}
-                        className="w-full h-full object-contain"
-                      />
-                    ) : (
-                      <svg
-                        className="w-5 h-5"
-                        style={{ color: "var(--viewer-text-muted)" }}
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                          d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                      </svg>
-                    )}
-
+                  <span className="strip-thumb">
+                    {/* Placeholder underneath; the thumbnail covers it once loaded and
+                        hides itself if it fails, revealing the icon. */}
+                    <IcFile size={20} style={{ color: "var(--paper-5)" }} />
+                    <img
+                      src={thumbUrl(path, page, 256, version)}
+                      alt=""
+                      draggable={false}
+                      onError={(e) => { e.currentTarget.style.visibility = "hidden"; }}
+                    />
                     {isSelected && (
-                      <div
-                        className="absolute inset-0 flex items-center justify-center"
-                        style={{ background: "rgba(239, 68, 68, 0.35)" }}
-                      >
-                        <svg className="w-6 h-6 text-white drop-shadow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                      <span className="strip-selected" aria-hidden="true">
+                        <svg width={20} height={20} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+                          <path d="M4 4l8 8M12 4l-8 8" />
                         </svg>
-                      </div>
+                      </span>
                     )}
-                  </div>
-                  <div
-                    className="text-center py-0.5 text-xs"
-                    style={{
-                      color: isSelected
-                        ? "var(--v-bad-text, #ef4444)"
-                        : isActive || isSplitPoint
-                        ? "var(--action)"
-                        : "var(--viewer-text-muted)",
-                    }}
-                  >
-                    {page}
-                  </div>
+                  </span>
+                  <span className="strip-num">{page}</span>
                 </button>
 
                 {isSplitMode && splitAfter === page && page < pageCount && (
-                  <div
-                    className="relative flex items-center gap-1.5"
-                    style={{
-                      position: "absolute",
-                      top: vItem.start + SLOT_HEIGHT - 4,
-                      left: 8,
-                      right: 8,
-                      height: 8,
-                      color: "var(--action)",
-                    }}
-                  >
-                    <div className="flex-1 h-px" style={{ background: "var(--action)" }} />
-                    <svg
-                      className="w-3 h-3 shrink-0"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth={2}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <circle cx="6" cy="6" r="3" />
-                      <circle cx="6" cy="18" r="3" />
-                      <line x1="20" y1="4" x2="8.12" y2="15.88" />
-                      <line x1="14.47" y1="14.48" x2="20" y2="20" />
-                      <line x1="8.12" y1="8.12" x2="12" y2="12" />
+                  <div className="strip-split" style={{ top: vItem.start + SLOT_HEIGHT - 6 }} aria-hidden="true">
+                    <span />
+                    <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="6" cy="6" r="3" /><circle cx="6" cy="18" r="3" />
+                      <line x1="20" y1="4" x2="8.12" y2="15.88" /><line x1="14.47" y1="14.48" x2="20" y2="20" /><line x1="8.12" y1="8.12" x2="12" y2="12" />
                     </svg>
-                    <div className="flex-1 h-px" style={{ background: "var(--action)" }} />
+                    <span />
                   </div>
                 )}
               </Fragment>
@@ -258,3 +182,6 @@ export function PageStrip({
     </div>
   );
 }
+
+// Memoized: the viewer re-renders while scrolling; this only needs to when its props change.
+export const PageStrip = memo(PageStripImpl);

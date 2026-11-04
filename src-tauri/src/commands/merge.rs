@@ -35,7 +35,7 @@ pub async fn merge_pdfs(
         let mut merged = merge_documents(documents)?;
 
         let out = output.unwrap_or_else(|| temp_output_path(&paths[0], "merged"));
-        merged.save(&out)?;
+        crate::utils::save_pdf(&mut merged, &out)?;
         Ok(out)
     })
     .await

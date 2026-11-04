@@ -6,7 +6,7 @@ use crate::pdf::writer::object_stream::flate_compress;
 /// One row of the xref stream, pre-typed (indexed by object number).
 pub enum XrefRow {
     Free,                                   // type 0
-    InUse { offset: u64 },                  // type 1
+    InUse { offset: u64, gen: u16 },        // type 1
     Compressed { objstm: u32, index: u32 }, // type 2
 }
 
@@ -21,7 +21,12 @@ pub fn build_xref_stream(rows: &[XrefRow], trailer: &PdfDict) -> Result<PdfStrea
     for row in rows {
         let (t, f2, f3): (u8, u32, u16) = match *row {
             XrefRow::Free => (0, 0, 0),
-            XrefRow::InUse { offset } => (1, offset as u32, 0),
+            XrefRow::InUse { offset, gen } => {
+                let offset = u32::try_from(offset).map_err(|_| {
+                    PdfError::WriteError(format!("offset {offset} exceeds the 4 GiB xref stream limit"))
+                })?;
+                (1, offset, gen)
+            }
             XrefRow::Compressed { objstm, index } => (2, objstm, index as u16),
         };
         data.push(t);
@@ -66,7 +71,7 @@ mod tests {
         trailer.set(b"Root", PdfObject::Reference((1, 0)));
         let rows = vec![
             XrefRow::Free,
-            XrefRow::InUse { offset: 17 },
+            XrefRow::InUse { offset: 17, gen: 0 },
             XrefRow::Compressed { objstm: 5, index: 2 },
         ];
         let s = build_xref_stream(&rows, &trailer).unwrap();
@@ -80,5 +85,20 @@ mod tests {
             u32::from_be_bytes([decoded[8], decoded[9], decoded[10], decoded[11]]),
             17
         );
+    }
+
+    #[test]
+    fn xref_stream_rejects_offsets_beyond_4gib() {
+        // /W [1 4 2] has 4 bytes for the offset. Silently truncating a larger
+        // offset would point the reader at the wrong bytes.
+        let rows = vec![XrefRow::Free, XrefRow::InUse { offset: 5_000_000_000, gen: 0 }];
+        assert!(build_xref_stream(&rows, &PdfDict::new()).is_err());
+    }
+
+    #[test]
+    fn xref_stream_row_carries_generation() {
+        let rows = vec![XrefRow::Free, XrefRow::InUse { offset: 17, gen: 3 }];
+        let decoded = build_xref_stream(&rows, &PdfDict::new()).unwrap().decode().unwrap();
+        assert_eq!(u16::from_be_bytes([decoded[12], decoded[13]]), 3);
     }
 }

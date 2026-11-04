@@ -13,23 +13,23 @@ export function UpdatesSection() {
 
   const statusLabel =
     state.status === "checking" ? "Checking…" :
-    state.status === "available" ? "Update available — see banner" :
+    state.status === "available" ? "An update is available. See the banner at the top." :
     state.status === "downloading" ? "Downloading…" :
-    state.status === "ready" ? "Ready — restart to apply" :
-    "Up to date";
+    state.status === "ready" ? "Downloaded. Restart Qyra to apply it." :
+    "Up to date.";
 
   return (
     <div>
-      <SectionTitle>Updates</SectionTitle>
-      <SettingRow label="Version" description={statusLabel}>
-        <span className="text-sm" style={{ color: "var(--fg1)" }}>{version || "…"}</span>
+      <SectionTitle note="Updates come from GitHub releases. Nothing else is ever sent or fetched.">Updates</SectionTitle>
+      <SettingRow label="Installed version" description={statusLabel}>
+        <span className="t-num" style={{ color: "var(--fg1)" }}>{version || "…"}</span>
       </SettingRow>
-      <SettingRow label="Check for updates" description="Manually check GitHub releases now.">
+      <SettingRow label="Check for updates" description="Look at GitHub releases now.">
         <button
+          type="button"
           onClick={() => checkForUpdates()}
           disabled={state.status === "checking" || state.status === "downloading"}
-          className="text-xs px-3 py-1.5 rounded"
-          style={{ background: "var(--accent)", color: "#fff" }}
+          className="btn-secondary btn-sm"
         >
           Check now
         </button>

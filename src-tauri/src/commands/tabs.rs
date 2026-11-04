@@ -49,14 +49,18 @@ pub fn save_tab_session(
     active_index: i32,
 ) -> AppResult<()> {
     let conn = lock(&db)?;
-    conn.execute("DELETE FROM open_tabs", [])?;
+    // One transaction: a failed insert (or the app closing mid-write) left
+    // the session deleted or half written.
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("DELETE FROM open_tabs", [])?;
     for (i, tab) in tabs.iter().enumerate() {
         let is_active = if i as i32 == active_index { 1 } else { 0 };
-        conn.execute(
+        tx.execute(
             "INSERT INTO open_tabs (position, path, name, is_active) VALUES (?1, ?2, ?3, ?4)",
             params![i as i32, tab.path, tab.name, is_active],
         )?;
     }
+    tx.commit()?;
     Ok(())
 }
 

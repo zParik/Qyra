@@ -26,7 +26,7 @@ export function RotatePanel({ file, onApplied }: RotatePanelProps) {
   return (
     <ToolPanelLayout
       onSubmit={handle}
-      submitLabel="Rotate Pages"
+      submitLabel="Rotate pages"
       isProcessing={isProcessing}
       result={result}
       error={error}

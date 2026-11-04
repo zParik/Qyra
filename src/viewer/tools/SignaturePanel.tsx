@@ -188,7 +188,7 @@ export function SignaturePanel({ onSignatureCreated, onClose }: SignaturePanelPr
   const tabBtnStyle = (active: boolean): React.CSSProperties => ({
     flex: 1,
     padding: "6px 4px",
-    fontSize: 12,
+    fontSize: "var(--fs-body)",
     fontWeight: active ? 600 : 400,
     color: active ? "var(--accent)" : "var(--viewer-text-muted)",
     background: "none",
@@ -202,7 +202,7 @@ export function SignaturePanel({ onSignatureCreated, onClose }: SignaturePanelPr
     width: "100%",
     borderRadius: 6,
     padding: "6px 10px",
-    fontSize: 13,
+    fontSize: "var(--fs-body)",
     background: "var(--viewer-bg)",
     border: "1px solid var(--viewer-border)",
     color: "var(--viewer-text)",
@@ -224,13 +224,13 @@ export function SignaturePanel({ onSignatureCreated, onClose }: SignaturePanelPr
         borderRadius: 12,
         padding: 20,
         width: 380,
-        boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+        boxShadow: "var(--shadow-dialog)",
       }}
     >
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: "var(--viewer-text-sec)" }}>
-          Create Signature
+        <span style={{ fontSize: "var(--fs-body)", fontWeight: 600, color: "var(--viewer-text-sec)" }}>
+          Create signature
         </span>
         <button
           onClick={onClose}
@@ -281,7 +281,7 @@ export function SignaturePanel({ onSignatureCreated, onClose }: SignaturePanelPr
               border: "1px solid var(--viewer-border)",
               borderRadius: 6,
               padding: "3px 10px",
-              fontSize: 11,
+              fontSize: "var(--fs-label)",
               color: "var(--viewer-text-muted)",
               cursor: "pointer",
             }}
@@ -311,7 +311,7 @@ export function SignaturePanel({ onSignatureCreated, onClose }: SignaturePanelPr
                 style={{
                   flex: 1,
                   padding: "5px 8px",
-                  fontSize: 12,
+                  fontSize: "var(--fs-body)",
                   borderRadius: 6,
                   border: "1px solid var(--viewer-border)",
                   background: fontStyle === fs ? "var(--accent)" : "var(--viewer-bg)",
@@ -334,7 +334,7 @@ export function SignaturePanel({ onSignatureCreated, onClose }: SignaturePanelPr
                 style={{
                   flex: 1,
                   padding: "4px 6px",
-                  fontSize: 11,
+                  fontSize: "var(--fs-label)",
                   borderRadius: 6,
                   border: "1px solid var(--viewer-border)",
                   background: fontSize === s ? "var(--viewer-elevated)" : "var(--viewer-bg)",
@@ -396,7 +396,7 @@ export function SignaturePanel({ onSignatureCreated, onClose }: SignaturePanelPr
               borderRadius: 8,
               cursor: "pointer",
               color: "var(--viewer-text-muted)",
-              fontSize: 12,
+              fontSize: "var(--fs-body)",
             }}
           >
             <svg width={20} height={20} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -439,7 +439,7 @@ export function SignaturePanel({ onSignatureCreated, onClose }: SignaturePanelPr
           style={{
             flex: 1,
             padding: "7px 12px",
-            fontSize: 12,
+            fontSize: "var(--fs-body)",
             borderRadius: 7,
             border: "1px solid var(--viewer-border)",
             background: "var(--viewer-bg)",
@@ -455,7 +455,7 @@ export function SignaturePanel({ onSignatureCreated, onClose }: SignaturePanelPr
           style={{
             flex: 2,
             padding: "7px 12px",
-            fontSize: 12,
+            fontSize: "var(--fs-body)",
             fontWeight: 600,
             borderRadius: 7,
             border: "none",
@@ -472,7 +472,7 @@ export function SignaturePanel({ onSignatureCreated, onClose }: SignaturePanelPr
       {/* Saved signatures */}
       {savedSigs.length > 0 && (
         <div style={{ marginTop: 16, borderTop: "1px solid var(--viewer-border)", paddingTop: 12 }}>
-          <p style={{ fontSize: 11, color: "var(--viewer-text-muted)", marginBottom: 6 }}>
+          <p style={{ fontSize: "var(--fs-label)", color: "var(--viewer-text-muted)", marginBottom: 6 }}>
             Recent signatures
           </p>
           <div style={{ display: "flex", gap: 8 }}>

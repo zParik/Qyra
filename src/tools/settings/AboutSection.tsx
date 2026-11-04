@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { SectionTitle, SettingRow } from "./ui";
+import { PeacockMark } from "../../components/Wordmark";
 
 export function AboutSection() {
   const [version, setVersion] = useState("");
@@ -12,20 +13,22 @@ export function AboutSection() {
   return (
     <div>
       <SectionTitle>About</SectionTitle>
-      <div className="flex items-center gap-3 mb-4">
-        <img src="/Logo.png" alt="Qyra" className="w-12 h-12 rounded-full object-contain" />
+      <div className="about-card">
+        <span className="about-mark" aria-hidden="true">
+          <PeacockMark size={32} />
+        </span>
         <div>
-          <div className="text-sm font-semibold" style={{ color: "var(--fg0)" }}>Qyra {version}</div>
-          <div className="text-xs" style={{ color: "var(--fg2)" }}>free · offline · open source</div>
+          <div className="about-name">Qyra <span className="t-num" style={{ color: "var(--fg2)", fontWeight: 400 }}>{version}</span></div>
+          <div className="t-meta">Free, offline and open source. Your files never leave this computer.</div>
         </div>
       </div>
-      <SettingRow label="Source code" description="View the project on GitHub.">
+      <SettingRow label="Source code" description="The whole project is on GitHub under GPL-3.0.">
         <button
+          type="button"
           onClick={() => openUrl("https://github.com/zParik/Qyra").catch(() => {})}
-          className="text-xs px-3 py-1.5 rounded"
-          style={{ background: "var(--bg2)", color: "var(--fg1)" }}
+          className="btn-secondary btn-sm"
         >
-          Open
+          Open GitHub
         </button>
       </SettingRow>
     </div>

@@ -1,6 +1,6 @@
 use lopdf::{Document, Object, ObjectId};
 use crate::utils::paths::temp_output_path;
-use crate::utils::get_page_dims;
+use crate::utils::geometry::PageGeom;
 use crate::error::{AppError, AppResult};
 
 #[tauri::command]
@@ -35,18 +35,10 @@ pub async fn crop_pages(
                 None => continue,
             };
 
-            let (pw, ph) = get_page_dims(&doc, page_id);
-
-            // crop_rect = [x0, y0, x1, y1] normalized, top-left origin
-            // Convert to PDF coords (bottom-left origin):
-            //   x0_pdf = x0 * pw
-            //   y0_pdf = (1 - y1) * ph   ← bottom of crop box in PDF coords
-            //   x1_pdf = x1 * pw
-            //   y1_pdf = (1 - y0) * ph   ← top of crop box in PDF coords
-            let x0_pdf = crop_rect[0] * pw;
-            let y0_pdf = (1.0 - crop_rect[3]) * ph;
-            let x1_pdf = crop_rect[2] * pw;
-            let y1_pdf = (1.0 - crop_rect[1]) * ph;
+            // crop_rect = [x0, y0, x1, y1] normalised to the page as shown
+            // (its current crop, turned by /Rotate; top-left origin).
+            let [x0_pdf, y0_pdf, x1_pdf, y1_pdf] = PageGeom::of(&doc, page_id)
+                .rect_to_pdf(crop_rect[0], crop_rect[1], crop_rect[2], crop_rect[3]);
 
             let box_array = vec![
                 Object::Real(x0_pdf as f32),
@@ -68,7 +60,7 @@ pub async fn crop_pages(
             }
         }
 
-        doc.save(&out)?;
+        crate::utils::save_pdf(&mut doc, &out)?;
         Ok(out)
     })
     .await

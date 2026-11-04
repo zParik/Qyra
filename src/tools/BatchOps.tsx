@@ -3,7 +3,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { ToolLayout } from "../components/ToolLayout";
 import { pickDirectory } from "../lib/tauri";
-import { UI, MONO } from "../lib/tokens";
+import { loadSetting, Settings } from "../lib/settings";
+import { UI } from "../lib/tokens";
+import { batchOutputs } from "./batchOutputs";
 
 type Op =
   | "compress"
@@ -34,20 +36,6 @@ const OPS = ALL_OPS;
 
 function defaultSuffix(op: Op): string {
   return op;
-}
-
-function withSuffix(path: string, suffix: string): string {
-  const sep = path.includes("\\") ? "\\" : "/";
-  const idx = path.lastIndexOf(".");
-  if (idx <= path.lastIndexOf(sep)) return `${path}_${suffix}.pdf`;
-  return `${path.slice(0, idx)}_${suffix}${path.slice(idx)}`;
-}
-
-function joinPath(dir: string, name: string, suffix: string): string {
-  const sep = dir.includes("\\") ? "\\" : "/";
-  const trimmed = dir.endsWith(sep) ? dir.slice(0, -1) : dir;
-  const stem = name.replace(/\.pdf$/i, "");
-  return `${trimmed}${sep}${stem}_${suffix}.pdf`;
 }
 
 export default function BatchOps() {
@@ -84,15 +72,12 @@ export default function BatchOps() {
   function clearAll() { setRows([]); }
   function removeRow(idx: number) { setRows((r) => r.filter((_, i) => i !== idx)); }
 
-  function outputFor(row: RowState): string {
-    const suffix = defaultSuffix(op);
-    return destDir ? joinPath(destDir, row.name, suffix) : withSuffix(row.path, suffix);
-  }
-
   async function runOne(row: RowState, output: string): Promise<string> {
     switch (op) {
       case "compress":
-        await invoke("compress_pdf", { path: row.path, output, level: 2 });
+        // The level chosen in Settings (lossless by default); a fixed level 2
+        // silently degraded every image in the batch.
+        await invoke("compress_pdf", { path: row.path, output, level: await loadSetting(Settings.defaultCompressLevel) });
         return output;
       case "flatten":
         await invoke("flatten_pdf", { path: row.path, output });
@@ -111,7 +96,8 @@ export default function BatchOps() {
       case "page-numbers":
         await invoke("add_page_numbers", {
           path: row.path,
-          options: { startAt: 1, position: "bottom-center", fontSize: 10, margin: 20 },
+          // snake_case: PageNumberOptions has no serde rename.
+          options: { start_at: 1, position: "bottom-center", font_size: 10, margin: 20 },
           output,
         });
         return output;
@@ -137,12 +123,12 @@ export default function BatchOps() {
     setRunning(true);
     // Reset statuses.
     setRows((arr) => arr.map((r) => ({ ...r, status: "pending", message: undefined, output: undefined })));
+    const targets = batchOutputs(rows.map((r) => r.path), defaultSuffix(op), destDir);
     for (let i = 0; i < rows.length; i++) {
       setRows((arr) => arr.map((r, idx) => (idx === i ? { ...r, status: "running" } : r)));
       try {
         const row = rows[i]!;
-        const target = outputFor(row);
-        const out = await runOne(row, target);
+        const out = await runOne(row, targets[i]!);
         setRows((arr) => arr.map((r, idx) => (idx === i ? { ...r, status: "done", output: out } : r)));
       } catch (e: any) {
         setRows((arr) => arr.map((r, idx) => (idx === i ? { ...r, status: "error", message: String(e?.message ?? e) } : r)));
@@ -155,7 +141,7 @@ export default function BatchOps() {
   const failed = rows.filter((r) => r.status === "error").length;
 
   return (
-    <ToolLayout title="Batch operations" description="Apply one operation to many PDFs">
+    <ToolLayout title="Batch operations" description="Apply one operation to many PDFs at once." family="compress">
       <section style={{ display: "flex", flexDirection: "column", gap: 14, fontFamily: UI }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button onClick={pickFiles} disabled={running} className="btn-secondary">Add PDFs…</button>
@@ -176,13 +162,13 @@ export default function BatchOps() {
         </div>
 
         {destDir && (
-          <div style={{ fontFamily: MONO, fontSize: 11, color: "var(--fg2)" }}>
+          <div style={{ fontFamily: UI, fontSize: "var(--fs-label)", color: "var(--fg2)" }}>
             Output → {destDir}
           </div>
         )}
 
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <label style={{ fontSize: 11, color: "var(--fg2)" }}>Operation</label>
+          <label style={{ fontSize: "var(--fs-label)", color: "var(--fg2)" }}>Operation</label>
           <select
             value={op}
             onChange={(e) => setOp(e.target.value as Op)}
@@ -193,12 +179,12 @@ export default function BatchOps() {
               border: "1px solid var(--line)",
               borderRadius: 6,
               color: "var(--fg0)",
-              fontSize: 13,
+              fontSize: "var(--fs-body)",
             }}
           >
             {OPS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
           </select>
-          <p style={{ margin: "2px 0 0", fontSize: 11.5, color: "var(--fg2)" }}>
+          <p style={{ margin: "2px 0 0", fontSize: "var(--fs-label)", color: "var(--fg2)" }}>
             {OPS.find((o) => o.id === op)?.desc}
           </p>
         </div>
@@ -209,7 +195,7 @@ export default function BatchOps() {
               padding: "32px 16px",
               border: "1px dashed var(--line)",
               borderRadius: 8,
-              fontSize: 12.5, color: "var(--fg2)", textAlign: "center",
+              fontSize: "var(--fs-body)", color: "var(--fg2)", textAlign: "center",
               background: "var(--bg1)",
             }}
           >
@@ -229,14 +215,14 @@ export default function BatchOps() {
                   border: "1px solid var(--line)",
                   borderRadius: 6,
                   background: "var(--bg1)",
-                  fontSize: 12.5,
+                  fontSize: "var(--fs-body)",
                 }}
               >
                 <StatusDot status={row.status} />
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {row.name}
                 </span>
-                <span style={{ fontFamily: MONO, fontSize: 10.5, color: "var(--fg2)" }}>
+                <span style={{ fontFamily: UI, fontSize: "var(--fs-label)", color: "var(--fg2)" }}>
                   {row.status === "error" ? row.message : row.status === "done" ? "OK" : row.status}
                 </span>
                 <button
@@ -258,7 +244,7 @@ export default function BatchOps() {
         )}
 
         {rows.length > 0 && (
-          <div style={{ fontSize: 11.5, color: "var(--fg2)", fontFamily: MONO }}>
+          <div style={{ fontSize: "var(--fs-label)", color: "var(--fg2)", fontFamily: UI }}>
             {done} done · {failed} failed · {rows.length - done - failed} pending
           </div>
         )}

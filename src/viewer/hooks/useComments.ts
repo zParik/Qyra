@@ -5,7 +5,7 @@ import { loadComments, saveComments } from "../../lib/tauri";
 
 /**
  * Loads comments from the PDF (Text annotations + qyra sidecar) on mount and
- * auto-saves on change.
+ * whenever the working file is swapped, and auto-saves on change.
  *
  * Both load and save fully reparse the document (lopdf), which on a large
  * PDF takes seconds to tens of seconds. The rules that keep that safe:
@@ -47,10 +47,31 @@ export function useComments(viewerPath: string | undefined) {
     return JSON.stringify(useCommentsStore.getState().comments[path] ?? []);
   }, []);
 
-  // Load comments from the PDF once on mount.
+  const prevPathRef = useRef<string | undefined>(undefined);
+
+  // Load comments from the PDF on mount and whenever the working file is
+  // swapped (any edit writes a new working copy, Save copies it back). The new
+  // file carries the comments already written; ones not yet on disk at the
+  // swap are carried over from the old path, so nothing is lost and the empty
+  // list of a not-yet-loaded path is never saved over the new file.
   useEffect(() => {
     if (!viewerPath) return;
     let cancelled = false;
+    const prevPath = prevPathRef.current;
+    prevPathRef.current = viewerPath;
+    let carried: Comment[] = [];
+    if (prevPath && prevPath !== viewerPath) {
+      const saved = new Map<string, string>();
+      try {
+        for (const s of JSON.parse(lastSavedJsonRef.current ?? "[]") as Comment[]) saved.set(s.id, JSON.stringify(s));
+      } catch { /* nothing saved yet */ }
+      carried = (useCommentsStore.getState().comments[prevPath] ?? []).filter(
+        (x) => saved.get(x.id) !== JSON.stringify(x),
+      );
+      clearTimeout(saveTimerRef.current);
+      pendingJsonRef.current = null;
+      lastSavedJsonRef.current = null;
+    }
     isLoadingCommentsRef.current = true;
     const t0 = performance.now();
     loadPromiseRef.current = loadComments(viewerPath)
@@ -69,7 +90,19 @@ export function useComments(viewerPath: string | undefined) {
               useCommentsStore.getState().comments[viewerPath] ?? [];
             const byId = new Map<string, Comment>(parsed.map((c: Comment) => [c.id, c]));
             for (const c of current) if (!byId.has(c.id)) byId.set(c.id, c);
-            loadCommentsIntoStore(viewerPath, [...byId.values()]);
+            // Unsaved changes from before a swap win over the file's copy.
+            for (const c of carried) byId.set(c.id, c);
+            const merged = [...byId.values()];
+            loadCommentsIntoStore(viewerPath, merged);
+            // The merge added comments the file does not have yet: write them.
+            const mergedJson = JSON.stringify(merged);
+            if (mergedJson !== lastSavedJsonRef.current) {
+              pendingJsonRef.current = mergedJson;
+              clearTimeout(saveTimerRef.current);
+              saveTimerRef.current = window.setTimeout(() => {
+                void runPendingSave().catch(() => {});
+              }, 400);
+            }
           }
         } catch {
           /* ignore malformed JSON */
@@ -87,7 +120,7 @@ export function useComments(viewerPath: string | undefined) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // mount-only: original path == viewerPath at this point
+  }, [viewerPath]);
 
   /** Run the actual save for whatever is pending. Chains onto any in-flight
    *  save so two writers never race on the same file. */

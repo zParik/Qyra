@@ -1,8 +1,7 @@
 import { useState, useRef } from "react";
 import { LoadedFile } from "../../store/useAppStore";
-import { writeBytes, pickDirectory, showInFolder, exportFile } from "../../lib/tauri";
-import { isAndroid } from "../../lib/androidFileUtils";
-import { renderPageForExport } from "../../hooks/usePageThumbnails";
+import { pickDirectory, showInFolder } from "../../lib/tauri";
+import { invoke } from "@tauri-apps/api/core";
 import { parsePages } from "../../lib/pageRange";
 
 interface ExportImagesPanelProps {
@@ -80,7 +79,6 @@ export function ExportImagesPanel({ file }: ExportImagesPanelProps) {
     setIsExporting(true);
     setProgress({ done: 0, total: resolvedPages.length });
 
-    const scale = dpi / 72;
     const sep = dir.includes("/") ? "/" : "\\";
     const outputPaths: string[] = [];
 
@@ -91,14 +89,10 @@ export function ExportImagesPanel({ file }: ExportImagesPanelProps) {
           break;
         }
         const pageNum = resolvedPages[idx]!;
-        const bytes = await renderPageForExport(file.path, pageNum, scale, format);
-        if (cancelRef.current) {
-          setCancelled(true);
-          break;
-        }
         const filename = `${stem}_page${String(pageNum).padStart(4, "0")}.${format}`;
         const outPath = `${dir}${sep}${filename}`;
-        await writeBytes(outPath, Array.from(bytes));
+        // Rendered and written by Rust at the exact DPI: real PNG/JPEG, no size cap.
+        await invoke("export_page_image", { path: file.path, page: pageNum, dpi, format, out: outPath });
         outputPaths.push(outPath);
         setProgress({ done: idx + 1, total: resolvedPages.length });
       }
@@ -111,11 +105,7 @@ export function ExportImagesPanel({ file }: ExportImagesPanelProps) {
 
     setIsExporting(false);
     if (!cancelRef.current && outputPaths.length > 0) {
-      if (isAndroid()) {
-        exportFile(outputPaths[0]!).catch(() => {});
-      } else {
-        showInFolder(outputPaths[0]!).catch(() => {});
-      }
+      showInFolder(outputPaths[0]!).catch(() => {});
     }
   }
 
@@ -186,13 +176,13 @@ export function ExportImagesPanel({ file }: ExportImagesPanelProps) {
           className="w-full text-sm px-2 py-1.5 rounded-lg"
           style={{
             background: "var(--viewer-input-bg, var(--viewer-bg))",
-            border: `1px solid ${pageInputError ? "var(--viewer-error, #c00)" : "var(--viewer-border)"}`,
+            border: `1px solid ${pageInputError ? "var(--bad)" : "var(--viewer-border)"}`,
             color: "var(--viewer-text)",
             outline: "none",
           }}
         />
         {pageInputError ? (
-          <p className="text-xs mt-1" style={{ color: "var(--viewer-error, #c00)" }}>
+          <p className="text-xs mt-1" style={{ color: "var(--bad)" }}>
             Invalid range — use e.g. "1-3, 5, 8-10"
           </p>
         ) : resolvedPages && pageInput.trim() !== "" ? (
@@ -228,7 +218,7 @@ export function ExportImagesPanel({ file }: ExportImagesPanelProps) {
           onClick={handleExport}
           className="v-btn-primary flex-1"
         >
-          Export Images
+          Export images
         </button>
         {isExporting && (
           <button
@@ -272,7 +262,7 @@ export function ExportImagesPanel({ file }: ExportImagesPanelProps) {
       {error && (
         <div
           className="text-xs p-2 rounded"
-          style={{ background: "var(--viewer-error-bg, #fee)", color: "var(--viewer-error, #c00)" }}
+          style={{ background: "var(--bad-soft)", color: "var(--bad)" }}
         >
           {error}
         </div>
