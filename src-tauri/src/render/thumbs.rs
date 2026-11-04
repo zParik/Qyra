@@ -1,6 +1,7 @@
 //! Page thumbnails: lossless PNG at fixed widths, cached on disk, served to
 //! `<img>` via the `qyra` URI scheme (`qyra://localhost/thumb/<page>?path=..&w=..`,
-//! `http://qyra.localhost/...` on Windows).
+//! `http://qyra.localhost/...` on Windows). Print pages come through the same
+//! scheme at `/print/<page>?path=..`, uncached.
 
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -100,6 +101,31 @@ pub fn thumb_png(service: &RenderService, cache: &ThumbCache, path: &str, page: 
     Ok(png)
 }
 
+/// Print resolution: sharp on paper, and a long document's page images still
+/// fit in the webview's memory while it lays them out for printing.
+pub const PRINT_DPI: f64 = 150.0;
+
+/// PNG of 1-based `page` at `PRINT_DPI`, for printing. Not cached: a print
+/// job would push every thumbnail out of the cache. Queued behind the pages
+/// on screen, so the viewer stays responsive while a job renders.
+pub fn print_png(service: &RenderService, path: &str, page: u32) -> AppResult<Vec<u8>> {
+    let img = service
+        .page(internal_id(), path.to_string(), page, PRINT_DPI / 72.0, Priority::Prefetch)?
+        .ok_or_else(|| crate::error::AppError::Other("print page cancelled".into()))?;
+    crate::render::raster::encode_png(&img)
+}
+
+/// `/print/<page>?path=<urlenc>` → (path, page).
+pub fn parse_print_uri(path_and_query: &str) -> Option<(String, u32)> {
+    let (p, q) = path_and_query.split_once('?')?;
+    let page: u32 = p.strip_prefix("/print/")?.parse().ok()?;
+    if page == 0 {
+        return None;
+    }
+    let pdf = q.split('&').find_map(|kv| kv.strip_prefix("path=")).and_then(percent_decode)?;
+    Some((pdf, page))
+}
+
 fn percent_decode(s: &str) -> Option<String> {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
@@ -148,6 +174,17 @@ pub fn parse_thumb_uri(path_and_query: &str) -> Option<(String, u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_print_uri_decodes_path_and_page() {
+        assert_eq!(
+            parse_print_uri("/print/3?path=%2Fhome%2Fu%2Fa%20b.pdf&v=1"),
+            Some(("/home/u/a b.pdf".to_string(), 3))
+        );
+        assert_eq!(parse_print_uri("/print/0?path=%2Fa.pdf"), None);
+        assert_eq!(parse_print_uri("/print/2"), None);
+        assert_eq!(parse_print_uri("/thumb/2?path=%2Fa.pdf&w=256"), None);
+    }
 
     #[test]
     fn key_changes_with_mtime_page_and_width() {

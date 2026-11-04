@@ -60,6 +60,10 @@ tauri-plugin-single-instance = "2"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# GTK's print dialog for native printing (the version Tauri already uses).
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+
 # ── Build profiles ────────────────────────────────────────────────────────────
 # Release: maximize runtime speed of the Rust+C hot paths — MuPDF render, image
 # JPEG encode, the pdf parser/rewriter, lopdf split/merge. thin-LTO + a single

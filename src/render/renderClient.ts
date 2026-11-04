@@ -73,6 +73,17 @@ export function rgbaToCanvas(rgba: Rgba): HTMLCanvasElement {
 const isWindows = () => typeof navigator !== "undefined" && /win/i.test(navigator.platform);
 
 /**
+ * `<img src>` for one page rendered for printing (150 dpi PNG), served by the
+ * `qyra` URI scheme. Rust renders it on its own threads, so a long print job
+ * never blocks the webview.
+ */
+export function printUrl(path: string, page: number, version = ""): string {
+  const base = isWindows() ? "http://qyra.localhost" : "qyra://localhost";
+  const v = `${version}.${getDocVersion(path)}`;
+  return `${base}/print/${page}?path=${encodeURIComponent(path)}&v=${encodeURIComponent(v)}`;
+}
+
+/**
  * `<img src>` for a lossless page thumbnail served by the `qyra` URI scheme.
  * The `v` param carries the file version and its rewrite counter, so the
  * webview never serves a stale image after Qyra rewrites the file.

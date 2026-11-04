@@ -13,6 +13,7 @@ import { useOpenWithFile } from "./hooks/useOpenWithFile";
 import { useUpdater } from "./hooks/useUpdater";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { CommandPalette } from "./components/CommandPalette";
+import { PrintStatus } from "./components/PrintStatus";
 import { CrashLogBanner } from "./components/CrashLogBanner";
 import { ErrorFallback } from "./components/ErrorFallback";
 import { installCloseGuard } from "./lib/closeGuard";
@@ -52,6 +53,7 @@ export default function App() {
       <OpenWithHandler />
       <CommandPalette />
       <CrashLogBanner />
+      <PrintStatus />
       <UpdateBanner
         state={updaterState}
         onInstall={installUpdate}

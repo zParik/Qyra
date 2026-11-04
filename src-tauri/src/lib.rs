@@ -138,7 +138,8 @@ pub fn run() {
     let builder = builder.manage(render_service);
 
     // `qyra://localhost/thumb/<page>?path=..&w=..` (http://qyra.localhost on
-    // Windows) → PNG thumbnail. Rendering runs off the webview's thread.
+    // Windows) → PNG thumbnail; `/print/<page>?path=..` → PNG page for
+    // printing. Rendering runs off the webview's thread.
     let builder = builder.register_asynchronous_uri_scheme_protocol("qyra", |ctx, request, responder| {
         let app = ctx.app_handle().clone();
         let pq = request
@@ -156,12 +157,16 @@ pub fn run() {
                     .body(body)
                     .unwrap()
             };
-            let Some((path, page, width)) = render::thumbs::parse_thumb_uri(&pq) else {
-                return responder.respond(reply(400, "text/plain", b"bad thumbnail url".to_vec()));
-            };
             let service = app.state::<render::service::RenderService>();
-            let cache = app.state::<render::thumbs::ThumbCache>();
-            match render::thumbs::thumb_png(&service, &cache, &path, page, width) {
+            let png = if let Some((path, page)) = render::thumbs::parse_print_uri(&pq) {
+                render::thumbs::print_png(&service, &path, page)
+            } else if let Some((path, page, width)) = render::thumbs::parse_thumb_uri(&pq) {
+                let cache = app.state::<render::thumbs::ThumbCache>();
+                render::thumbs::thumb_png(&service, &cache, &path, page, width)
+            } else {
+                return responder.respond(reply(400, "text/plain", b"bad page image url".to_vec()));
+            };
+            match png {
                 Ok(png) => responder.respond(reply(200, "image/png", png)),
                 Err(e) => responder.respond(reply(500, "text/plain", e.to_string().into_bytes())),
             }
@@ -214,6 +219,7 @@ pub fn run() {
             files::open_file,
             files::show_in_folder,
             files::write_bytes,
+            print::print_pdf,
             annotate::bake_annotations,
             comments::load_comments,
             comments::save_comments,
