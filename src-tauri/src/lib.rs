@@ -270,10 +270,13 @@ mod tests {
 
     #[test]
     fn file_arg_skips_flags_and_resolves_relative_paths() {
+        // Expected paths are built with the platform's own separator.
+        let cwd = Path::new("/home/u");
+        let joined = |p: &str| cwd.join(p).to_string_lossy().into_owned();
         let args = ["qyra", "--flag", "doc.pdf"].map(OsString::from);
-        assert_eq!(file_arg(args, Path::new("/home/u")).as_deref(), Some("/home/u/doc.pdf"));
+        assert_eq!(file_arg(args, cwd), Some(joined("doc.pdf")));
         let args = ["qyra", "/abs/doc.pdf"].map(OsString::from);
-        assert_eq!(file_arg(args, Path::new("/home/u")).as_deref(), Some("/abs/doc.pdf"));
+        assert_eq!(file_arg(args, cwd), Some(joined("/abs/doc.pdf")));
         assert_eq!(file_arg([OsString::from("qyra")], Path::new("/")), None);
     }
 
