@@ -44,6 +44,12 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "category": "Productivity",
+    "shortDescription": "Free, offline PDF app for Linux and Windows",
+    "linux": {
+      "deb": { "desktopTemplate": "qyra.desktop" },
+      "rpm": { "desktopTemplate": "qyra.desktop" }
+    },
     "fileAssociations": [
       {
         "ext": ["pdf"],

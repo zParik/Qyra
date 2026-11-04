@@ -2,7 +2,7 @@
 name = "qyra"
 version = "0.1.0"
 description = "The free, offline, open-source PDF Swiss Army Knife"
-authors = ["you"]
+authors = ["zParik"]
 edition = "2021"
 
 [lib]
