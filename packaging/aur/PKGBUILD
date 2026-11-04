@@ -15,8 +15,8 @@ conflicts=('qyra')
 options=('!strip' '!debug')
 source=("https://github.com/zParik/Qyra/releases/download/v${pkgver}/Qyra_${pkgver}_amd64.deb"
         "LICENSE-${pkgver}::https://raw.githubusercontent.com/zParik/Qyra/v${pkgver}/LICENSE")
-sha256sums=('SKIP'
-            'SKIP')
+sha256sums=('4724824d1aadb909d2f931797ede83f121950de49b144497fb8d697ae0491ad8'
+            '605e9047a563c5c8396ffb18232aa4304ec56586aee537c45064c6fb425e44ad')
 
 package() {
   bsdtar -xf data.tar.* -C "$pkgdir"
