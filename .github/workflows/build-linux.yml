@@ -113,11 +113,31 @@ jobs:
               { cat /tmp/wayland_inject.txt; cat squashfs-root/AppRun; } > squashfs-root/AppRun.tmp
             fi
             mv squashfs-root/AppRun.tmp squashfs-root/AppRun
+            chmod 755 squashfs-root/AppRun
           fi
+          # linuxdeploy leaves .DirIcon as a symlink to the runner's build
+          # path, and some directories at mode 0700. Current appimagetool
+          # refuses to pack an AppDir that other users cannot read.
+          if [ -L squashfs-root/.DirIcon ]; then
+            rm squashfs-root/.DirIcon
+            cp squashfs-root/Qyra.png squashfs-root/.DirIcon
+          fi
+          chmod -R a+rX squashfs-root
           wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool
           chmod +x appimagetool
           ARCH=x86_64 ./appimagetool --appimage-extract-and-run squashfs-root "$APPIMAGE"
           rm -rf squashfs-root appimagetool
+
+      # tauri-action uploaded the AppImage before it was patched; replace it
+      # so the release ships the patched one, not only the Actions artifact.
+      - name: Replace the release AppImage with the patched one
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          APPIMAGE=$(find src-tauri/target/release/bundle/appimage -name "*.AppImage" | head -1)
+          [ -z "$APPIMAGE" ] && exit 0
+          gh release upload "${{ github.ref_name }}" "$APPIMAGE" --clobber
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
