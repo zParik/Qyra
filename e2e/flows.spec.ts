@@ -1,4 +1,5 @@
 import { test, expect } from "./support/fixtures";
+import { getInvokeCalls } from "./support/mockInvoke";
 
 // Real user flows against the built UI with the Tauri backend mocked.
 test.describe("home", () => {
@@ -105,6 +106,53 @@ test.describe("viewer", () => {
       document.dispatchEvent(new PointerEvent("pointerup", { button: 0 }));
     });
     await expect(page.getByTitle("Highlight")).toBeVisible();
+  });
+});
+
+test.describe("form filling", () => {
+  const formMocks = {
+    get_setting: "1",
+    get_tab_session: [[{ path: "/x/a.pdf", name: "a.pdf" }], 0],
+    doc_open: { pageCount: 1, pages: [{ w: 612, h: 792 }], version: "1" },
+    get_page_count: 1,
+    get_file_size: 1000,
+    get_text_page: [],
+    load_comments: "[]",
+    get_form_fields: [{ name: "buyer.name", field_type: "Tx", value: "", rect: [0.1, 0.1, 0.5, 0.14], page: 1, flags: 0, options: [], on_state: null }],
+    get_page_links: [],
+    get_outline: [],
+    get_tab_ui_state: [1, 1],
+    render_tile: null,
+    fill_form: "/tmp/qyra/a-filled.pdf",
+    copy_file: null,
+  };
+
+  test("typed text stays dark on the white page in dark theme", async ({ page, mockTauri }) => {
+    await mockTauri(formMocks);
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.goto("/view");
+    await page.locator("button.vside-row", { hasText: "Fill forms" }).first().click();
+    const input = page.locator('input[type="text"]').first();
+    await input.fill("Ananya");
+    await expect(input).toHaveCSS("color", "rgb(17, 17, 17)");
+  });
+
+  test("Ctrl+S with the caret in a field saves the typed value", async ({ page, mockTauri }) => {
+    await mockTauri(formMocks);
+    // The mock answers every setting with "1", so "confirm before overwriting" is on.
+    page.on("dialog", (d) => d.accept());
+    await page.goto("/view");
+    await page.locator("button.vside-row", { hasText: "Fill forms" }).first().click();
+    const input = page.locator('input[type="text"]').first();
+    await input.click();
+    await page.keyboard.type("Ananya");
+    await page.keyboard.press("Control+s");
+    await expect
+      .poll(async () => (await getInvokeCalls(page)).find((c) => c.cmd === "fill_form")?.args)
+      .toMatchObject({ path: "/x/a.pdf", fields: [{ name: "buyer.name", value: "Ananya" }] });
+    await expect
+      .poll(async () => (await getInvokeCalls(page)).some((c) => c.cmd === "copy_file"))
+      .toBe(true);
   });
 });
 

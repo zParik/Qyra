@@ -574,6 +574,13 @@
   .row:focus-visible { box-shadow: inset 0 0 0 2px var(--rose); }
 
   /* ── Viewer-context classes (kept for the panels; now on the shared tokens) ── */
+  /* Form fields over the page: a faint outline until hovered or focused, so
+     the form's own design shows; white while filled, so the page's rendered
+     value under it never shows twice. Text is page ink (set inline). */
+  .form-field { background: transparent; border: 1px dashed var(--rose-line); transition: border-color var(--dur-1), box-shadow var(--dur-1); }
+  .form-field:hover { border-style: solid; border-color: var(--rose); }
+  .form-field[data-filled] { background: #fff; }
+  .form-field:focus { background: #fff; border: 1px solid var(--rose); box-shadow: 0 0 0 3px var(--rose-soft); }
   .v-input {
     display: block; width: 100%; height: var(--control);
     padding: 0 var(--space-3);

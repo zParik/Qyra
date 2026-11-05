@@ -10,10 +10,14 @@ interface Props {
   filledFields?: Record<string, string>;
 }
 
+// The page is always white paper, even in the dark theme, so the fields use
+// page ink instead of inheriting the theme's text colour (near-white in dark).
+const PAGE_INK = "#111";
+
 const baseInputStyle: React.CSSProperties = {
   position: "absolute",
-  background: "rgba(255, 235, 59, 0.15)",
-  border: "1px solid rgba(255, 193, 7, 0.4)",
+  color: PAGE_INK,
+  caretColor: PAGE_INK,
   borderRadius: 2,
   padding: "0 2px",
   fontSize: "inherit",
@@ -101,6 +105,8 @@ export function FormLayer({
             return (
               <textarea
                 key={key}
+                className="form-field"
+                data-filled={value !== "" || undefined}
                 value={value}
                 style={rectStyle}
                 onChange={(e) => handleChange(field.name, e.target.value)}
@@ -111,6 +117,8 @@ export function FormLayer({
             <input
               key={key}
               type="text"
+              className="form-field"
+              data-filled={value !== "" || undefined}
               value={value}
               style={rectStyle}
               onChange={(e) => handleChange(field.name, e.target.value)}
@@ -126,6 +134,7 @@ export function FormLayer({
             <input
               key={key}
               type={isRadio ? "radio" : "checkbox"}
+              className="form-field"
               checked={value !== "" && value === onState}
               style={{
                 ...rectStyle,
@@ -143,6 +152,8 @@ export function FormLayer({
           return (
             <select
               key={key}
+              className="form-field"
+              data-filled={value !== "" || undefined}
               value={value}
               style={rectStyle}
               onChange={(e) => handleChange(field.name, e.target.value)}

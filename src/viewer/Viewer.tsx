@@ -691,8 +691,12 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
     function onKey(e: KeyboardEvent) {
       if (!isActive) return; // hidden tabs ignore the keyboard
       const target = e.target as HTMLElement;
-      // Typing, picking a form choice field or editing text keeps its keys.
-      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable) return;
+      // Typing, picking a form choice field or editing text keeps its keys,
+      // except Save, Save As and Print: filling a form leaves the caret in a
+      // field, and Ctrl+S there used to do nothing at all.
+      const inField = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable;
+      const fileShortcut = (e.ctrlKey || e.metaKey) && !e.altKey && (e.key === "s" || e.key === "S" || e.key === "p");
+      if (inField && !fileShortcut) return;
 
       if (e.key === "Escape" && readingMode) {
         e.preventDefault();
