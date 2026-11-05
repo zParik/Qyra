@@ -244,6 +244,9 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
 
   // True while comment mode is active — opens the comments tab in the sidebar
   const isCommentMode = activeTool === "comment";
+  // Form fields work all the time, as in any PDF viewer, and step aside only
+  // for the tools that take clicks on the page themselves.
+  const formsLive = !(["draw", "comment", "signature", "redact", "remove"] as (string | null)[]).includes(activeTool);
 
   // Text selection popup + editor
   const { selectionPopup, setSelectionPopup, selectionEditor, setSelectionEditor } = useTextSelection();
@@ -279,8 +282,6 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
     } else if (tool === "signature") {
       setShowSignaturePanel(true);
       setActiveAnnot("Sign");
-    } else if (tool === "forms") {
-      setActiveAnnot(null);
     } else {
       setActiveAnnot(null);
     }
@@ -691,8 +692,12 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
     function onKey(e: KeyboardEvent) {
       if (!isActive) return; // hidden tabs ignore the keyboard
       const target = e.target as HTMLElement;
-      // Typing, picking a form choice field or editing text keeps its keys.
-      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable) return;
+      // Typing, picking a form choice field or editing text keeps its keys,
+      // except Save, Save As and Print: filling a form leaves the caret in a
+      // field, and Ctrl+S there used to do nothing at all.
+      const inField = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable;
+      const fileShortcut = (e.ctrlKey || e.metaKey) && !e.altKey && (e.key === "s" || e.key === "S" || e.key === "p");
+      if (inField && !fileShortcut) return;
 
       if (e.key === "Escape" && readingMode) {
         e.preventDefault();
@@ -1834,7 +1839,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
                         <FormLayer
                           pdfPath={viewerFile.path}
                           pageNum={page}
-                          isEnabled={activeTool === "forms"}
+                          isEnabled={formsLive}
                           onFieldChanged={setFieldValue}
                           filledFields={fieldValues}
                         />
