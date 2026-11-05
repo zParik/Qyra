@@ -8,6 +8,40 @@ each release entry is injected into its GitHub release body on tag.
 _Entries accumulate here. At release time, rename this heading to
 `## [<version>] — <YYYY-MM-DD> · <tagline>`._
 
+## [2.1.0] — 2026-11-05 · Forms That Just Work
+
+Form fields are live as soon as a PDF opens, and what you type is visible
+and saves.
+
+---
+
+### Forms
+
+- **Fields work without a tool.** Click straight into a form field and type;
+  existing values show right away. Fields step aside only while drawing,
+  commenting, signing, redacting or removing pages. The Fill forms tool is
+  gone.
+- **Typed text is visible in the dark theme.** Fields used the theme's
+  near-white text colour on the white page, so text and the caret were
+  invisible. They now use page ink.
+- **Ctrl+S saves from inside a field.** Shortcuts were ignored while the
+  caret was in a field, so saving after typing did nothing. Save, Save As
+  and Print now work there.
+- Fields show a faint outline until you hover or click them, instead of a
+  yellow tint over the whole form.
+- A placed signature no longer blocks clicks on the form fields of its page.
+
+### Linux install script
+
+- **Running it again updates Qyra the way it is installed:** the .deb or .rpm
+  package through your package manager, the Arch `qyra-bin` package from the
+  published PKGBUILD, or the per-user AppImage. It says so when you already
+  have the latest version. New `--appimage` and `--force` options.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zParik/Qyra/main/scripts/install.sh | bash
+```
+
 ## [2.0.0] — 2026-11-04 · The Revamp
 
 Most of Qyra was rewritten between October and November 2026. Pages are
