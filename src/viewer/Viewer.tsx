@@ -282,8 +282,6 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
     } else if (tool === "signature") {
       setShowSignaturePanel(true);
       setActiveAnnot("Sign");
-    } else if (tool === "forms") {
-      setActiveAnnot(null);
     } else {
       setActiveAnnot(null);
     }

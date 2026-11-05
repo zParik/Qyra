@@ -144,7 +144,6 @@ test.describe("form filling", () => {
     await mockTauri(formMocks);
     await page.emulateMedia({ colorScheme: "dark" });
     await page.goto("/view");
-    await page.locator("button.vside-row", { hasText: "Fill forms" }).first().click();
     const input = page.locator('input[type="text"]').first();
     await input.fill("Ananya");
     await expect(input).toHaveCSS("color", "rgb(17, 17, 17)");
@@ -155,7 +154,6 @@ test.describe("form filling", () => {
     // The mock answers every setting with "1", so "confirm before overwriting" is on.
     page.on("dialog", (d) => d.accept());
     await page.goto("/view");
-    await page.locator("button.vside-row", { hasText: "Fill forms" }).first().click();
     const input = page.locator('input[type="text"]').first();
     await input.click();
     await page.keyboard.type("Ananya");

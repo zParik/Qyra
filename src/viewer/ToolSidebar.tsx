@@ -48,7 +48,7 @@ export type ViewerTool =
   | "rotate" | "remove" | "reorder" | "split"
   | "compress" | "page-numbers" | "protect" | "unlock"
   | "metadata" | "export-images" | "draw" | "comment" | "watermark"
-  | "forms" | "signature" | "crop" | "flatten" | "export-text" | "redact" | "stamps" | "export-annotations" | "compare" | "anonymize" | "form-data" | "bates" | "links" | "header-footer";
+  | "signature" | "crop" | "flatten" | "export-text" | "redact" | "stamps" | "export-annotations" | "compare" | "anonymize" | "form-data" | "bates" | "links" | "header-footer";
 
 interface ToolSidebarProps {
   file: LoadedFile;
@@ -89,7 +89,6 @@ const GROUPS: { family: Family; tools: ToolDef[] }[] = [
     { id: "signature", label: "Sign", icon: <IconPencil className={ICON_CLS} /> },
   ]},
   { family: "forms", tools: [
-    { id: "forms",     label: "Fill forms",       icon: <IconForms className={ICON_CLS} /> },
     { id: "form-data", label: "Form data (XFDF)", icon: <IconForms className={ICON_CLS} /> },
   ]},
   { family: "pages", tools: [
@@ -186,7 +185,7 @@ function ToolSidebarImpl({ file, drawKey, onApplied, activeTool, onToolChange, s
     ),
     "export-annotations": <ExportAnnotationsPanel file={file} />,
     compare: <ComparePanel file={file} />,
-    // comment, forms, signature have no sidebar panel — handled directly in Viewer
+    // comment and signature have no sidebar panel — handled directly in Viewer
   };
 
   const activeDef = activeTool ? ALL_TOOLS.find((t) => t.id === activeTool) : undefined;
