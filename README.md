@@ -107,13 +107,17 @@ Get a build from [Releases](https://github.com/zParik/Qyra/releases), or a night
 
 ### Linux install script
 
-This puts the latest AppImage in `~/.local/bin/qyra`, checks its sha256 against the release, and adds a menu entry that opens PDFs. Run it again to update.
+One command installs Qyra, and the same command updates it. It checks every download's sha256 against the release.
+
+- If Qyra came from the `.deb`, the `.rpm` or the Arch `qyra-bin` package, it updates that package in place (it asks for your password, as the package manager does).
+- Otherwise it puts the AppImage in `~/.local/bin/qyra` for your user, with a menu entry that opens PDFs, and replaces it on the next run.
+- If you already have the latest version, it says so and changes nothing.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zParik/Qyra/main/scripts/install.sh | bash
 ```
 
-Add `-s -- --default` after `bash` to also make Qyra your default PDF app, or `-s -- --uninstall` to remove it. AppImages need FUSE 2 (`fuse2` on Arch); the script tells you if it's missing.
+Add `-s -- --default` after `bash` to also make Qyra your default PDF app, `-s -- --appimage` to use the AppImage even when a package is installed, `-s -- --force` to reinstall the same version, or `-s -- --uninstall` to remove the AppImage install. AppImages need FUSE 2 (`fuse2` on Arch); the script tells you if it's missing.
 
 ### Arch Linux
 
