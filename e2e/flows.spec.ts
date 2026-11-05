@@ -127,6 +127,19 @@ test.describe("form filling", () => {
     copy_file: null,
   };
 
+  test("fields are live without picking a tool, and Ctrl+S saves them", async ({ page, mockTauri }) => {
+    await mockTauri({ ...formMocks, get_form_fields: [{ ...formMocks.get_form_fields[0], value: "Harish" }] });
+    page.on("dialog", (d) => d.accept());
+    await page.goto("/view");
+    const input = page.locator('input[type="text"]').first();
+    await expect(input).toHaveValue("Harish");
+    await input.fill("Ananya");
+    await page.keyboard.press("Control+s");
+    await expect
+      .poll(async () => (await getInvokeCalls(page)).find((c) => c.cmd === "fill_form")?.args)
+      .toMatchObject({ fields: [{ name: "buyer.name", value: "Ananya" }] });
+  });
+
   test("typed text stays dark on the white page in dark theme", async ({ page, mockTauri }) => {
     await mockTauri(formMocks);
     await page.emulateMedia({ colorScheme: "dark" });

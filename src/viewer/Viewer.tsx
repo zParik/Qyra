@@ -244,6 +244,9 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
 
   // True while comment mode is active — opens the comments tab in the sidebar
   const isCommentMode = activeTool === "comment";
+  // Form fields work all the time, as in any PDF viewer, and step aside only
+  // for the tools that take clicks on the page themselves.
+  const formsLive = !(["draw", "comment", "signature", "redact", "remove"] as (string | null)[]).includes(activeTool);
 
   // Text selection popup + editor
   const { selectionPopup, setSelectionPopup, selectionEditor, setSelectionEditor } = useTextSelection();
@@ -1838,7 +1841,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
                         <FormLayer
                           pdfPath={viewerFile.path}
                           pageNum={page}
-                          isEnabled={activeTool === "forms"}
+                          isEnabled={formsLive}
                           onFieldChanged={setFieldValue}
                           filledFields={fieldValues}
                         />
