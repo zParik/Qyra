@@ -176,7 +176,9 @@ export function SignatureLayer({
             : dragState
             ? "nwse-resize"
             : "default",
-        pointerEvents: isEnabled || localSigs.length > 0 ? "auto" : "none",
+        // Only the signatures themselves take clicks outside signature mode;
+        // a page-sized layer here used to swallow clicks meant for form fields.
+        pointerEvents: isEnabled ? "auto" : "none",
       }}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
@@ -198,6 +200,7 @@ export function SignatureLayer({
               top: `${top}%`,
               width: `${w}%`,
               height: `${h}%`,
+              pointerEvents: "auto",
             }}
             onMouseEnter={() => setHoveredId(sig.id)}
             onMouseLeave={() => setHoveredId(null)}
