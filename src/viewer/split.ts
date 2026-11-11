@@ -39,3 +39,35 @@ export function toggleSplit() {
   const other = after.find((t) => t.type !== "home" && t.path !== active?.path);
   s.openSplit((other ?? (active?.type !== "home" && active ? active : docs[0]!)).path);
 }
+
+/**
+ * A tab dragged onto one side of the page area. Right: it shows in the split
+ * pane (the active tab, dragged right, hands the left to another document).
+ * Left: it becomes the active tab, and the one it displaced moves right.
+ * The dragged tab's pane takes the keyboard.
+ */
+export function dropTabOnSide(path: string, side: "left" | "right") {
+  const s = useAppStore.getState();
+  const index = s.openTabs.findIndex((t) => t.path === path);
+  const tab = s.openTabs[index];
+  if (!tab || tab.type === "home") return;
+  const current = s.openTabs[s.activeTabIndex];
+  const activeDoc = current && current.type !== "home" ? current.path : null;
+  const indexOf = (p: string) => s.openTabs.findIndex((t) => t.path === p);
+
+  if (side === "right") {
+    if (path === activeDoc) {
+      const others = s.openTabs.filter((t) => t.type !== "home" && t.path !== path);
+      const left = s.splitTab && s.splitTab !== path ? s.splitTab : others[0]?.path;
+      if (left) s.activateTab(indexOf(left));
+    }
+    s.openSplit(path);
+    return;
+  }
+
+  s.activateTab(index);
+  const right = s.splitTab && s.splitTab !== path ? s.splitTab : activeDoc && activeDoc !== path ? activeDoc : null;
+  if (right) s.openSplit(right);
+  else if (s.splitTab === path) s.closeSplit();
+  useAppStore.getState().setFocusedPane("main");
+}
