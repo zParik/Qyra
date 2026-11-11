@@ -64,3 +64,41 @@ jobs:
           Write-Host $out
           Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
           if ($out -notmatch 'Qyra is running') { throw 'installer did not refuse while Qyra runs' }
+
+  update-and-msi:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: powershell
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Updates an older setup.exe install to the latest
+        run: |
+          $old = (gh release list --repo zParik/Qyra --exclude-drafts --json tagName -q '.[1].tagName')
+          gh release download $old --repo zParik/Qyra --pattern '*_x64-setup.exe' --dir $env:TEMP\old
+          $setup = Get-ChildItem "$env:TEMP\old\*_x64-setup.exe" | Select-Object -First 1
+          Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait
+          $out = & ./scripts/install.ps1 6>&1 | Out-String
+          Write-Host $out
+          $latest = (gh release view --repo zParik/Qyra --json tagName -q .tagName) -replace '^v', ''
+          if ($out -notmatch "Found Qyra $($old -replace '^v', '')") { throw "did not see the $old install" }
+          if ($out -notmatch "Qyra $latest is installed") { throw 'did not update to the latest' }
+
+      - name: Removes the per-user install
+        run: |
+          $entry = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' | Where-Object { $_.DisplayName -eq 'Qyra' }
+          $uninstall = ($entry.UninstallString -replace '"', '')
+          Start-Process -FilePath $uninstall -ArgumentList '/S' -Wait
+          Start-Sleep -Seconds 3
+
+      - name: -Msi installs per machine, and a rerun updates through the .msi
+        run: |
+          $out = & ([scriptblock]::Create((Get-Content -Raw scripts/install.ps1))) -Msi 6>&1 | Out-String
+          Write-Host $out
+          if ($out -match 'error:' -or $out -notmatch 'is installed') { throw 'msi install failed' }
+          $out = & ./scripts/install.ps1 6>&1 | Out-String
+          Write-Host $out
+          if ($out -notmatch '\(msi install\)' -or $out -notmatch 'up to date') { throw 'rerun did not find the msi install' }
