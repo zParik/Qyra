@@ -50,7 +50,7 @@ jobs:
         shell: bash
         run: |
           VERSION="${{ github.ref_name }}"
-          if ! NOTES="$(bash ./scripts/changelog-section.sh "$VERSION")"; then
+          if ! NOTES="$(bash ./scripts/release-notes.sh "$VERSION")"; then
             echo "::error::no CHANGELOG.md entry for $VERSION"
             exit 1
           fi
