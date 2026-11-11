@@ -144,3 +144,46 @@ describe("tab actions", () => {
     expect(get().tabFiles["new.pdf"]).toBeDefined();
   });
 });
+
+describe("split view", () => {
+  it("opens a tab in the split pane and focuses it", () => {
+    get().openTab(tab("a.pdf"));
+    get().openTab(tab("b.pdf"));
+    get().openSplit("a.pdf");
+    expect(get().splitTab).toBe("a.pdf");
+    expect(get().focusedPane).toBe("split");
+  });
+
+  it("closing the split returns focus to the main pane", () => {
+    get().openTab(tab("a.pdf"));
+    get().openSplit("a.pdf");
+    get().closeSplit();
+    expect(get().splitTab).toBeNull();
+    expect(get().focusedPane).toBe("main");
+  });
+
+  it("closing the tab shown in the split pane closes the split", () => {
+    get().openTab(tab("a.pdf"));
+    get().openTab(tab("b.pdf"));
+    get().openSplit("a.pdf");
+    get().closeTab(0);
+    expect(get().splitTab).toBeNull();
+    expect(get().focusedPane).toBe("main");
+  });
+
+  it("closing another tab keeps the split", () => {
+    get().openTab(tab("a.pdf"));
+    get().openTab(tab("b.pdf"));
+    get().openTab(tab("c.pdf"));
+    get().openSplit("a.pdf");
+    get().closeTab(2);
+    expect(get().splitTab).toBe("a.pdf");
+  });
+
+  it("replacing the split tab closes the split", () => {
+    get().openTab(tab("a.pdf"));
+    get().openSplit("a.pdf");
+    get().replaceTab(0, tab("z.pdf"));
+    expect(get().splitTab).toBeNull();
+  });
+});
