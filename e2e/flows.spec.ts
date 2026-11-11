@@ -192,3 +192,73 @@ test.describe("form filling", () => {
   });
 });
 
+
+test.describe("split view", () => {
+  const docs = (tabs: string[]) => ({
+    get_setting: "1",
+    get_tab_session: [tabs.map((t) => ({ path: `/x/${t}`, name: t })), 0],
+    doc_open: { pageCount: 1, pages: [{ w: 612, h: 792 }], version: "1" },
+    get_page_count: 1,
+    get_file_size: 1000,
+    get_text_page: [],
+    load_comments: "[]",
+    get_form_fields: [],
+    get_page_links: [],
+    get_outline: [],
+    get_tab_ui_state: [1, 1],
+    render_tile: null,
+  });
+  const visiblePanes = (page: import("@playwright/test").Page) =>
+    page.locator(".split-pane").filter({ has: page.locator(".toolbar") }).filter({ visible: true });
+
+  test("Ctrl+\\ shows the next document beside the active one", async ({ page, mockTauri }) => {
+    await mockTauri(docs(["a.pdf", "b.pdf"]));
+    await page.goto("/view");
+    await expect(page.locator(".toolbar-name", { hasText: "a.pdf" }).first()).toBeVisible();
+    await page.keyboard.press("Control+Backslash");
+    await expect(visiblePanes(page)).toHaveCount(2);
+    await expect(page.getByRole("separator", { name: /resize split view/i })).toBeVisible();
+    await expect(page.locator('.tab[data-split="true"]')).toContainText("b.pdf");
+    // Both panes edit: neither is view only.
+    await expect(page.getByText("View only")).toHaveCount(0);
+  });
+
+  test("clicking a pane gives it the keyboard", async ({ page, mockTauri }) => {
+    await mockTauri(docs(["a.pdf", "b.pdf"]));
+    await page.goto("/view");
+    await expect(page.locator(".toolbar-name", { hasText: "a.pdf" }).first()).toBeVisible();
+    await page.keyboard.press("Control+Backslash");
+    const panes = visiblePanes(page);
+    await expect(panes).toHaveCount(2);
+    const left = page.locator(".split-pane", { has: page.locator(".toolbar-name", { hasText: "a.pdf" }) });
+    const right = page.locator(".split-pane", { has: page.locator(".toolbar-name", { hasText: "b.pdf" }) });
+    await expect(right).toHaveAttribute("data-focused", "");
+    await left.locator(".toolbar-name").click();
+    await expect(left).toHaveAttribute("data-focused", "");
+    await expect(right).not.toHaveAttribute("data-focused", "");
+  });
+
+  test("the same document twice opens view only on the right", async ({ page, mockTauri }) => {
+    await mockTauri(docs(["a.pdf"]));
+    await page.goto("/view");
+    await page.getByRole("button", { name: "Split view" }).click();
+    await expect(visiblePanes(page)).toHaveCount(2);
+    const right = page.locator(".split-pane").filter({ hasText: "View only" });
+    await expect(right).toBeVisible();
+    await expect(right.getByRole("group", { name: "Markup" })).toHaveCount(0);
+    await expect(right.getByTitle("Show or hide the tools")).toHaveCount(0);
+    await right.getByRole("button", { name: "Close split view" }).click();
+    await expect(visiblePanes(page)).toHaveCount(1);
+    await expect(page.getByText("View only")).toHaveCount(0);
+  });
+
+  test("the split button lists open documents", async ({ page, mockTauri }) => {
+    await mockTauri(docs(["a.pdf", "b.pdf"]));
+    await page.goto("/view");
+    await page.locator(".split-pane").filter({ visible: true }).getByRole("button", { name: "Split view" }).click();
+    const menu = page.getByRole("menu", { name: /show on the right/i });
+    await expect(menu.getByRole("menuitem")).toHaveCount(2);
+    await menu.getByRole("menuitem", { name: /b\.pdf/ }).click();
+    await expect(page.locator('.tab[data-split="true"]')).toContainText("b.pdf");
+  });
+});
