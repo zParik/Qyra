@@ -20,5 +20,11 @@ AppImage. Every download's sha256 is checked against this release.
 curl -fsSL https://raw.githubusercontent.com/zParik/Qyra/main/scripts/install.sh | bash
 ```
 
-**Windows:** run the `.exe` or `.msi` below; it upgrades an existing install.
+**Windows:** the same in PowerShell, for an `.exe` or `.msi` install:
+
+```powershell
+irm https://raw.githubusercontent.com/zParik/Qyra/main/scripts/install.ps1 | iex
+```
+
+Or run the `.exe` or `.msi` below.
 NOTES
