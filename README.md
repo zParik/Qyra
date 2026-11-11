@@ -119,6 +119,20 @@ curl -fsSL https://raw.githubusercontent.com/zParik/Qyra/main/scripts/install.sh
 
 Add `-s -- --default` after `bash` to also make Qyra your default PDF app, `-s -- --appimage` to use the AppImage even when a package is installed, `-s -- --force` to reinstall the same version, or `-s -- --uninstall` to remove the AppImage install. AppImages need FUSE 2 (`fuse2` on Arch); the script tells you if it's missing.
 
+### Windows install script
+
+One command in PowerShell installs Qyra, and the same command updates it. It checks the download's sha256 against the release.
+
+- If Qyra came from the `.msi`, it updates it with the latest `.msi` (Windows asks for admin rights).
+- Otherwise it runs the setup `.exe` silently for your user, with no admin prompt.
+- If you already have the latest version, it says so and changes nothing. Close Qyra first; it won't replace a running copy.
+
+```powershell
+irm https://raw.githubusercontent.com/zParik/Qyra/main/scripts/install.ps1 | iex
+```
+
+For options, run it as a script block: `& ([scriptblock]::Create((irm https://raw.githubusercontent.com/zParik/Qyra/main/scripts/install.ps1))) -Force` reinstalls the same version, and `-Msi` makes a new install per machine from the `.msi`.
+
 ### Arch Linux
 
 `packaging/aur/PKGBUILD` builds a `qyra-bin` package from the release `.deb`:

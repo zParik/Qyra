@@ -75,7 +75,7 @@ if [ "$uninstall" = 1 ]; then
   exit 0
 fi
 
-[ "$(uname -s)" = "Linux" ] || die "this installer is for Linux. Windows installers are on https://github.com/$REPO/releases/latest"
+[ "$(uname -s)" = "Linux" ] || die "this installer is for Linux. On Windows, run in PowerShell: irm https://raw.githubusercontent.com/$REPO/main/scripts/install.ps1 | iex"
 [ "$(uname -m)" = "x86_64" ] || die "Qyra is built for x86_64 only; this machine is $(uname -m)."
 command -v curl >/dev/null || die "curl is required."
 
