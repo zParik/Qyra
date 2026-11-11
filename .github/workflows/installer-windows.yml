@@ -1,0 +1,66 @@
+name: 'Windows installer'
+
+# Runs scripts/install.ps1 for real on a clean Windows runner: a fresh
+# install, a second run that finds it up to date, and a forced reinstall,
+# in both Windows PowerShell 5.1 (what most people have) and PowerShell 7.
+on:
+  push:
+    paths:
+      - 'scripts/install.ps1'
+      - '.github/workflows/installer-windows.yml'
+  workflow_dispatch:
+
+jobs:
+  install:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fresh install, piped into iex as the README says
+        run: |
+          $out = Get-Content -Raw scripts/install.ps1 | Invoke-Expression 6>&1 | Out-String
+          Write-Host $out
+          if ($out -match 'error:') { throw 'installer reported an error' }
+          if ($out -notmatch 'is installed') { throw 'installer did not report success' }
+
+      - name: Installed at the latest version, per user
+        run: |
+          $latest = (gh release view --repo zParik/Qyra --json tagName -q .tagName) -replace '^v', ''
+          $entry = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -eq 'Qyra' }
+          if (-not $entry) { throw 'Qyra is not in Add/Remove Programs' }
+          Write-Host "installed $($entry.DisplayVersion), latest $latest"
+          if ($entry.DisplayVersion -ne $latest) { throw 'wrong version installed' }
+
+      - name: Second run changes nothing
+        run: |
+          $out = & ./scripts/install.ps1 6>&1 | Out-String
+          Write-Host $out
+          if ($out -notmatch 'already installed and up to date') { throw 'second run did not see the install' }
+
+      - name: Forced reinstall through a script block
+        run: |
+          $out = & ([scriptblock]::Create((Get-Content -Raw scripts/install.ps1))) -Force 6>&1 | Out-String
+          Write-Host $out
+          if ($out -match 'error:') { throw 'installer reported an error' }
+          if ($out -notmatch 'is installed') { throw 'forced reinstall did not report success' }
+
+      - name: A running Qyra is left alone
+        run: |
+          $exe = Get-ChildItem -Path "$env:LOCALAPPDATA\Qyra", "$env:LOCALAPPDATA\Programs\Qyra" -Filter 'qyra.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { Write-Host 'qyra.exe not found; skipping'; exit 0 }
+          $p = Start-Process -FilePath $exe.FullName -PassThru
+          Start-Sleep -Seconds 3
+          $out = & ./scripts/install.ps1 -Force 6>&1 | Out-String
+          Write-Host $out
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          if ($out -notmatch 'Qyra is running') { throw 'installer did not refuse while Qyra runs' }
