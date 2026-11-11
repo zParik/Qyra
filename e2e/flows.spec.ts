@@ -252,6 +252,52 @@ test.describe("split view", () => {
     await expect(page.getByText("View only")).toHaveCount(0);
   });
 
+  test("dragging a tab onto the right half of the page splits it", async ({ page, mockTauri }) => {
+    await mockTauri(docs(["a.pdf", "b.pdf"]));
+    await page.goto("/view");
+    await expect(page.locator(".toolbar-name", { hasText: "a.pdf" }).first()).toBeVisible();
+    const box = (await page.locator(".tab", { hasText: "b.pdf" }).boundingBox())!;
+    const vp = page.viewportSize()!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2, box.y + 40, { steps: 4 });
+    await page.mouse.move(vp.width * 0.8, vp.height * 0.5, { steps: 8 });
+    await expect(page.locator(".split-drop-zone[data-on]")).toContainText("Open on the right");
+    await page.mouse.up();
+    await expect(page.locator('.tab[data-split="true"]')).toContainText("b.pdf");
+    await expect(visiblePanes(page)).toHaveCount(2);
+    await expect(page.locator(".split-drop")).toHaveCount(0);
+  });
+
+  test("dragging a tab onto the left half puts it in front", async ({ page, mockTauri }) => {
+    await mockTauri(docs(["a.pdf", "b.pdf"]));
+    await page.goto("/view");
+    await expect(page.locator(".toolbar-name", { hasText: "a.pdf" }).first()).toBeVisible();
+    const box = (await page.locator(".tab", { hasText: "b.pdf" }).boundingBox())!;
+    const vp = page.viewportSize()!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2, box.y + 40, { steps: 4 });
+    await page.mouse.move(vp.width * 0.2, vp.height * 0.5, { steps: 8 });
+    await page.mouse.up();
+    await expect(page.locator('.tab[data-active="true"]')).toContainText("b.pdf");
+    await expect(page.locator('.tab[data-split="true"]')).toContainText("a.pdf");
+  });
+
+  test("dragging a tab along the bar still reorders", async ({ page, mockTauri }) => {
+    await mockTauri(docs(["a.pdf", "b.pdf"]));
+    await page.goto("/view");
+    await expect(page.locator(".toolbar-name", { hasText: "a.pdf" }).first()).toBeVisible();
+    const a = (await page.locator(".tab", { hasText: "a.pdf" }).boundingBox())!;
+    const b = (await page.locator(".tab", { hasText: "b.pdf" }).boundingBox())!;
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(a.x + 10, a.y + a.height / 2, { steps: 8 });
+    await page.mouse.up();
+    await expect(page.locator(".tab").first()).toContainText("b.pdf");
+    await expect(page.locator('.tab[data-split="true"]')).toHaveCount(0);
+  });
+
   test("the split button lists open documents", async ({ page, mockTauri }) => {
     await mockTauri(docs(["a.pdf", "b.pdf"]));
     await page.goto("/view");

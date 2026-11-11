@@ -8,6 +8,20 @@ each release entry is injected into its GitHub release body on tag.
 _Entries accumulate here. At release time, rename this heading to
 `## [<version>] — <YYYY-MM-DD> · <tagline>`._
 
+## [2.2.1] — 2026-11-11 · Drag to Split
+
+Pull a tab onto the page to open it beside the one you're reading.
+
+---
+
+### Split view
+
+- **Drag a tab onto the page to split it.** Pull a tab down past the tab
+  bar and the half it will open in lights up. Drop it on the right to show
+  it beside the current document, or on the left to bring it to the front
+  with the current one moved right. Dragging along the tab bar still
+  reorders tabs.
+
 ## [2.2.0] — 2026-11-11 · Side by Side
 
 Two documents on screen at once, and the app stops highlighting itself

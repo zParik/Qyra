@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   DndContext, PointerSensor, useSensor, useSensors,
-  closestCenter, DragEndEvent,
+  closestCenter, DragEndEvent, DragMoveEvent,
 } from "@dnd-kit/core";
 import {
   SortableContext, horizontalListSortingStrategy,
@@ -10,6 +10,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useAppStore } from "../store/useAppStore";
+import { dropTabOnSide } from "./split";
 import { thumbUrl } from "../render/renderClient";
 import { Wordmark } from "../components/Wordmark";
 
@@ -222,8 +223,43 @@ export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile, onActivateT
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
+  // A tab dragged down onto the page area splits there instead of reordering.
+  const barRef = useRef<HTMLDivElement>(null);
+  const [dropSide, setDropSide] = useState<"left" | "right" | null>(null);
+  const [dividerX, setDividerX] = useState(0);
+  // A move can arrive after the drop; it must not bring the overlay back.
+  const draggingRef = useRef(false);
+  function handleDragMove(event: DragMoveEvent) {
+    if (!draggingRef.current) return;
+    const start = event.activatorEvent as PointerEvent;
+    const tab = openTabs.find((t) => t.path === event.active.id);
+    const bar = barRef.current?.getBoundingClientRect();
+    if (!bar || !tab || tab.type === "home" || suspendActive || typeof start.clientX !== "number") {
+      setDropSide(null);
+      return;
+    }
+    const x = start.clientX + event.delta.x;
+    const y = start.clientY + event.delta.y;
+    if (y < bar.bottom + 24) {
+      setDropSide(null);
+      return;
+    }
+    const divider = document.querySelector(".split-divider")?.getBoundingClientRect();
+    const mid = divider && divider.width > 0 ? divider.left + divider.width / 2 : window.innerWidth / 2;
+    setDividerX(mid);
+    setDropSide(x < mid ? "left" : "right");
+  }
+
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
+    const side = dropSide;
+    draggingRef.current = false;
+    setDropSide(null);
+    if (side) {
+      dropTabOnSide(String(active.id), side);
+      onActivateTab?.();
+      return;
+    }
     if (!over || active.id === over.id) return;
     const from = openTabs.findIndex((t) => t.path === active.id);
     const to = openTabs.findIndex((t) => t.path === over.id);
@@ -232,6 +268,7 @@ export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile, onActivateT
 
   return (
     <div
+      ref={barRef}
       className="tabbar"
       onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }}
       onDrop={(e) => {
@@ -249,7 +286,14 @@ export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile, onActivateT
       <Wordmark />
 
       <div className="tabbar-tabs scroll-invisible" role="tablist" aria-label="Open documents">
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragStart={() => { draggingRef.current = true; }}
+          onDragMove={handleDragMove}
+          onDragEnd={handleDragEnd}
+          onDragCancel={() => { draggingRef.current = false; setDropSide(null); }}
+        >
           <SortableContext items={openTabs.map((t) => t.path)} strategy={horizontalListSortingStrategy}>
             {openTabs.map((tab, i) => (
               <TabTag
@@ -327,6 +371,17 @@ export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile, onActivateT
           </div>
         );
       })()}
+
+      {dropSide && (
+        <div className="split-drop" style={{ top: barRef.current?.getBoundingClientRect().bottom ?? 0 }} aria-hidden="true">
+          <div className="split-drop-zone" data-on={dropSide === "left" || undefined} style={{ left: 0, width: dividerX }}>
+            <span className="split-drop-label">Open on the left</span>
+          </div>
+          <div className="split-drop-zone" data-on={dropSide === "right" || undefined} style={{ left: dividerX, right: 0 }}>
+            <span className="split-drop-label">Open on the right</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
