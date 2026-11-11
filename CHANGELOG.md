@@ -8,6 +8,12 @@ each release entry is injected into its GitHub release body on tag.
 _Entries accumulate here. At release time, rename this heading to
 `## [<version>] — <YYYY-MM-DD> · <tagline>`._
 
+## [2.2.1] — 2026-11-11 · Drag to Split
+
+Pull a tab onto the page to open it beside the one you're reading.
+
+---
+
 ### Split view
 
 - **Drag a tab onto the page to split it.** Pull a tab down past the tab
