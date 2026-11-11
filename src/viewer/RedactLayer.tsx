@@ -198,7 +198,7 @@ export function RedactLayer({
         zIndex: 14,
         cursor: isEnabled && mode === "region" ? "crosshair" : "default",
         pointerEvents: containerPointerEvents,
-        userSelect: mode === "text" ? "auto" : "none",
+        userSelect: mode === "text" ? "text" : "none",
       }}
     >
       {pageRegions.map(({ r, idx }) => {

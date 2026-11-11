@@ -345,6 +345,14 @@
     color: var(--fg0);
     font-size: var(--fs-body);
     line-height: var(--lh-body);
+    /* App chrome is not a document: only page text, fields and opted-in text select. */
+    -webkit-user-select: none;
+            user-select: none;
+  }
+
+  input, textarea, [contenteditable="true"], .textLayer, .selectable {
+    -webkit-user-select: text;
+            user-select: text;
   }
 
   ::selection { background: oklch(0.86 0.06 265); color: var(--paper-10); }
