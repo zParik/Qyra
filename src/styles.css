@@ -685,9 +685,39 @@
      so the strip and tools toggles at the end never leave the screen. Quick
      markup is also in the tools sidebar, auto-save in Settings, and the page
      arrows on the keyboard. */
-  @media (max-width: 1180px) { .toolbar .toolbar-markup { display: none; } }
-  @media (max-width: 1024px) { .toolbar .toolbar-sep { display: none; } }
-  @media (max-width: 900px) { .toolbar .toolbar-autosave, .toolbar .toolbar-pagestep { display: none; } }
+  /* Measured on the viewer, not the window, so a split pane trims too. */
+  .viewer-root { container-type: inline-size; }
+  @container (max-width: 1180px) { .toolbar .toolbar-markup { display: none; } }
+  @container (max-width: 1024px) { .toolbar .toolbar-sep { display: none; } }
+  @container (max-width: 900px) { .toolbar .toolbar-autosave, .toolbar .toolbar-pagestep { display: none; } }
+  @container (max-width: 820px) {
+    .toolbar .toolbar-label, .toolbar .toolbar-saveas, .toolbar .toolbar-extra { display: none; }
+    .toolbar .toolbar-title { min-width: 48px; max-width: 180px; }
+  }
+  @container (max-width: 640px) { .toolbar .toolbar-group[aria-label="Zoom"] .btn-icon { display: none; } }
+  .toolbar-readonly { flex-shrink: 0; --chip: var(--fg2); }
+
+  /* Split view: two panes, a divider, and an accent edge on the focused one. */
+  .split-pane[data-focused]::after {
+    content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px;
+    background: var(--rose); pointer-events: none; z-index: 60;
+  }
+  .split-divider {
+    position: absolute; top: 0; bottom: 0; width: 6px; z-index: 70;
+    cursor: col-resize; background: var(--bar-line); touch-action: none;
+  }
+  .split-divider:hover, .split-resizing .split-divider { background: var(--rose); }
+  .split-resizing, .split-resizing * { cursor: col-resize !important; }
+  .split-resizing iframe, .split-resizing .split-pane { pointer-events: none; }
+  .split-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 600; min-width: 240px; max-width: 360px; }
+  .split-menu-head { padding: var(--space-1) var(--space-2); }
+  .split-menu-item {
+    width: 100%; height: auto; padding-block: var(--space-2); flex-direction: column; align-items: flex-start; gap: 0;
+    text-align: left; background: none; border: none;
+  }
+  .split-menu-item:hover, .split-menu-item:focus-visible { background: var(--bg3); }
+  .split-menu-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tab-split { width: 10px; height: 8px; border: 1.5px solid var(--rose); border-left-width: 5px; border-radius: 2px; flex-shrink: 0; }
   .toolbar-name { font-weight: 600; line-height: var(--lh-tight); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .toolbar-dirty { color: var(--rose); }
   .toolbar-group { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
