@@ -3,7 +3,7 @@
 # Repackages the release's .deb. Build and install from this folder with:
 #   makepkg -si
 pkgname=qyra-bin
-pkgver=2.2.0
+pkgver=2.2.1
 pkgrel=1
 pkgdesc="Free, offline PDF app: read, sign, fill in, merge, compress and OCR PDFs"
 arch=('x86_64')
@@ -15,7 +15,7 @@ conflicts=('qyra')
 options=('!strip' '!debug')
 source=("https://github.com/zParik/Qyra/releases/download/v${pkgver}/Qyra_${pkgver}_amd64.deb"
         "LICENSE-${pkgver}::https://raw.githubusercontent.com/zParik/Qyra/v${pkgver}/LICENSE")
-sha256sums=('b07b0decb75b1b06686aec45bc574231109aefd509382a5685c2cc4b087992a7'
+sha256sums=('1628f3781d85b089b4f0c08585f725d4a9f3f84eb7fc7d708e0be4df27319723'
             '605e9047a563c5c8396ffb18232aa4304ec56586aee537c45064c6fb425e44ad')
 
 package() {

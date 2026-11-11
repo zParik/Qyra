@@ -1,6 +1,6 @@
 pkgbase = qyra-bin
 	pkgdesc = Free, offline PDF app: read, sign, fill in, merge, compress and OCR PDFs
-	pkgver = 2.2.0
+	pkgver = 2.2.1
 	pkgrel = 1
 	url = https://github.com/zParik/Qyra
 	arch = x86_64
@@ -17,9 +17,9 @@ pkgbase = qyra-bin
 	conflicts = qyra
 	options = !strip
 	options = !debug
-	source = https://github.com/zParik/Qyra/releases/download/v2.2.0/Qyra_2.2.0_amd64.deb
-	source = LICENSE-2.2.0::https://raw.githubusercontent.com/zParik/Qyra/v2.2.0/LICENSE
-	sha256sums = b07b0decb75b1b06686aec45bc574231109aefd509382a5685c2cc4b087992a7
+	source = https://github.com/zParik/Qyra/releases/download/v2.2.1/Qyra_2.2.1_amd64.deb
+	source = LICENSE-2.2.1::https://raw.githubusercontent.com/zParik/Qyra/v2.2.1/LICENSE
+	sha256sums = 1628f3781d85b089b4f0c08585f725d4a9f3f84eb7fc7d708e0be4df27319723
 	sha256sums = 605e9047a563c5c8396ffb18232aa4304ec56586aee537c45064c6fb425e44ad
 
 pkgname = qyra-bin
