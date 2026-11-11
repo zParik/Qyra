@@ -21,6 +21,7 @@ const GROUPS: Group[] = [
       { keys: ["Ctrl+Shift+Tab"], desc: "Previous tab" },
       { keys: ["Ctrl+1", "…", "Ctrl+8"], desc: "Jump to a tab" },
       { keys: ["Ctrl+9"], desc: "Jump to the last tab" },
+      { keys: ["Ctrl+\\"], desc: "Split view: open or close" },
       { keys: ["Middle click"], desc: "Close tab" },
     ],
   },

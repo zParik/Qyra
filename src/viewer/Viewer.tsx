@@ -88,7 +88,22 @@ function findActiveMatchOrdinalOnPage(
   return ordinal;
 }
 
-export default function Viewer({ tabPath, isActive }: { tabPath: string; isActive: boolean }) {
+interface ViewerProps {
+  tabPath: string;
+  /** On screen (a hidden tab stays mounted). */
+  isActive: boolean;
+  /** Takes the keyboard: the focused pane when split, else the active tab. */
+  hasFocus?: boolean;
+  /** Shown in a split pane: both sidebars start closed. */
+  split?: boolean;
+  /** A second view of a document open in the other pane: it reads and
+   *  navigates but never edits or saves, so two editors can't race on one file. */
+  readOnly?: boolean;
+  /** Which pane this view fills while split. */
+  pane?: "main" | "split";
+}
+
+export default function Viewer({ tabPath, isActive, hasFocus = isActive, split = false, readOnly = false, pane }: ViewerProps) {
   const navigate = useNavigate();
   const viewerFile = useAppStore((s) => {
     const file = s.tabFiles[tabPath];
@@ -136,7 +151,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
     showTools, setShowTools,
     readingMode, setReadingMode,
     showPresentation, setShowPresentation,
-  } = useViewerUI();
+  } = useViewerUI(split);
   const goToLibrary = useGoToLibrary();
 
   // ToolSidebar (full-screen on phone) dispatches this when its × is tapped
@@ -203,7 +218,8 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
   // flushComments() first: the auto-save is debounced and a large PDF takes
   // seconds to rewrite, so "Saved ✓" without the flush can report success
   // while the comment write is still in flight (and dies with the process).
-  const { flushComments, hasUnsavedComments } = useComments(viewerFile?.path);
+  // A read-only view shows the comments the other pane loads and saves.
+  const { flushComments, hasUnsavedComments } = useComments(readOnly ? undefined : viewerFile?.path);
 
   // Closing the window while a (slow, debounced) comment save is pending or
   // in flight would kill the write mid-parse and silently lose the comment —
@@ -229,6 +245,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
   const uiStateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    if (readOnly) return; // the editing pane owns this tab's saved place
     if (uiStateTimerRef.current) clearTimeout(uiStateTimerRef.current);
     uiStateTimerRef.current = setTimeout(() => {
       invoke("save_tab_ui_state", {
@@ -240,7 +257,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
     return () => {
       if (uiStateTimerRef.current) clearTimeout(uiStateTimerRef.current);
     };
-  }, [tabPath, currentPage, zoom]);
+  }, [tabPath, currentPage, zoom, readOnly]);
 
   // True while comment mode is active — opens the comments tab in the sidebar
   const isCommentMode = activeTool === "comment";
@@ -384,6 +401,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
   // Read by the once-registered gesture/wheel handlers.
   const slotSizesRef = useRef(slotSizes);
   slotSizesRef.current = slotSizes;
+  const rootRef = useRef<HTMLDivElement>(null);
   const isActiveRef = useRef(isActive);
   isActiveRef.current = isActive;
   const containerH = containerHeight || 600;
@@ -611,8 +629,9 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
       scheduleCommit();
     }
     function onWheel(e: WheelEvent) {
-      // Hidden tabs stay mounted; only the visible one reacts to the wheel.
-      if (!isActiveRef.current) return;
+      // Hidden tabs stay mounted; only the visible one under the pointer
+      // reacts to the wheel (two are visible when split).
+      if (!isActiveRef.current || !rootRef.current?.contains(e.target as Node)) return;
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
         accumDelta += e.deltaY;
@@ -687,10 +706,24 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docInfo, containerWidth]);
 
+  // Entering split view halves the pane: fit the page to it once, so it is
+  // not cut off. Zooming in afterwards holds until the split closes. Waits
+  // for the sidebars, which a split closes a render later.
+  const splitFittedRef = useRef(false);
+  useEffect(() => {
+    if (!split) { splitFittedRef.current = false; return; }
+    if (splitFittedRef.current || !isActive || !docInfo || showStrip || showTools) return;
+    const width = scrollContainerRef.current?.clientWidth ?? 0;
+    if (!width) return;
+    splitFittedRef.current = true;
+    const fit = fitWidthZoom(slotSizesRef.current, width);
+    if (fit < zoomRef.current) setZoom(Math.max(0.25, fit));
+  }, [split, isActive, docInfo, showStrip, showTools]);
+
   // Keyboard shortcuts
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (!isActive) return; // hidden tabs ignore the keyboard
+      if (!hasFocus) return; // hidden tabs and the unfocused pane ignore the keyboard
       const target = e.target as HTMLElement;
       // Typing, picking a form choice field or editing text keeps its keys,
       // except Save, Save As and Print: filling a form leaves the caret in a
@@ -748,6 +781,10 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
         if (viewerFile) triggerPrint(viewerFile.path);
         return;
       }
+      if (readOnly && mod && (e.key === "z" || e.key === "Z" || e.key === "s" || e.key === "S")) {
+        e.preventDefault(); // undo and save belong to the editing pane
+        return;
+      }
       if (mod && !e.shiftKey && (e.key === "z" || e.key === "Z")) {
         e.preventDefault();
         // In draw mode, Ctrl+Z undoes the last stroke
@@ -797,7 +834,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [isActive, isViewerDirty, findOpen, currentPage, pageCount, viewerFile, undoViewerFile, originalViewerPath, zoom, activeTool, undoStroke, readingMode, showPresentation]);
+  }, [hasFocus, readOnly, isViewerDirty, findOpen, currentPage, pageCount, viewerFile, undoViewerFile, originalViewerPath, zoom, activeTool, undoStroke, readingMode, showPresentation]);
 
   // Hidden tab: free its tiles (previews stay); they re-render on return.
   useEffect(() => {
@@ -1204,7 +1241,9 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
 
   return (
     <div
-      className="flex flex-col h-screen overflow-hidden"
+      ref={rootRef}
+      className="viewer-root flex flex-col h-full overflow-hidden"
+      data-read-only={readOnly || undefined}
       style={{ background: "var(--viewer-bg)", color: "var(--viewer-text)" }}
     >
       {/* Presentation mode fullscreen overlay */}
@@ -1232,9 +1271,9 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
 
       {/* Toolbar — the kiri-wood counter above the page */}
       <header className="toolbar" style={{ display: readingMode ? "none" : undefined }}>
-        <button onClick={goToLibrary} className="btn-ghost" title="Back to library">
+        <button onClick={goToLibrary} className="btn-ghost" title="Back to library" aria-label="Library">
           <IcArrowLeft size={16} />
-          Library
+          <span className="toolbar-label">Library</span>
         </button>
 
         <div className="toolbar-title">
@@ -1247,7 +1286,8 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
           )}
         </div>
 
-        <div className="seg toolbar-markup" role="group" aria-label="Markup">
+        {readOnly && <span className="chip toolbar-readonly" title="This document is open for editing in the other pane">View only</span>}
+        {!readOnly && <div className="seg toolbar-markup" role="group" aria-label="Markup">
           {(["Highlight", "Comment", "Sign"] as const).map((t) => {
             const on = activeAnnot === t && (activeTool === "draw" || activeTool === "comment");
             return (
@@ -1268,7 +1308,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
               >{t}</button>
             );
           })}
-        </div>
+        </div>}
 
         <span className="toolbar-sep" />
 
@@ -1344,7 +1384,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
 
         <span style={{ flex: 1 }} />
 
-        {undoViewerFile && (
+        {undoViewerFile && !readOnly && (
           <button
             onClick={() => {
               setViewerFile(undoViewerFile);
@@ -1363,7 +1403,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
           </button>
         )}
 
-        <div className="toolbar-group">
+        {!readOnly && <div className="toolbar-group">
           {saveStatus === "saving" && <span className="t-meta">Saving…</span>}
           {saveStatus === "saved" && <span className="t-meta" style={{ color: "var(--ok)" }}>Saved</span>}
           <button
@@ -1384,42 +1424,43 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
           </button>
           <button
             onClick={handleSaveAs}
-            className="btn-ghost"
+            className="btn-ghost toolbar-saveas"
             title="Save as… (Ctrl+Shift+S)"
           >
             Save as…
           </button>
-        </div>
+        </div>}
 
         <span className="toolbar-sep" />
 
         <div className="toolbar-group">
           {pageCount > 0 && (
-            <button onClick={() => setShowPresentation(true)} className="btn-icon" title="Present (fullscreen slideshow)">
+            <button onClick={() => setShowPresentation(true)} className="btn-icon toolbar-extra" title="Present (fullscreen slideshow)">
               <svg width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.5}
                 strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
                 <path d="M15 10l4.553-2.069A1 1 0 0121 8.847v6.306a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
               </svg>
             </button>
           )}
-          <button onClick={() => setReadingMode(r => !r)} className="btn-icon" aria-pressed={readingMode} title="Reading mode: hide the chrome (Esc to exit)">
+          <button onClick={() => setReadingMode(r => !r)} className="btn-icon toolbar-extra" aria-pressed={readingMode} title="Reading mode: hide the chrome (Esc to exit)">
             <svg width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.5}
               strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
               <path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
             </svg>
           </button>
+          <SplitButton tabPath={tabPath} pane={pane} />
           <button onClick={() => setShowStrip(s => !s)} className="btn-icon" aria-pressed={showStrip} title="Show or hide the page strip">
             <svg width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.5}
               strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 16 16">
               <rect x="2.5" y="3" width="4" height="10" rx="0.5" /><rect x="9.5" y="3" width="4" height="10" rx="0.5" />
             </svg>
           </button>
-          <button onClick={() => setShowTools(t => !t)} className="btn-icon" aria-pressed={showTools} title="Show or hide the tools">
+          {!readOnly && <button onClick={() => setShowTools(t => !t)} className="btn-icon" aria-pressed={showTools} title="Show or hide the tools">
             <svg width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.5}
               strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 16 16">
               <rect x="2.5" y="3" width="11" height="10" rx="0.5" /><path d="M9.5 3v10M11 6h1M11 8h1" />
             </svg>
-          </button>
+          </button>}
         </div>
       </header>
 
@@ -1477,7 +1518,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
       )}
 
       {/* Selection Popup Tooltip — inline quick-access markup menu */}
-      {selectionPopup && !selectionEditor && (
+      {selectionPopup && !selectionEditor && !readOnly && (
         <div
           className="pop"
           style={{
@@ -1594,7 +1635,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
             onPageToggle={stablePageToggle}
             splitAfter={activeTool === "split" ? splitAfter : undefined}
             onSplitAfterChange={activeTool === "split" ? setSplitAfter : undefined}
-            onReorder={stableReorder}
+            onReorder={readOnly ? undefined : stableReorder}
           />
         </div>
 
@@ -1839,7 +1880,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
                         <FormLayer
                           pdfPath={viewerFile.path}
                           pageNum={page}
-                          isEnabled={formsLive}
+                          isEnabled={formsLive && !readOnly}
                           onFieldChanged={setFieldValue}
                           filledFields={fieldValues}
                         />
@@ -1933,7 +1974,7 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
 
         {/* Right: tool sidebar — the sample book */}
         <div
-          className={`h-full flex-col ${activeTool === "draw" || !showTools || readingMode ? "hidden" : "flex"}`}
+          className={`h-full flex-col ${readOnly || activeTool === "draw" || !showTools || readingMode ? "hidden" : "flex"}`}
           style={{ width: "var(--panel-w)", flexShrink: 0 }}
         >
           <ToolSidebar
@@ -1957,6 +1998,74 @@ export default function Viewer({ tabPath, isActive }: { tabPath: string; isActiv
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Split view from the toolbar: pick which open document goes on the right
+ * (this one again included); in a split, close it.
+ */
+function SplitButton({ tabPath, pane }: { tabPath: string; pane?: "main" | "split" }) {
+  const openTabs = useAppStore((s) => s.openTabs);
+  const openSplit = useAppStore((s) => s.openSplit);
+  const closeSplit = useAppStore((s) => s.closeSplit);
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    window.addEventListener("pointerdown", away);
+    window.addEventListener("keydown", esc);
+    return () => { window.removeEventListener("pointerdown", away); window.removeEventListener("keydown", esc); };
+  }, [open]);
+
+  if (pane) {
+    return (
+      <button onClick={closeSplit} className="btn-icon" aria-pressed title="Close split view (Ctrl+\)" aria-label="Close split view">
+        <IcSplit />
+      </button>
+    );
+  }
+  const docs = openTabs.filter((t) => t.type !== "home");
+  const choices = [...docs.filter((t) => t.path === tabPath), ...docs.filter((t) => t.path !== tabPath)];
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        onClick={() => (choices.length === 1 ? openSplit(tabPath) : setOpen((o) => !o))}
+        className="btn-icon"
+        aria-haspopup={choices.length > 1 ? "menu" : undefined}
+        aria-expanded={choices.length > 1 ? open : undefined}
+        title="Split view (Ctrl+\)"
+        aria-label="Split view"
+      >
+        <IcSplit />
+      </button>
+      {open && (
+        <div className="pop menu split-menu" role="menu" aria-label="Show on the right">
+          <div className="t-meta split-menu-head">Show on the right</div>
+          {choices.map((t) => (
+            <button
+              key={t.path}
+              role="menuitem"
+              className="menu-item split-menu-item"
+              onClick={() => { setOpen(false); openSplit(t.path); }}
+            >
+              <span className="split-menu-name">{t.name}</span>
+              {t.path === tabPath && <span className="t-meta">this document, view only</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function IcSplit() {
+  return (
+    <svg width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinejoin="round" viewBox="0 0 16 16" aria-hidden="true">
+      <rect x="2" y="3" width="12" height="10" rx="1" /><path d="M8 3v10" />
+    </svg>
   );
 }
 

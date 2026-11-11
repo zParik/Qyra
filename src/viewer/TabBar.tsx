@@ -21,9 +21,11 @@ const HOVER_DELAY_MS = 450;
  * ground), the others sit back in the indigo cloth.
  */
 function TabTag({
-  id, label, active, dirty, isPdfPath, onActivate, onClose, onContextMenu,
+  id, label, active, dirty, isPdfPath, inSplit = false, onActivate, onClose, onContextMenu,
 }: {
   id: string; label: string; active: boolean; dirty: boolean; isPdfPath: boolean;
+  /** Shown in the split pane on the right. */
+  inSplit?: boolean;
   onActivate: () => void; onClose: () => void;
   onContextMenu: (x: number, y: number) => void;
 }) {
@@ -80,6 +82,7 @@ function TabTag({
       ref={setRefs}
       className="tab"
       data-active={active ? "true" : undefined}
+      data-split={inSplit ? "true" : undefined}
       data-edge={edge}
       style={{
         transform: CSS.Transform.toString(transform),
@@ -101,6 +104,7 @@ function TabTag({
         listeners?.onKeyDown?.(e);
       }}
     >
+      {inSplit && <span className="tab-split" aria-label="In split view" title="Shown in split view" />}
       <span className="tab-label">{label}</span>
       {dirty && <span className="tab-dot" aria-label="Unsaved changes" title="Unsaved changes" />}
       <button
@@ -168,6 +172,10 @@ export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile, onActivateT
   const reorderTab = useAppStore((s) => s.reorderTab);
   const tabDirty = useAppStore((s) => s.tabDirty);
   const tabOriginal = useAppStore((s) => s.tabOriginal);
+  const splitTab = useAppStore((s) => s.splitTab);
+  const openSplit = useAppStore((s) => s.openSplit);
+  const closeSplit = useAppStore((s) => s.closeSplit);
+  const setFocusedPane = useAppStore((s) => s.setFocusedPane);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; index: number } | null>(null);
 
   useEffect(() => {
@@ -251,7 +259,15 @@ export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile, onActivateT
                 active={!suspendActive && i === activeTabIndex}
                 dirty={tabDirty[tab.path] ?? false}
                 isPdfPath={tab.type !== "home"}
-                onActivate={() => { activateTab(i); onActivateTab?.(); }}
+                inSplit={tab.path === splitTab}
+                onActivate={() => {
+                  // The tab on the right is already on screen: focus its pane
+                  // instead of showing it twice.
+                  const activePath = openTabs[activeTabIndex]?.path;
+                  if (tab.path === splitTab && tab.path !== activePath && !suspendActive) setFocusedPane("split");
+                  else { activateTab(i); setFocusedPane("main"); }
+                  onActivateTab?.();
+                }}
                 onClose={() => onCloseTab(i)}
                 onContextMenu={(x, y) => setCtxMenu({ x, y, index: i })}
               />
@@ -277,6 +293,9 @@ export function TabBar({ onOpenFile, onCloseTab, onOpenExternalFile, onActivateT
         const items: Array<{ label: string; onSelect: () => void; disabled?: boolean }> = [
           { label: "Reveal in file explorer", onSelect: () => handleReveal(ctxMenu.index), disabled: !isPdf },
           { label: "Copy path", onSelect: () => handleCopyPath(ctxMenu.index), disabled: !isPdf },
+          tab?.path === splitTab
+            ? { label: "Close split view", onSelect: closeSplit }
+            : { label: "Open in split view", onSelect: () => tab && openSplit(tab.path), disabled: !isPdf },
           { label: "Close", onSelect: () => onCloseTab(ctxMenu.index) },
           { label: "Close other tabs", onSelect: () => handleCloseOthers(ctxMenu.index), disabled: openTabs.length <= 1 },
           { label: "Close tabs to the right", onSelect: () => handleCloseRight(ctxMenu.index), disabled: ctxMenu.index >= openTabs.length - 1 },

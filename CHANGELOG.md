@@ -8,6 +8,34 @@ each release entry is injected into its GitHub release body on tag.
 _Entries accumulate here. At release time, rename this heading to
 `## [<version>] — <YYYY-MM-DD> · <tagline>`._
 
+## [2.2.0] — 2026-11-11 · Side by Side
+
+Two documents on screen at once, and the app stops highlighting itself
+when you drag across it.
+
+---
+
+### Split view
+
+- **Open any tab beside the one you're reading.** Press `Ctrl+\`, use the
+  Split view button in the toolbar, or right-click a tab and pick
+  "Open in split view". Drag the divider to resize; double-click it to
+  even the panes out. Qyra remembers where you left it.
+- **Both panes work.** Each document keeps its own tools, zoom, find and
+  save. Click a pane to give it the keyboard; a thin line on top shows
+  which one has it.
+- **The same document twice** opens the second copy view only: it scrolls,
+  zooms and searches on its own, but has no tools and no save, so the two
+  views can never write over each other. Edits made in the other pane show
+  up in it once applied.
+- Both sidebars close in a split, and the page is fitted to the half-width
+  pane. The toolbar drops its labels when a pane gets narrow.
+
+### Fixes
+
+- Sidebars, toolbars and panels could be drag-selected like text. Now only
+  page text, form fields and text boxes select.
+
 ## [2.1.0] — 2026-11-05 · Forms That Just Work
 
 Form fields are live as soon as a PDF opens, and what you type is visible

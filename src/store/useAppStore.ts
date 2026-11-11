@@ -38,6 +38,11 @@ interface AppState {
   // Stack of recently-closed PDF tabs (cap 10); newest at the end.
   closedTabsStack: TabEntry[];
 
+  // Split view: the tab shown in the second pane (it may be the active tab
+  // itself, shown twice), and which pane takes the keyboard.
+  splitTab: string | null;
+  focusedPane: "main" | "split";
+
   // Per-path keyed state (path → value)
   tabFiles: Record<string, LoadedFile>;
   tabUndo: Record<string, LoadedFile | null>;
@@ -80,6 +85,10 @@ interface AppState {
   setTabUndo: (path: string, file: LoadedFile | null) => void;
   setTabOriginal: (path: string, p: string) => void;
   setTabDirty: (path: string, v: boolean) => void;
+  /** Show tab `path` in the split pane and focus that pane. */
+  openSplit: (path: string) => void;
+  closeSplit: () => void;
+  setFocusedPane: (pane: "main" | "split") => void;
 
   // Legacy shim setters
   setViewerFile: (file: LoadedFile | null) => void;
@@ -113,6 +122,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   cancelFn: null,
 
   openTabs: [],
+  splitTab: null,
+  focusedPane: "main",
   activeTabIndex: -1,
   closedTabsStack: [],
   tabFiles: {},
@@ -189,7 +200,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       }
       const next: SyncSlice = { openTabs: newTabs, activeTabIndex: newActive, tabFiles, tabUndo, tabOriginal, tabDirty };
-      return { ...next, closedTabsStack, ...legacySync(next) };
+      const split = tab && tab.path === s.splitTab ? { splitTab: null, focusedPane: "main" as const } : {};
+      return { ...next, closedTabsStack, ...split, ...legacySync(next) };
     }),
 
   activateTab: (index) =>
@@ -250,7 +262,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         delete tabDirty[oldTab.path];
       }
       const next: SyncSlice = { openTabs: newTabs, activeTabIndex: s.activeTabIndex, tabFiles, tabUndo, tabOriginal, tabDirty };
-      return { ...next, ...legacySync(next) };
+      const split = oldTab && oldTab.path === s.splitTab && oldTab.path !== entry.path ? { splitTab: null, focusedPane: "main" as const } : {};
+      return { ...next, ...split, ...legacySync(next) };
     }),
 
   reopenClosedTab: () => {
@@ -286,6 +299,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       const next: SyncSlice = { ...s, tabDirty };
       return { tabDirty, ...legacySync(next) };
     }),
+
+  openSplit: (path) => set({ splitTab: path, focusedPane: "split" }),
+  closeSplit: () => set({ splitTab: null, focusedPane: "main" }),
+  setFocusedPane: (pane) => set({ focusedPane: pane }),
 
   setViewerFile: (file) => {
     const s = get();

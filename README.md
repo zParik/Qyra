@@ -140,6 +140,7 @@ WEBKIT_DISABLE_DMABUF_RENDERER=1 ./Qyra.AppImage
 
 ### Viewer
 - Tabs that survive a restart; opening a PDF while Qyra runs adds a tab to the open window
+- Split view (Ctrl+\\): two tabs side by side, or one document twice with the second copy view only
 - Page strip with drag-to-reorder, find (Ctrl+F), zoom (Ctrl+wheel or pinch)
 - Print, through GTK's native dialog on Linux
 - Outline, metadata, recent-files library, command palette, light and dark theme

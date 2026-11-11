@@ -57,3 +57,27 @@ describe("useViewerUI sidebars", () => {
     expect(result.current.showTools).toBe(true);
   });
 });
+
+describe("useViewerUI in split view", () => {
+  it("collapses both sidebars when the pane is split, and restores them after", () => {
+    const { result, rerender } = renderHook(({ split }) => useViewerUI(split), { initialProps: { split: false } });
+    rerender({ split: true });
+    expect(result.current.showStrip).toBe(false);
+    expect(result.current.showTools).toBe(false);
+    rerender({ split: false });
+    expect(result.current.showStrip).toBe(true);
+    expect(result.current.showTools).toBe(true);
+  });
+
+  it("starts collapsed in a pane opened as a split", () => {
+    const { result } = renderHook(() => useViewerUI(true));
+    expect(result.current.showStrip).toBe(false);
+    expect(result.current.showTools).toBe(false);
+  });
+
+  it("still lets the user open a sidebar while split", () => {
+    const { result } = renderHook(() => useViewerUI(true));
+    act(() => result.current.setShowTools(true));
+    expect(result.current.showTools).toBe(true);
+  });
+});

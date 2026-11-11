@@ -1,4 +1,5 @@
-import { useEffect, useCallback, useState } from "react";
+import { useEffect, useCallback, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { useLocation, useNavigate, useOutlet } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore, TabEntry } from "../store/useAppStore";
@@ -10,6 +11,7 @@ import { ViewerErrorFallback } from "../components/ErrorFallback";
 import { ShortcutsModal } from "../components/ShortcutsModal";
 import { loadSetting, Settings } from "../lib/settings";
 import { sessionToSave } from "./session";
+import { clampRatio, loadRatio, saveRatio, toggleSplit } from "./split";
 
 export default function ViewerShell() {
   const navigate = useNavigate();
@@ -22,6 +24,10 @@ export default function ViewerShell() {
   const reopenClosedTab = useAppStore((s) => s.reopenClosedTab);
   const tabDirty = useAppStore((s) => s.tabDirty);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const splitTab = useAppStore((s) => s.splitTab);
+  const focusedPane = useAppStore((s) => s.focusedPane);
+  const setFocusedPane = useAppStore((s) => s.setFocusedPane);
+  const [ratio, setRatio] = useState(loadRatio);
 
   // A tool page or Settings renders through the outlet, over the tabs, which stay mounted and hidden.
   // (The outlet element exists even for the library and viewer routes, so the path decides.)
@@ -30,6 +36,14 @@ export default function ViewerShell() {
   const onToolRoute = pathname !== "/" && pathname !== "/view";
   const activeTab = openTabs[activeTabIndex];
   const homeVisible = activeTab?.type === "home" && !onToolRoute;
+  // Split view: the split tab shows on the right. When it is the active tab
+  // itself, the right pane is a second, read-only view of that document.
+  const splitOn = !!splitTab && !onToolRoute && openTabs.some((t) => t.path === splitTab && t.type !== "home");
+  const mirror = splitOn && activeTab?.path === splitTab;
+  const at = `${(ratio * 100).toFixed(2)}%`;
+  const mainStyle: CSSProperties = splitOn ? { left: 0, top: 0, bottom: 0, width: `calc(${at} - 3px)` } : { inset: 0 };
+  const splitStyle: CSSProperties = { left: `calc(${at} + 3px)`, right: 0, top: 0, bottom: 0 };
+  const paneRef = useRef<HTMLDivElement>(null);
 
   // Load persisted session on first mount (only if no tabs already open),
   // gated on the reopen-tabs-on-launch preference. Then open the file Qyra
@@ -126,6 +140,11 @@ export default function ViewerShell() {
         setShowShortcuts((v) => !v);
         return;
       }
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === "\\") {
+        e.preventDefault();
+        toggleSplit();
+        return;
+      }
       if (e.ctrlKey && e.shiftKey && (e.key === "T" || e.key === "t")) {
         e.preventDefault();
         reopenClosedTab();
@@ -170,32 +189,94 @@ export default function ViewerShell() {
       <div style={{ position: "relative", flex: 1, overflow: "hidden" }}>
         {/* Singleton Home — visible when active tab is a home tab */}
         <div
+          className="split-pane"
+          data-focused={splitOn && homeVisible && focusedPane === "main" ? "" : undefined}
+          onPointerDownCapture={splitOn ? () => setFocusedPane("main") : undefined}
           style={{
             position: "absolute",
-            inset: 0,
+            ...mainStyle,
             visibility: homeVisible ? "visible" : "hidden",
             pointerEvents: homeVisible ? "auto" : "none",
           }}
         >
           <Home onOpenPdf={handleHomePdfOpen} />
         </div>
-        {/* PDF tabs stack */}
-        {openTabs.map((tab, i) =>
-          tab.type === "home" ? null : (
+        {/* PDF tabs stack. A tab moves between panes by style alone, so it
+            never remounts and keeps its unsaved work. */}
+        {openTabs.map((tab, i) => {
+          if (tab.type === "home") return null;
+          const inMain = i === activeTabIndex && !onToolRoute;
+          const inSplit = splitOn && !mirror && tab.path === splitTab;
+          const visible = inMain || inSplit;
+          const pane = inSplit ? ("split" as const) : ("main" as const);
+          return (
             <div
               key={tab.path}
+              className="split-pane"
+              data-focused={splitOn && visible && focusedPane === pane ? "" : undefined}
+              onPointerDownCapture={splitOn && visible ? () => setFocusedPane(pane) : undefined}
               style={{
                 position: "absolute",
-                inset: 0,
-                visibility: i === activeTabIndex && !onToolRoute ? "visible" : "hidden",
-                pointerEvents: i === activeTabIndex && !onToolRoute ? "auto" : "none",
+                ...(inSplit ? splitStyle : mainStyle),
+                visibility: visible ? "visible" : "hidden",
+                pointerEvents: visible ? "auto" : "none",
               }}
             >
               <ErrorBoundary FallbackComponent={ViewerErrorFallback} key={tab.path}>
-                <Viewer tabPath={tab.path} isActive={i === activeTabIndex && !onToolRoute} />
+                <Viewer
+                  tabPath={tab.path}
+                  isActive={visible}
+                  hasFocus={visible && (!splitOn || focusedPane === pane)}
+                  split={splitOn}
+                  pane={splitOn && visible ? pane : undefined}
+                />
               </ErrorBoundary>
             </div>
-          )
+          );
+        })}
+        {/* The active document a second time: read-only, so the two views
+            can never save over each other. */}
+        {mirror && splitTab && (
+          <div
+            key={`${splitTab}#mirror`}
+            className="split-pane"
+            data-focused={focusedPane === "split" ? "" : undefined}
+            onPointerDownCapture={() => setFocusedPane("split")}
+            style={{ position: "absolute", ...splitStyle }}
+          >
+            <ErrorBoundary FallbackComponent={ViewerErrorFallback}>
+              <Viewer tabPath={splitTab} isActive hasFocus={focusedPane === "split"} split readOnly pane="split" />
+            </ErrorBoundary>
+          </div>
+        )}
+        {splitOn && (
+          <div
+            ref={paneRef}
+            className="split-divider"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize split view"
+            aria-valuenow={Math.round(ratio * 100)}
+            title="Drag to resize. Double-click to even out."
+            style={{ left: `calc(${at} - 3px)` }}
+            onDoubleClick={() => { setRatio(0.5); saveRatio(0.5); }}
+            onPointerDown={(e) => {
+              e.preventDefault();
+              const box = paneRef.current?.parentElement?.getBoundingClientRect();
+              if (!box || box.width === 0) return;
+              let last = ratio;
+              const move = (ev: PointerEvent) => { last = clampRatio((ev.clientX - box.left) / box.width); setRatio(last); };
+              const up = () => {
+                window.removeEventListener("pointermove", move);
+                window.removeEventListener("pointerup", up);
+                document.body.classList.remove("split-resizing");
+                saveRatio(last);
+              };
+              document.body.classList.add("split-resizing");
+              window.addEventListener("pointermove", move);
+              window.addEventListener("pointerup", up);
+            }}
+          />
         )}
         {/* Tool pages and Settings, on top of the sheets */}
         {onToolRoute && (
